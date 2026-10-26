@@ -1,0 +1,8 @@
+# Ship kit scratch files (tracker pages being compared)
+.ship/
+# Ship kit: env files hold secrets and stay out of git; the example files may be committed
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template

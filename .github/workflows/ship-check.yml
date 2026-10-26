@@ -1,0 +1,52 @@
+# Ship kit: the check GitHub runs on every push to dev and main, before anything deploys.
+# Written by /ship:setup and owned by the kit: don't edit it here. Rerun /ship:setup to update it.
+# dev:  the building piece passes the CTO check (size, stack, leftovers), and no code arrives outside a piece.
+# main: every piece has the client's verdict, the commit came through dev, and the check passed there.
+# Deploys wait for it: Railway's "Wait for CI", or your devops' deploy (see .github/ship/README.md).
+name: Ship check
+
+on:
+  push:
+    branches: [dev, main, master]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    name: Ship check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Find the backend and frontend
+        id: dirs
+        run: python3 .github/ship/ship_check.py ci-env >> "$GITHUB_OUTPUT"
+
+      - name: Install vulture (the version the kit pins; install the same one locally)
+        if: steps.dirs.outputs.python_dir != ''
+        run: python3 -m pip install --quiet "vulture==2.16"
+
+      - uses: actions/setup-node@v7
+        if: steps.dirs.outputs.node_dir != ''
+        with:
+          node-version: "22"
+
+      - name: Install the frontend's packages (knip reads them)
+        if: steps.dirs.outputs.node_dir != ''
+        working-directory: ${{ steps.dirs.outputs.node_dir }}
+        run: if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
+
+      - name: Run the check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SHIP_BEFORE: ${{ github.event.before }}
+        run: python3 .github/ship/ship_check.py ci --branch "$GITHUB_REF_NAME" --after "$GITHUB_SHA"
