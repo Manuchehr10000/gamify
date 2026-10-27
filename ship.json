@@ -13,6 +13,7 @@
       "psycopg-pool",
       "pydantic",
       "pyjwt",
+      "pytest",
       "python-dotenv",
       "python-multipart",
       "sqlalchemy",
@@ -40,6 +41,7 @@
       "jwt-decode",
       "knip",
       "lucide-react",
+      "qrcode.react",
       "react",
       "react-dom",
       "react-hook-form",
@@ -62,5 +64,6 @@
     "page": "https://app.notion.com/p/404c62b4be608118a813c030e979c548",
     "database": "https://app.notion.com/p/e7f458ff7abf4e4fb0da189f661a915b",
     "data_source": "collection://c51cd3c3-3ccc-48f8-a8c3-08c5b8c69bb9"
-  }
+  },
+  "vulture_ignore_names": "upgrade,downgrade,revision,down_revision,branch_labels,depends_on,lifespan,model_config,Config,orm_mode,from_attributes,json_schema_extra,__tablename__,__table_args__,added,updated,consented,arrival_points"
 }

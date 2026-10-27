@@ -15,9 +15,9 @@ approves in one line. After each model release run `/doctor prompt-audit` (Claud
 - The allowed packages are the stack list in `ship.json`. A new package or import stops the piece until the owner approves it in one line (then `ship_check.py stack-add`).
 
 ## Commands
-- Backend: not yet (no code yet; fill in with the first piece).
-- Frontend: not yet (no code yet; fill in with the first piece).
-- Tests: not yet. Run them before calling a piece done.
+- Backend (in `backend/`): `python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`; copy `.env.example` to `.env`; `.venv/bin/alembic upgrade head`; `.venv/bin/uvicorn app.main:app --reload --port 8000`.
+- Frontend (in `frontend/`): `npm install`; `npm run dev` (port 5173, passes `/api` to :8000); `npm run build`; `npm run lint`.
+- Tests: `cd backend && .venv/bin/pytest` (needs a local Postgres database `gamify_test`). Run them before calling a piece done.
 
 ## How we build
 - Pieces are specced in chat into the project's Notion tracker. `/ship:next` picks up the next Ready one and saves its contract to `contracts/`. Build what it lists and nothing more.
