@@ -1,5 +1,5 @@
 # Contract: Task feed by stage
-Status: building
+Status: on-dev
 Base: a9c170e316
 Approved: 2026-10-27 by Manu
 Tracker: https://app.notion.com/p/406c62b4be60810f969ac92d21770fbb
