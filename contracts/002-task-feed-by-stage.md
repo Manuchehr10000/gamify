@@ -38,7 +38,7 @@ Client's words (TAG): «CRUD по заданиям (тип, текст, балл
 
 ## How to check it
 
-- When I upload a file with 4 stages and TAG's 43 tasks, then I see "43 added" and any failed rows with the reason.
+- When I upload a file with 4 stages and TAG's 42 tasks, then I see "42 added" and any failed rows with the reason.
 - When I upload a row with an unknown stage or missing points, then that row fails with the reason and the others still load.
 - When a partner task has 15 points and an empty coins cell, then its card shows 15 points and 23 coins.
 - When I change one task's text, remove another from the file and upload again, then the first card shows the new text, the second is gone from the feed, and nothing else changes.

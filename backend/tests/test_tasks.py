@@ -24,8 +24,8 @@ def task(code, stage, text, points=10, coins=None, type_="Действие", par
     return [code, stage, type_, text, points, coins, partner, package, start, end]
 
 
-def catalog(n=43) -> list[list]:
-    """n tasks spread over the 4 stages, like TAG's 43."""
+def catalog(n=42) -> list[list]:
+    """n tasks spread over the 4 stages, like TAG's 42."""
     return [task(f"T{i:02d}", i % 4 + 1, f"Задание {i}", points=10 + i) for i in range(n)]
 
 
@@ -82,11 +82,11 @@ def feed(client, guest) -> dict:
     return r.json()
 
 
-def test_upload_of_four_stages_and_43_tasks(client, admin):
+def test_upload_of_four_stages_and_42_tasks(client, admin):
     r = upload(client, admin, xlsx())
     assert r.status_code == 200
     body = r.json()
-    assert (body["stages_added"], body["added"], body["failed"]) == (4, 43, [])
+    assert (body["stages_added"], body["added"], body["failed"]) == (4, 42, [])
 
 
 def test_bad_rows_fail_with_reason_and_others_load(client, admin):
@@ -204,7 +204,7 @@ def test_next_stage_now(client, admin, guest, clock):
     f = feed(client, guest)
     assert f["stage"]["number"] == 3
     assert f["stage"]["message"] == "Маркет открыт"
-    assert {t["text"] for t in f["tasks"]} == {f"Задание {i}" for i in range(43) if i % 4 + 1 == 3}
+    assert {t["text"] for t in f["tasks"]} == {f"Задание {i}" for i in range(42) if i % 4 + 1 == 3}
     client.post("/api/admin/stages/advance", headers=admin)
     assert client.post("/api/admin/stages/advance", headers=admin).status_code == 409
 
