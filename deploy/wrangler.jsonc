@@ -1,0 +1,44 @@
+// One Worker per environment: it serves the built frontend and passes /api/* and /b/*
+// to the FastAPI container. Deployed only by .github/workflows/deploy.yml, after the Ship check.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "../frontend/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/b/*"]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Backend"] }],
+  "env": {
+    // dev branch → staging (the Dev URL)
+    "dev": {
+      "name": "gamify-dev",
+      "containers": [
+        {
+          "class_name": "Backend",
+          "image": "./Dockerfile",
+          "image_build_context": "../backend",
+          "instance_type": "basic",
+          "max_instances": 1
+        }
+      ],
+      "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] }
+    },
+    // main branch → production (the Live URL)
+    "production": {
+      "name": "gamify",
+      "containers": [
+        {
+          "class_name": "Backend",
+          "image": "./Dockerfile",
+          "image_build_context": "../backend",
+          "instance_type": "basic",
+          "max_instances": 1
+        }
+      ],
+      "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] }
+    }
+  }
+}

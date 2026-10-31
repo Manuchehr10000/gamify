@@ -1,0 +1,55 @@
+# Deploys dev to Cloudflare (deploy/wrangler.jsonc, env "dev") only after the Ship check passed on that commit.
+# main → production joins at the first release.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ["Ship check"]
+    types: [completed]
+    branches: [dev]
+
+concurrency:
+  group: deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.path, '.github/workflows/ship-check.yml')
+    runs-on: ubuntu-latest
+    # Secrets and the APP_URL variable live in the GitHub environment "dev"
+    environment: dev
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Build the frontend
+        run: npm ci --prefix frontend && npm run build --prefix frontend
+
+      - name: Deploy the Worker and the backend container
+        working-directory: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          npm ci
+          npx wrangler deploy --env dev --var "APP_URL:$APP_URL"
+
+      - name: Pass the secrets to the Worker
+        working-directory: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DESK_PIN: ${{ secrets.DESK_PIN }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          jq -n '{DATABASE_URL: env.DATABASE_URL, DESK_PIN: env.DESK_PIN, ADMIN_PASSWORD: env.ADMIN_PASSWORD}' \
+            | npx wrangler secret bulk --env dev
