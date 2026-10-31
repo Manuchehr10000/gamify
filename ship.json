@@ -9,6 +9,7 @@
       "cryptography",
       "fastapi",
       "httpx",
+      "openpyxl",
       "psycopg",
       "psycopg-pool",
       "pydantic",
@@ -67,7 +68,7 @@
     "database": "https://app.notion.com/p/e7f458ff7abf4e4fb0da189f661a915b",
     "data_source": "collection://c51cd3c3-3ccc-48f8-a8c3-08c5b8c69bb9"
   },
-  "vulture_ignore_names": "upgrade,downgrade,revision,down_revision,branch_labels,depends_on,lifespan,model_config,Config,orm_mode,from_attributes,json_schema_extra,__tablename__,__table_args__,added,updated,consented,arrival_points",
+  "vulture_ignore_names": "upgrade,downgrade,revision,down_revision,branch_labels,depends_on,lifespan,model_config,Config,orm_mode,from_attributes,json_schema_extra,__tablename__,__table_args__,added,updated,consented,arrival_points,stage_count,stages_added,stages_changed,changed,hidden,title,number_format",
   "bookkeeping": [
     "deploy/"
   ]

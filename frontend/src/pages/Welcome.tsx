@@ -76,7 +76,7 @@ export function Welcome() {
             {t('welcome.points', { points: me.arrival_points })}
           </p>
         )}
-        <Button className="mt-4 w-full" onClick={() => navigate('/app/tasks')}>{t('welcome.toTasks')}</Button>
+        <Button className="mt-4 w-full" onClick={() => navigate('/app')}>{t('welcome.toTasks')}</Button>
       </Card>
     </Screen>
   )
