@@ -27,7 +27,7 @@ Client's words (TAG): «Вход через сканирование QR-кода
 - Editing or deleting a guest by hand (re-upload instead)
 - Tajik texts; the job that deletes photos after 30 days
 - Setting up the event subdomain
-- Per-person staff accounts: one shared desk PIN and one admin password, kept in Railway settings
+- Per-person staff accounts: one shared desk PIN and one admin password, kept in the GitHub dev environment and passed to Cloudflare on deploy
 
 ## How to check it
 
