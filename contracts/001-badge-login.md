@@ -1,5 +1,5 @@
 # Contract: Badge login
-Status: on-dev
+Status: done
 Base: 3695850925
 Approved: 2026-10-26 by Manu
 Tracker: https://app.notion.com/p/405c62b4be60812bb2efc062c4c7d382
