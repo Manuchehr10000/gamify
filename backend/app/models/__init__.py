@@ -44,6 +44,7 @@ class ScoreEvent(Base):
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
     reason: Mapped[str] = mapped_column(String(32))
     points: Mapped[int]
+    coins: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -75,6 +76,11 @@ class Task(Base):
     coins_from_rule: Mapped[bool] = mapped_column(default=False)
     partner_name: Mapped[str] = mapped_column(String(100), default="")
     partner_package: Mapped[str] = mapped_column(String(16), default="")
+    # How a guest does it: "qr" (scan the code at the venue), "link" (open a link, then confirm), "" (not yet)
+    method: Mapped[str] = mapped_column(String(8), default="")
+    link: Mapped[str] = mapped_column(Text, default="")
+    # The random code printed in the task's QR; kept across re-uploads so printed codes keep working
+    qr_code: Mapped[str | None] = mapped_column(String(16), unique=True)
     window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Row order in the last upload: the tie-break inside each group of the feed

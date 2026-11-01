@@ -11,9 +11,13 @@ from app.models import Guest
 CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 
+def random_code() -> str:
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(10))
+
+
 def new_code(db: DbSession) -> str:
     while True:
-        code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(10))
+        code = random_code()
         if not db.scalar(select(Guest.id).where(Guest.code == code)):
             return code
 

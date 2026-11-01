@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth import require_role
 from app.db import get_db
+from app.models import Stage, Task
 from app.routers.feed import StageOut, stage_out
 from app.stages import advance, day
 from app.task_file import ImportResult, export_xlsx, import_xlsx
@@ -50,3 +52,18 @@ async def import_tasks(file: UploadFile, db: DbSession = Depends(get_db)) -> Imp
 def export_tasks(db: DbSession = Depends(get_db)) -> Response:
     return Response(export_xlsx(db), media_type=XLSX,
                     headers={"Content-Disposition": 'attachment; filename="tasks.xlsx"'})
+
+
+class QrTask(BaseModel):
+    code: str
+    stage: int
+    text: str
+    qr_code: str
+
+
+@router.get("/tasks/qr")
+def qr_tasks(db: DbSession = Depends(get_db)) -> list[QrTask]:
+    """Every QR task's code, to print and put up at the venue. The page turns each into <site>/q/<code>."""
+    rows = db.execute(select(Task, Stage.number).join(Stage, Task.stage_id == Stage.id)
+                      .where(Task.active, Task.method == "qr").order_by(Stage.number, Task.position))
+    return [QrTask(code=t.code, stage=n, text=t.text, qr_code=t.qr_code) for t, n in rows]

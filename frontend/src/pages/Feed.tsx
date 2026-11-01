@@ -97,8 +97,22 @@ export function Feed() {
           </button>
         </div>
       )}
+      <Totals points={feed.points} coins={feed.coins} />
       <Body feed={feed} />
     </Screen>
+  )
+}
+
+function Totals({ points, coins }: { points: number; coins: number }) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex items-center justify-center gap-6 rounded-2xl bg-white py-3 text-lg font-semibold shadow-sm ring-1 ring-slate-200">
+      <span className="text-emerald-700">{t('feed.points', { count: points })}</span>
+      <span className="flex items-center gap-1.5 text-amber-700">
+        <Coins className="size-5" aria-hidden />
+        {t('feed.coins', { count: coins })}
+      </span>
+    </div>
   )
 }
 

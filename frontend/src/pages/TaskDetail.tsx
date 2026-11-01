@@ -1,14 +1,81 @@
-import { Check, ChevronLeft } from 'lucide-react'
+import { Check, ChevronLeft, ExternalLink, QrCode } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
+import { AwardView } from '../components/AwardView'
 import { TaskIcon } from '../components/TaskIcon'
 import { Button, Card, Screen } from '../components/ui'
-import { cache, type Task } from '../feed'
+import { cache, type Award, type Task } from '../feed'
 import { PartnerBadge, Reward } from './Feed'
 
 type State = { kind: 'loading' } | { kind: 'missing' } | { kind: 'ready'; task: Task }
+
+function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) {
+  const { t } = useTranslation()
+  const [opened, setOpened] = useState(() => cache.linkOpened(task.id))
+  const [ticked, setTicked] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  if (task.done) {
+    return (
+      <p className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
+        <Check className="size-5" aria-hidden />
+        {t('feed.done')}
+      </p>
+    )
+  }
+  if (task.method === 'qr') {
+    return (
+      <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-emerald-800">
+        <QrCode className="size-5 shrink-0" aria-hidden />
+        {t('task.scanHint')}
+      </p>
+    )
+  }
+  if (task.method !== 'link') return <Button disabled>{t('task.doSoon')}</Button>
+
+  async function confirm() {
+    setBusy(true)
+    setError('')
+    try {
+      onAward(await api<Award>(`/api/tasks/${task.id}/complete`, { token: tokens.get('guest'), method: 'POST' }))
+    } catch {
+      setError(t('common.error'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <a
+        href={task.link}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => {
+          cache.markLinkOpened(task.id)
+          setOpened(true)
+        }}
+        className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 font-medium text-white"
+      >
+        {t('task.do')}
+        <ExternalLink className="size-4" aria-hidden />
+      </a>
+      {opened && (
+        <>
+          <label className="flex items-center gap-3 text-base">
+            <input type="checkbox" className="size-5 accent-emerald-600" checked={ticked} onChange={(e) => setTicked(e.target.checked)} />
+            {t('task.registered')}
+          </label>
+          <Button variant="outline" disabled={!ticked || busy} onClick={confirm}>{t('task.confirm')}</Button>
+        </>
+      )}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </div>
+  )
+}
 
 export function TaskDetail() {
   const { t } = useTranslation()
@@ -18,6 +85,7 @@ export function TaskDetail() {
     const saved = cache.task(id)
     return saved ? { kind: 'ready', task: saved } : { kind: 'loading' }
   })
+  const [award, setAward] = useState<Award | null>(null)
 
   useEffect(() => {
     api<Task>(`/api/tasks/${id}`, { token: tokens.get('guest') })
@@ -28,6 +96,8 @@ export function TaskDetail() {
         else setState((s) => (s.kind === 'loading' ? { kind: 'missing' } : s))
       })
   }, [id])
+
+  if (award) return <Screen><AwardView award={award} /></Screen>
 
   return (
     <Screen>
@@ -46,14 +116,7 @@ export function TaskDetail() {
           </div>
           <p className="whitespace-pre-line text-lg leading-relaxed">{state.task.text}</p>
           <Reward task={state.task} />
-          {state.task.done ? (
-            <p className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
-              <Check className="size-5" aria-hidden />
-              {t('feed.done')}
-            </p>
-          ) : (
-            <Button disabled>{t('task.doSoon')}</Button>
-          )}
+          <Action task={state.task} onAward={setAward} />
         </Card>
       )}
     </Screen>

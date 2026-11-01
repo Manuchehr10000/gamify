@@ -12,6 +12,7 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+from app.guests import random_code
 from app.models import Stage, Task
 from app.stages import EVENT_TZ
 
@@ -36,6 +37,8 @@ TASK_COLUMNS = {
     "partner_package": "Пакет партнёра",
     "window_start": "Доступно с",
     "window_end": "Доступно до",
+    "method": "Выполнение",
+    "link": "Ссылка",
 }
 REQUIRED_STAGE = ("number", "name", "starts_at", "ends_at")
 REQUIRED_TASK = ("code", "stage", "type", "text", "points")
@@ -52,6 +55,11 @@ TYPES = {
     "attention": ["На внимательность"],
     "territory": ["Территориальное"],
     "pre": ["Предзадание"],
+}
+# How a task is done; blank = not doable yet (later pieces)
+METHODS = {
+    "qr": ["QR", "QR-код"],
+    "link": ["Ссылка", "Link"],
 }
 # Partner packages in feed order (TAG's rules, section 6)
 PACKAGES = {
@@ -237,16 +245,27 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             window_end = _time(w_end, "bad_window") if _text(w_end) else None
             if window_start and window_end and window_end <= window_start:
                 raise RowError("bad_window")
+            method_cell = _text(_cell(row, task_cols, "method"))
+            method = _lookup(METHODS, method_cell) if method_cell else ""
+            if method is None:
+                raise RowError("unknown_method")
+            link = _text(_cell(row, task_cols, "link")) if method == "link" else ""
+            if method == "link" and not link:
+                raise RowError("no_link")
+            if link and not re.match(r"https?://\S+$", link):
+                raise RowError("bad_link")
         except RowError as e:
             fail(TASKS_SHEET, n, str(e))
             continue
         seen.add(code)
         values = {"stage_id": stage.id, "type": type_, "text": text, "points": points, "coins": coins,
                   "coins_from_rule": from_rule, "partner_name": partner_name, "partner_package": package,
-                  "window_start": window_start, "window_end": window_end, "position": position, "active": True}
+                  "window_start": window_start, "window_end": window_end, "method": method, "link": link,
+                  "position": position, "active": True}
         task = tasks.get(code)
         if task is None:
-            db.add(Task(code=code, **values))
+            task = Task(code=code, **values)
+            db.add(task)
             result.added += 1
         else:
             # Moving a row doesn't count as a change; editing it, or bringing a hidden one back, does
@@ -254,12 +273,22 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
                 result.changed += 1
             for k, v in values.items():
                 setattr(task, k, v)
+        if method == "qr" and not task.qr_code:
+            task.qr_code = _new_qr(db)
     for code, task in tasks.items():
         if code not in seen and task.active:
             task.active = False
             result.hidden += 1
     db.commit()
     return result
+
+
+def _new_qr(db: DbSession) -> str:
+    db.flush()
+    while True:
+        code = random_code()
+        if not db.scalar(select(Task.id).where(Task.qr_code == code)):
+            return code
 
 
 def _local(dt: datetime | None) -> datetime | None:
@@ -287,7 +316,8 @@ def export_xlsx(db: DbSession) -> bytes:
         wt.append([t.code, numbers[t.stage_id], TYPES[t.type][0], t.text, t.points,
                    None if t.coins_from_rule else t.coins, t.partner_name,
                    PACKAGES[t.partner_package][0] if t.partner_package else None,
-                   _local(t.window_start), _local(t.window_end)])
+                   _local(t.window_start), _local(t.window_end),
+                   METHODS[t.method][0] if t.method else None, t.link or None])
     for col in "IJ":
         for cell in wt[col][1:]:
             cell.number_format = EXCEL_DATE

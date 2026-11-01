@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link } from 'react-router-dom'
 import { api, ApiError, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
 import { Button, Card, Screen } from '../components/ui'
@@ -144,6 +145,7 @@ export function AdminTasks() {
       <Button variant="outline" onClick={() => download('/api/admin/tasks/export', token, 'tasks.xlsx').catch(fail)}>
         {t('tasksAdmin.download')}
       </Button>
+      <Link to="/admin/tasks/qr" className="text-center font-medium text-emerald-700 underline">{t('tasksAdmin.qrLink')}</Link>
     </Screen>
   )
 }

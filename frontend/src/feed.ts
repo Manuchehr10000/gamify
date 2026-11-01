@@ -8,14 +8,20 @@ export type Task = {
   partner_name: string
   window_end: string | null
   done: boolean
+  method: 'qr' | 'link' | ''
+  link: string
 }
 export type Feed = {
+  points: number
+  coins: number
   state: 'none' | 'before' | 'running' | 'over'
   stage_count: number
   starts_at: string | null
   stage: Stage | null
   tasks: Task[]
 }
+
+export type Award = { result: 'awarded' | 'already' | 'unavailable'; task: Task }
 
 // Forum times are Dushanbe times, whatever zone the phone is set to
 const clock = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dushanbe' })
@@ -60,4 +66,7 @@ export const cache = {
     return raw ? Number(raw) : null
   },
   saveStage: (n: number) => write(STAGE_KEY, String(n)),
+  // A link task's confirm tick shows only once its link was opened on this phone
+  linkOpened: (id: number) => read(`link_opened_${id}`) === '1',
+  markLinkOpened: (id: number) => write(`link_opened_${id}`, '1'),
 }
