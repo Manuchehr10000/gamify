@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Coins, ShoppingBag, Star, Trophy, WifiOff, X } from 'lucide-react'
+import { Check, ChevronRight, Coins, LoaderCircle, ShoppingBag, Star, Trophy, WifiOff, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -7,6 +7,7 @@ import { DayBar } from '../components/DayBar'
 import { TaskIcon } from '../components/TaskIcon'
 import { Card, Screen } from '../components/ui'
 import { cache, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
+import { onSent, useUpload } from '../uploads'
 
 // The stage can change at any moment (by the clock or the admin's button): ask again well inside a minute
 const POLL_MS = 30_000
@@ -53,7 +54,9 @@ export function Feed() {
     const wake = () => document.visibilityState === 'visible' && load()
     document.addEventListener('visibilitychange', wake)
     window.addEventListener('online', load)
+    const stopSent = onSent(load)
     return () => {
+      stopSent()
       clearInterval(timer)
       document.removeEventListener('visibilitychange', wake)
       window.removeEventListener('online', load)
@@ -175,8 +178,12 @@ export function PartnerBadge({ name }: { name: string }) {
   )
 }
 
-function TaskCard({ task }: { task: Task }) {
+function TaskCard({ task: fromFeed }: { task: Task }) {
   const { t } = useTranslation()
+  const upload = useUpload(fromFeed.id)
+  // A photo or text that just went through counts at once, before the next feed load
+  const task = upload?.state === 'sent' && upload.award.result !== 'unavailable' ? upload.award.task : fromFeed
+  const sending = upload?.state === 'sending' || upload?.state === 'offline'
   return (
     <Link
       to={`/app/tasks/${task.id}`}
@@ -197,6 +204,12 @@ function TaskCard({ task }: { task: Task }) {
           <span className="flex items-center gap-1 text-sm font-medium text-emerald-700">
             <Check className="size-4" aria-hidden />
             {t('feed.done')}
+          </span>
+        )}
+        {!task.done && sending && (
+          <span className="flex items-center gap-1 text-sm font-medium text-slate-600">
+            {upload.state === 'offline' ? <WifiOff className="size-4" aria-hidden /> : <LoaderCircle className="size-4 animate-spin" aria-hidden />}
+            {t(upload.state === 'offline' ? 'submit.offlineShort' : 'submit.sending')}
           </span>
         )}
       </div>

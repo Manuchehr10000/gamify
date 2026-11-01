@@ -11,9 +11,9 @@ export class ApiError extends Error {
   }
 }
 
-type Options = { token?: string | null; method?: string; json?: unknown; form?: FormData }
+type Options = { token?: string | null; method?: string; json?: unknown; form?: FormData; timeoutMs?: number }
 
-async function request(path: string, { token, method, json, form }: Options = {}): Promise<Response> {
+async function request(path: string, { token, method, json, form, timeoutMs }: Options = {}): Promise<Response> {
   const headers: Record<string, string> = {}
   if (token) headers.Authorization = `Bearer ${token}`
   if (json !== undefined) headers['Content-Type'] = 'application/json'
@@ -21,6 +21,7 @@ async function request(path: string, { token, method, json, form }: Options = {}
     method: method ?? (json !== undefined || form ? 'POST' : 'GET'),
     headers,
     body: form ?? (json !== undefined ? JSON.stringify(json) : undefined),
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))

@@ -73,6 +73,9 @@ METHODS = {
     "qr": ["QR", "QR-код"],
     "link": ["Ссылка", "Link"],
     "market": ["Маркет", "Market"],
+    "photo": ["Фото", "Photo"],
+    "text": ["Текст", "Text"],
+    "photo_text": ["Фото+текст", "Фото + текст", "Photo+text"],
 }
 # The «Маркет» cell on a stage: «да» marks where the market opens; export writes the first word
 YES = ("да", "yes", "1", "+", "x", "true")

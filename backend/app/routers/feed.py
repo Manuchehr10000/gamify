@@ -1,15 +1,15 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth import current_guest
 from app.db import get_db
-from app.models import Guest, ScoreEvent, Stage, Task
-from app import stages
+from app.models import Guest, ScoreEvent, Stage, Submission, Task
+from app import photos, stages
 from app.stages import EVENT_TZ
 from app.task_file import PACKAGES
 
@@ -40,7 +40,7 @@ class TaskOut(BaseModel):
     partner_name: str
     window_end: datetime | None
     done: bool
-    # qr, link or "" (not doable yet)
+    # qr, link, market, photo, text, photo_text or "" (not doable yet)
     method: str
     link: str
 
@@ -121,17 +121,25 @@ class Award(BaseModel):
     task: TaskOut
 
 
-def _award(db: DbSession, guest: Guest, t: Task) -> Award:
-    """Award a task once per guest, only while it is on: its stage is the current one and its window is open."""
+# Tasks done by sending something; the endpoint each one takes
+SUBMIT_METHODS = {"photo", "text", "photo_text"}
+TEXT_MAX = 500
+
+
+def _award(db: DbSession, guest: Guest, t: Task, photo: bytes | None = None, text: str = "") -> Award:
+    """Award a task once per guest, only while it is on: its stage is the current one and its window is open.
+    A photo or text task keeps what the guest sent, in the same commit as the award."""
     reason = task_reason(t.id)
     if reason in _done(db, guest):
         return Award(result="already", task=_out(t, {reason}))
     d = stages.day(db)
     if not t.active or d.current is None or t.stage_id != d.current.id or not _open(t, stages.now()):
         return Award(result="unavailable", task=_out(t, set()))
-    # Two phones of the same guest scanning at once still award once
+    # Two phones of the same guest scanning at once, or a retried upload, still award once
     added = db.execute(insert(ScoreEvent).values(guest_id=guest.id, reason=reason, points=t.points, coins=t.coins)
                        .on_conflict_do_nothing(index_elements=["guest_id", "reason"])).rowcount
+    if added and t.method in SUBMIT_METHODS:
+        db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, text=text))
     db.commit()
     return Award(result="awarded" if added else "already", task=_out(t, {reason}))
 
@@ -157,3 +165,48 @@ def complete(task_id: int, guest: Guest = Depends(current_guest), db: DbSession 
     if t.method != "link":
         raise HTTPException(400, "not_a_link_task")
     return _award(db, guest, t)
+
+
+def _submit_task(db: DbSession, task_id: int, methods: set[str]) -> Task:
+    t = db.get(Task, task_id)
+    if t is None or not t.active:
+        raise HTTPException(404, "task_not_found")
+    if t.method not in methods:
+        raise HTTPException(400, "wrong_method")
+    return t
+
+
+@router.post("/api/tasks/{task_id}/photo")
+def send_photo(task_id: int, photo: UploadFile = File(), text: str = Form(default=""),
+               guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Award:
+    t = _submit_task(db, task_id, {"photo", "photo_text"})
+    # A plain def runs in the thread pool, so reading the spooled upload and the database don't stall other guests
+    data = photo.file.read(photos.MAX_BYTES + 1)
+    if len(data) > photos.MAX_BYTES:
+        raise HTTPException(413, "photo_too_large")
+    size = photos.jpeg_size(data)
+    if size is None:
+        raise HTTPException(400, "not_a_jpeg")
+    if max(size) > photos.MAX_SIDE:
+        raise HTTPException(400, "photo_too_large")
+    # Browsers send line breaks in a form as \r\n; the guest's counter saw one character each
+    text = text.replace("\r\n", "\n").strip()
+    if len(text) > TEXT_MAX:
+        raise HTTPException(400, "text_too_long")
+    if t.method == "photo_text" and not text:
+        raise HTTPException(400, "text_required")
+    return _award(db, guest, t, photo=data, text=text if t.method == "photo_text" else "")
+
+
+class TextIn(BaseModel):
+    text: str = Field(max_length=TEXT_MAX)
+
+
+@router.post("/api/tasks/{task_id}/text")
+def send_text(task_id: int, body: TextIn, guest: Guest = Depends(current_guest),
+              db: DbSession = Depends(get_db)) -> Award:
+    t = _submit_task(db, task_id, {"text"})
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "text_required")
+    return _award(db, guest, t, text=text)

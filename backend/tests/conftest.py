@@ -25,7 +25,7 @@ def schema():
 @pytest.fixture(autouse=True)
 def clean():
     with engine.begin() as c:
-        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, redemptions RESTART IDENTITY CASCADE"))
+        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, redemptions, submissions RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture

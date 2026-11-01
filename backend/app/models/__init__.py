@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, LargeBinary, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -79,8 +79,9 @@ class Task(Base):
     partner_name: Mapped[str] = mapped_column(String(100), default="")
     partner_package: Mapped[str] = mapped_column(String(16), default="")
     # How a guest does it: "qr" (scan the code at the venue), "link" (open a link, then confirm),
-    # "market" (the guest's first purchase in the market), "" (not yet)
-    method: Mapped[str] = mapped_column(String(8), default="")
+    # "market" (the guest's first purchase in the market), "photo", "text", "photo_text" (send a submission),
+    # "" (not yet)
+    method: Mapped[str] = mapped_column(String(16), default="")
     link: Mapped[str] = mapped_column(Text, default="")
     # The random code printed in the task's QR; kept across re-uploads so printed codes keep working
     qr_code: Mapped[str | None] = mapped_column(String(16), unique=True)
@@ -118,4 +119,18 @@ class Redemption(Base):
     # The code in the guest's QR and read out at the stand
     code: Mapped[str] = mapped_column(String(16), unique=True)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Submission(Base):
+    __tablename__ = "submissions"
+    # One submission per task per guest; after sending it is final
+    __table_args__ = (UniqueConstraint("guest_id", "task_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"))
+    # The JPEG as the phone sent it; deferred so listing submissions never loads the bytes
+    photo: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

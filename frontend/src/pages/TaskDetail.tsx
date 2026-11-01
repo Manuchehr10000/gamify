@@ -1,5 +1,5 @@
-import { Check, ChevronLeft, ExternalLink, QrCode, ShoppingBag } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Camera, Check, ChevronLeft, ExternalLink, LoaderCircle, QrCode, ShoppingBag, WifiOff } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
@@ -7,6 +7,7 @@ import { AwardView } from '../components/AwardView'
 import { TaskIcon } from '../components/TaskIcon'
 import { Button, Card, Screen } from '../components/ui'
 import { cache, type Award, type Task } from '../feed'
+import { forgetUpload, sendPhoto, sendText, shrink, useUpload, type Upload } from '../uploads'
 import { PartnerBadge, Reward } from './Feed'
 
 type State = { kind: 'loading' } | { kind: 'missing' } | { kind: 'ready'; task: Task }
@@ -44,6 +45,9 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
         </Link>
       </div>
     )
+  }
+  if (task.method === 'photo' || task.method === 'text' || task.method === 'photo_text') {
+    return <Submit task={task} />
   }
   if (task.method !== 'link') return <Button disabled>{t('task.doSoon')}</Button>
 
@@ -88,6 +92,124 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
   )
 }
 
+const TEXT_MAX = 500
+
+function UploadStatus({ upload }: { upload: Upload | null }) {
+  const { t } = useTranslation()
+  if (upload?.state === 'sending') {
+    return (
+      <p className="flex items-center justify-center gap-2 py-3 font-medium text-slate-700">
+        <LoaderCircle className="size-5 animate-spin" aria-hidden />
+        {t('submit.sending')}
+      </p>
+    )
+  }
+  if (upload?.state === 'offline') {
+    return (
+      <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-amber-800">
+        <WifiOff className="size-5 shrink-0" aria-hidden />
+        {t('submit.offline')}
+      </p>
+    )
+  }
+  if (upload?.state === 'failed') {
+    return <p className="text-sm text-red-600">{t(`submit.errors.${upload.reason}`, { defaultValue: t('common.error') })}</p>
+  }
+  return null
+}
+
+// Photo, text or both: pick or write, look it over, send once
+function Submit({ task }: { task: Task }) {
+  const { t } = useTranslation()
+  const upload = useUpload(task.id)
+  const picker = useRef<HTMLInputElement>(null)
+  const [photo, setPhoto] = useState<Blob | null>(null)
+  const [preview, setPreview] = useState('')
+  const [text, setText] = useState('')
+  const [preparing, setPreparing] = useState(false)
+  const [pickError, setPickError] = useState(false)
+  const wantsPhoto = task.method !== 'text'
+  const wantsText = task.method !== 'photo'
+
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview)
+  }, [preview])
+
+  async function pick(file: File | undefined) {
+    if (!file) return
+    setPreparing(true)
+    setPickError(false)
+    try {
+      const small = await shrink(file)
+      setPhoto(small)
+      setPreview(URL.createObjectURL(small))
+    } catch {
+      setPickError(true)
+    } finally {
+      setPreparing(false)
+    }
+  }
+
+  const busy = upload?.state === 'sending' || upload?.state === 'offline'
+  const ready = (!wantsPhoto || photo) && (!wantsText || text.trim())
+
+  function send() {
+    if (!ready) return
+    if (wantsPhoto) sendPhoto(task.id, photo!, wantsText ? text.trim() : undefined)
+    else sendText(task.id, text.trim())
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {wantsPhoto && (
+        <input
+          ref={picker}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            void pick(e.target.files?.[0])
+            // Choosing the same file again after «Переснять» still fires a change
+            e.target.value = ''
+          }}
+        />
+      )}
+      {preview && <img src={preview} alt={t('submit.previewAlt')} className="max-h-96 w-full rounded-xl object-contain bg-slate-100" />}
+      {wantsText && (
+        <label className="flex flex-col gap-1">
+          <textarea
+            value={text}
+            maxLength={TEXT_MAX}
+            rows={5}
+            disabled={busy}
+            placeholder={t('submit.textPlaceholder')}
+            onChange={(e) => setText(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
+          />
+          <span className="self-end text-xs text-slate-500">{t('submit.count', { count: text.length, max: TEXT_MAX })}</span>
+        </label>
+      )}
+      {pickError && <p className="text-sm text-red-600">{t('submit.badPhoto')}</p>}
+      <UploadStatus upload={upload} />
+      {!busy && (
+        wantsPhoto && !photo ? (
+          <Button disabled={preparing} onClick={() => picker.current?.click()} className="gap-2">
+            {preparing ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Camera className="size-4" aria-hidden />}
+            {t('task.do')}
+          </Button>
+        ) : (
+          <>
+            <Button disabled={!ready || preparing} onClick={send}>{t('submit.send')}</Button>
+            {wantsPhoto && (
+              <Button variant="outline" disabled={preparing} onClick={() => picker.current?.click()}>{t('submit.retake')}</Button>
+            )}
+          </>
+        )
+      )}
+    </div>
+  )
+}
+
 export function TaskDetail() {
   const { t } = useTranslation()
   const id = Number(useParams().id)
@@ -97,6 +219,11 @@ export function TaskDetail() {
     return saved ? { kind: 'ready', task: saved } : { kind: 'loading' }
   })
   const [award, setAward] = useState<Award | null>(null)
+  const upload = useUpload(id)
+  const shown = award ?? (upload?.state === 'sent' ? upload.award : null)
+
+  // The result was seen here; next time the task itself says «Выполнено»
+  useEffect(() => () => forgetUpload(id), [id])
 
   useEffect(() => {
     api<Task>(`/api/tasks/${id}`, { token: tokens.get('guest') })
@@ -108,7 +235,7 @@ export function TaskDetail() {
       })
   }, [id])
 
-  if (award) return <Screen><AwardView award={award} /></Screen>
+  if (shown) return <Screen><AwardView award={shown} /></Screen>
 
   return (
     <Screen>

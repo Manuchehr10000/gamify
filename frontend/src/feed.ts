@@ -8,7 +8,7 @@ export type Task = {
   partner_name: string
   window_end: string | null
   done: boolean
-  method: 'qr' | 'link' | 'market' | ''
+  method: 'qr' | 'link' | 'market' | 'photo' | 'text' | 'photo_text' | ''
   link: string
 }
 export type Feed = {
