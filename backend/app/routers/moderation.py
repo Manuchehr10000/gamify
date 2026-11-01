@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import config, stages
+from app import config, rating, stages
 from app.auth import current_moderator, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Submission, Task
@@ -60,18 +60,13 @@ class Queue(BaseModel):
 TOP = 20
 
 
-def _guest_name(first: str, last: str) -> str:
-    return f"{first} {last[:1]}." if last else first
-
-
 @router.get("/api/moderation/queue")
 def queue(top20: bool = False, name: str = Depends(current_moderator), db: DbSession = Depends(get_db)) -> Queue:
     where = [Submission.status == ""]
     if top20:
-        # The current top 20 by points, for the check before the ceremony
-        top = (select(ScoreEvent.guest_id).group_by(ScoreEvent.guest_id)
-               .order_by(func.sum(ScoreEvent.points).desc(), ScoreEvent.guest_id).limit(TOP))
-        where.append(Submission.guest_id.in_(top.scalar_subquery()))
+        # The current top 20 of the ranking, for the check before the ceremony
+        top = rating.ranking().limit(TOP).subquery()
+        where.append(Submission.guest_id.in_(select(top.c.guest_id)))
     waiting, oldest = db.execute(select(func.count(), func.min(Submission.created_at)).where(*where)).one()
     # The points sending it earned, the base of «Бонус +50%», even if the task file was uploaded again since
     award = (ScoreEvent.guest_id == Submission.guest_id) & (ScoreEvent.reason == "task:" + cast(Submission.task_id, String))
@@ -88,7 +83,7 @@ def queue(top20: bool = False, name: str = Depends(current_moderator), db: DbSes
         moderator=name,
         waiting=waiting,
         oldest_seconds=oldest_seconds,
-        items=[Item(id=sid, task=task, points=points, guest=_guest_name(first, last), text=text, photo=photo,
+        items=[Item(id=sid, task=task, points=points, guest=rating.guest_name(first, last), text=text, photo=photo,
                     created_at=local(created)) for sid, task, points, first, last, text, photo, created in rows],
     )
 

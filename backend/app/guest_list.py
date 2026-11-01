@@ -16,9 +16,12 @@ COLUMNS = {
     "first_name": ["Имя", "first name", "first_name", "name"],
     "phone": ["Телефон", "phone", "мобильный телефон", "моб. телефон"],
     "company": ["Компания", "company", "организация"],
+    "in_rating": ["В рейтинге", "in rating", "in_rating", "рейтинг"],
 }
 FULL_NAME = ["фио", "full name"]
 LINK_HEADER = "Ссылка"
+# «В рейтинге»: these keep a guest out of the ranking; blank or anything else keeps them in
+NOT_RANKED = {"нет", "no", "н", "0", "false"}
 
 
 @dataclass
@@ -95,6 +98,9 @@ def import_csv(db: DbSession, raw: bytes) -> ImportResult:
         seen.add(reg_id)
         values = {"first_name": first, "last_name": last, "phone": clean_phone(cell(row, "phone")),
                   "company": cell(row, "company")}
+        # A file without the column leaves everyone as they were
+        if "in_rating" in cols:
+            values["in_rating"] = cell(row, "in_rating").lower() not in NOT_RANKED
         guest = existing.get(reg_id)
         if guest:
             # Re-upload: details may change, the link never does
@@ -115,5 +121,6 @@ def export_csv(db: DbSession) -> str:
     w = csv.writer(out, delimiter=";")
     w.writerow([COLUMNS[c][0] for c in COLUMNS] + [LINK_HEADER])
     for g in db.scalars(select(Guest).order_by(Guest.id)):
-        w.writerow([g.reg_id or "", g.last_name, g.first_name, g.phone, g.company, link(g)])
+        w.writerow([g.reg_id or "", g.last_name, g.first_name, g.phone, g.company, "да" if g.in_rating else "нет",
+                    link(g)])
     return "﻿" + out.getvalue()

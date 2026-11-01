@@ -112,6 +112,14 @@ export function Feed() {
         <span className="flex-1">{t('feed.toMarket')}</span>
         <ChevronRight className="size-5" aria-hidden />
       </Link>
+      <Link
+        to="/app/rating"
+        className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 font-medium text-slate-800 shadow-sm ring-1 ring-slate-200"
+      >
+        <Trophy className="size-5 text-emerald-700" aria-hidden />
+        <span className="flex-1">{t('feed.toRating')}</span>
+        <ChevronRight className="size-5" aria-hidden />
+      </Link>
       <Body feed={feed} />
     </Screen>
   )

@@ -21,6 +21,11 @@ class Guest(Base):
     phone: Mapped[str] = mapped_column(String(32), default="", index=True)
     company: Mapped[str] = mapped_column(String(200), default="")
     consented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # «В рейтинге: нет» in the guest list (staff, volunteers): plays and earns, never ranked
+    in_rating: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # The place and points when the admin froze the ranking; empty when it isn't frozen
+    frozen_place: Mapped[int | None]
+    frozen_points: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
