@@ -1,5 +1,5 @@
 # Contract: QR and link tasks
-Status: building
+Status: on-dev
 Base: 0692918a6c
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be608141928fc50a2e3e1677
