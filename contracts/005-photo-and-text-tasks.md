@@ -1,5 +1,5 @@
 # Contract: Photo and text tasks
-Status: building
+Status: on-dev
 Base: 1bf5963f52
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be6081938751d0662aa25986
