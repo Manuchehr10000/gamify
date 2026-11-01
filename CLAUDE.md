@@ -20,10 +20,10 @@ approves in one line. After each model release run `/doctor prompt-audit` (Claud
 - Tests: `cd backend && .venv/bin/pytest` (needs a local Postgres database `gamify_test`). Run them before calling a piece done.
 
 ## How we build
-- Pieces are specced in chat into the project's Notion tracker. `/ship:next` picks up the next Ready one and saves its contract to `contracts/`. Build what it lists and nothing more.
-- Before a piece reaches dev, run `/ship:cto-check`. A failed check stops the piece: fix the check first, no exceptions.
+- Pieces are specced in chat into the project's Notion tracker. `/mg-ship-kit:next` picks up the next Ready one and saves its contract to `contracts/`. Build what it lists and nothing more.
+- Before a piece reaches dev, run `/mg-ship-kit:cto-check`. A failed check stops the piece: fix the check first, no exceptions.
 - If the check finds something extra: if the client asked for it, the owner approves a contract change in one line; if not, delete it. Claude never edits a contract on its own.
-- After pickup the repo holds the contract and the tracker shows a copy only Claude Code writes. The client's verdict closes a piece: `/ship:done` or `/ship:drop`.
+- After pickup the repo holds the contract and the tracker shows a copy only Claude Code writes. The client's verdict closes a piece: `/mg-ship-kit:done` or `/mg-ship-kit:drop`.
 - Delete features nobody uses. Git keeps them.
 - Any change of direction is flagged in one line: "CHANGE: …".
 
