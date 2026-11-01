@@ -1,12 +1,12 @@
 # Ship: how this project deploys
 
-Written by `/ship:setup` from the Ship kit. Don't edit the files in this folder or `.github/workflows/ship-check.yml`: rerun `/ship:setup` to update them.
+Written by `/mg-ship-kit:setup` from the Ship kit. Don't edit the files in this folder or `.github/workflows/ship-check.yml`: rerun `/mg-ship-kit:setup` to update them.
 
 ## What runs on every push
 
 GitHub runs the **Ship check** (`.github/workflows/ship-check.yml`, using the copy of the kit's script in this folder) on every push to `dev`, `main` and `master`. Nothing may deploy unless it passes.
 
-- **Push to `dev`:** a push that changes only bookkeeping (contracts, `ship.json`, `CLAUDE.md`, `.gitignore`, `.github/`, the readme) passes. Any product code needs the piece that is building to pass the CTO check (size, stack, leftovers), and it must come after that piece was picked up. The check starts from the newest commit it passed on, so a failed push can't hide under a later one.
+- **Push to `dev`:** a push that changes only bookkeeping (contracts, `ship.json`, `CLAUDE.md`, `.gitignore`, `.claude/settings.json`, `.github/`, the readme) passes. Any product code needs the piece that is building to pass the CTO check (size, stack, leftovers), and it must come after that piece was picked up. The check starts from the newest commit it passed on, so a failed push can't hide under a later one.
 - **Env files:** a push to `dev` or `main` fails while the commit carries an env file (`.env`, `.env.*`; the example files are allowed), even when it changes nothing else. Take it out with `git rm --cached <file>`, and change any password it held: git history keeps it.
 - **`ship.json` can't loosen its own check:** moving the backend or frontend folder counts as code; the `bookkeeping` list may never cover the code folders, and a change to it counts only from the next push.
 - **Push to `main`:** every piece has the client's verdict (none building, none waiting on dev), the commit came through `dev`, and the check passed on it there. A release pushed right after the dev push waits up to 10 minutes for the dev check.

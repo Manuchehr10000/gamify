@@ -71,5 +71,6 @@
   "vulture_ignore_names": "upgrade,downgrade,revision,down_revision,branch_labels,depends_on,lifespan,model_config,Config,orm_mode,from_attributes,json_schema_extra,__tablename__,__table_args__,added,updated,consented,arrival_points,stage_count,stages_added,stages_changed,changed,hidden,title,number_format,prizes_added,prizes_changed,prizes_hidden,left,open,handover",
   "bookkeeping": [
     "deploy/"
-  ]
+  ],
+  "ci_since": "1bf5963f526f75bc4d5121ac82d06efe85758dbc"
 }

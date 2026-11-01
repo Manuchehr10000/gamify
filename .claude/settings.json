@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "ship-kit": {
+      "source": {
+        "source": "github",
+        "repo": "mgac-consulting/ship-kit"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "mg-ship-kit@ship-kit": true
+  }
+}

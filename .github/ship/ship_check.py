@@ -51,7 +51,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-KIT_VERSION = "0.3.2"  # keep equal to plugins/ship/.claude-plugin/plugin.json
+KIT_VERSION = "0.4.0"  # keep equal to plugins/mg-ship-kit/.claude-plugin/plugin.json
 CONFIG = "ship.json"
 CONTRACTS = "contracts"
 SYNC_FILE = "notion-sync.json"  # in .ship/ (git-ignored): hash of the repo text last copied to the tracker
@@ -65,7 +65,12 @@ READY_TRACKS = ("devops", "railway")  # cloudflare needs its own stack list, siz
 CI_WORKFLOW = ".github/workflows/ship-check.yml"
 CI_SCRIPT = ".github/ship/ship_check.py"
 CI_NOTES = ".github/ship/README.md"
-BOOKKEEPING_FILES = ("ship.json", "CLAUDE.md", ".gitignore")
+CLOUD_SETTINGS = ".claude/settings.json"  # declares the plugin so cloud sessions on this repo load it (D59)
+BOOKKEEPING_FILES = ("ship.json", "CLAUDE.md", ".gitignore", CLOUD_SETTINGS)
+KIT_REPO = "mgac-consulting/ship-kit"  # where the plugin's marketplace lives; keep equal to the install lines
+KIT_MARKETPLACE = "ship-kit"  # the name in .claude-plugin/marketplace.json
+KIT_PLUGIN = "mg-ship-kit@ship-kit"
+KIT_PLUGIN_OLD = "ship@ship-kit"  # the plugin's name before 0.4.0; setup removes it from the settings
 ENV_EXAMPLES = (".env.example", ".env.sample", ".env.template")  # env files that hold no secrets: these may be committed
 GITIGNORE_ENV = [".env", ".env.*"] + [f"!{n}" for n in ENV_EXAMPLES]  # the lines setup adds to .gitignore
 # The words line that opens a contract's body; its four labels follow the Backlog's Source (ship-spec).
@@ -103,7 +108,7 @@ def die(msg: str, code: int = 2) -> None:
 def load_config(root: Path) -> dict:
     p = root / CONFIG
     if not p.exists():
-        die(f"{CONFIG} not found in {root}. Run `/ship:setup` first.")
+        die(f"{CONFIG} not found in {root}. Run `/mg-ship-kit:setup` first.")
     return json.loads(p.read_text())
 
 
@@ -879,6 +884,9 @@ def cmd_setup(args) -> int:
         print("created CLAUDE.md from the template — fill the <placeholders>")
     else:
         print("CLAUDE.md exists; left untouched. Compare it with the kit template by hand.")
+        if re.search(r"/ship:(setup|next|cto-check|done|drop)\b", cm.read_text()):
+            print("WARNING: CLAUDE.md names the old commands (/ship:…). The plugin is mg-ship-kit since 0.4.0: change "
+                  "them to /mg-ship-kit:…, or a session will look for commands that don't exist.")
     for name, side, hint in (("vulture", "python_dir", "pip install vulture==2.16   (inside the backend's venv)"),
                              ("knip", "node_dir", "npm i -D knip           (inside the frontend)")):
         if cfg.get(side) is None:
@@ -890,6 +898,7 @@ def cmd_setup(args) -> int:
     changed = install_ci(root)
     print(f"CI: the Ship check runs on GitHub on every push to dev and main ({CI_WORKFLOW}); "
           + (f"wrote {', '.join(changed)}" if changed else "files up to date") + f" (kit {KIT_VERSION})")
+    print(install_cloud_settings(root))
     track = cfg.get("track")
     print(f"track: {track}" if track else
           "track: not set → read the Track line in the project page's Facts and rerun setup with --track")
@@ -958,10 +967,10 @@ def print_report(c: Contract, size: dict | None, stack: dict | None, left: dict 
         lines.append("RESULT: PASS — the piece may reach dev." if ci else
                      "RESULT: PASS — the piece may reach dev. Propose CLAUDE.md edits now (D33).")
     elif ci:
-        lines.append("RESULT: FAIL — nothing deploys from this commit. Run /ship:cto-check in Claude Code, take the "
+        lines.append("RESULT: FAIL — nothing deploys from this commit. Run /mg-ship-kit:cto-check in Claude Code, take the "
                      "way out, push again.")
     else:
-        lines.append("RESULT: FAIL — fix the check, then run /ship:cto-check again. Something extra: client asked? "
+        lines.append("RESULT: FAIL — fix the check, then run /mg-ship-kit:cto-check again. Something extra: client asked? "
                      "→ owner approves a contract change in one line; else delete it.")
     print("\n".join(lines))
     return overall
@@ -974,7 +983,7 @@ def cmd_check(args) -> int:
     c = active_contract(root, args.contract)
     if not c:
         print("ship: no contract is building (none with `Status: building` in contracts/). "
-              "Pick up the next Ready piece with /ship:next.", file=sys.stderr)
+              "Pick up the next Ready piece with /mg-ship-kit:next.", file=sys.stderr)
         return 3
     what = args.what
     size = count_size(root, cfg, c) if what in ("check", "size") else None
@@ -1036,7 +1045,7 @@ def cmd_pickup(args) -> int:
     cs = list_contracts(root)
     busy = [c for c in cs if c.status == "building"]
     if busy:
-        die(f"{busy[0].name} is still building. One piece at a time: push it to dev (/ship:cto-check) "
+        die(f"{busy[0].name} is still building. One piece at a time: push it to dev (/mg-ship-kit:cto-check) "
             "or drop it before picking up the next.", 2)
     head = git_out(root, "rev-parse", "--short=10", "HEAD")
     if not head:
@@ -1146,7 +1155,7 @@ def cmd_ondev(args) -> int:
     left = check_leftovers(root, cfg, c, False)
     failed = [n for n, r in (("size", size), ("stack", stack), ("leftovers", left)) if r["status"] == "FAIL"]
     if failed:
-        die(f"{c.name}: the check fails now ({', '.join(failed)}), so it stays building. Run /ship:cto-check.", 1)
+        die(f"{c.name}: the check fails now ({', '.join(failed)}), so it stays building. Run /mg-ship-kit:cto-check.", 1)
     if c.removing:
         c.set_status("dropped")
         print(f"{c.name}: Status: dropped (its code is removed from {args.branch})")
@@ -1172,7 +1181,7 @@ def cmd_drop(args) -> int:
     if c.status in ("done", "dropped", "draft", "ready"):
         die(f"{c.name} is {c.status}; only a building or on-dev piece can be dropped.", 1)
     if c.status == "building" and c.removing:
-        die(f"{c.name} is already being removed: delete its code, run /ship:cto-check, push to dev.", 1)
+        die(f"{c.name} is already being removed: delete its code, run /mg-ship-kit:cto-check, push to dev.", 1)
     if c.status == "building":
         # never reached dev: its code must be gone from the working tree before the contract closes
         changed = [f for f in git_changes(root, c.base) if not f.startswith(CONTRACTS + "/")]
@@ -1188,7 +1197,7 @@ def cmd_drop(args) -> int:
     head = git_out(root, "rev-parse", "--short=10", "HEAD")
     c.set_status("building", {"Base": head,
                               "Removing": f"{dt.date.today().isoformat()}, the client rejected it; built from {c.base}"})
-    print(f"{c.name}: removing. Delete its code, run /ship:cto-check (nothing may be added), push to dev; "
+    print(f"{c.name}: removing. Delete its code, run /mg-ship-kit:cto-check (nothing may be added), push to dev; "
           "it becomes dropped when the push lands.")
     return 0
 
@@ -1323,7 +1332,7 @@ def dev_verdict(root: Path, cfg: dict, since: str, how: str, ci: bool = False) -
         # moving the folders changes what the check scans, so it rides with an approved piece like code does
         code.append(f"{CONFIG} (the backend or frontend folder changed)")
     if not code:
-        print("bookkeeping only (contracts, ship.json, CLAUDE.md, CI files, readme): nothing to check.")
+        print("bookkeeping only (contracts, ship.json, CLAUDE.md, .claude/settings.json, CI files, readme): nothing to check.")
         return 0
     building = [c for c in list_contracts(root) if c.status == "building"]
     if len(building) > 1:
@@ -1332,7 +1341,7 @@ def dev_verdict(root: Path, cfg: dict, since: str, how: str, ci: bool = False) -
         return 1
     if not building:
         print(f"product code changed and no contract is building, so no check covers it: {short_list(code)}. "
-              "Every change belongs to a piece (D1): pick one up with /ship:next, or remove the change.")
+              "Every change belongs to a piece (D1): pick one up with /mg-ship-kit:next, or remove the change.")
         return 3
     c = building[0]
     c.check_ready()
@@ -1547,6 +1556,41 @@ def install_ci(root: Path) -> list[str]:
         shutil.copyfile(src, dst)
         changed.append(rel)
     return changed
+
+
+def install_cloud_settings(root: Path) -> str:
+    """Declare the kit's marketplace and plugin in the project's .claude/settings.json, so any session that opens
+    the repo, a cloud one included, loads the plugin with no install (D59). Merges: other keys stay as they are.
+    Replaces an older address under the same marketplace name. Returns one line for setup's output."""
+    path = root / CLOUD_SETTINGS
+    data: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text() or "{}")
+        except json.JSONDecodeError:
+            return (f"cloud: {CLOUD_SETTINGS} isn't valid JSON, so setup left it alone. Fix it and rerun setup; "
+                    "until then cloud sessions don't load the plugin.")
+        if not isinstance(data, dict):
+            return f"cloud: {CLOUD_SETTINGS} isn't a JSON object, so setup left it alone. Fix it and rerun setup."
+    before = json.dumps(data, sort_keys=True)
+    want = {"source": {"source": "github", "repo": KIT_REPO}}
+    markets = data.get("extraKnownMarketplaces")
+    if not isinstance(markets, dict):
+        markets = data["extraKnownMarketplaces"] = {}
+    old = markets.get(KIT_MARKETPLACE)
+    markets[KIT_MARKETPLACE] = want
+    plugins = data.get("enabledPlugins")
+    if not isinstance(plugins, dict):
+        plugins = data["enabledPlugins"] = {}
+    plugins.pop(KIT_PLUGIN_OLD, None)
+    plugins[KIT_PLUGIN] = True
+    if json.dumps(data, sort_keys=True) == before:
+        return f"cloud: {CLOUD_SETTINGS} already declares the plugin; cloud sessions on this repo load it."
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    moved = old is not None and old != want
+    return (f"cloud: wrote {CLOUD_SETTINGS}" + (f" (the kit's address changed to {KIT_REPO})" if moved else "")
+            + f": cloud sessions on this repo load the plugin, if Claude's GitHub app can reach {KIT_REPO}.")
 
 
 def cmd_ci_install(args) -> int:
