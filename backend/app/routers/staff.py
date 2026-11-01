@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/staff")
 
 
 class Login(BaseModel):
-    role: Literal["desk", "admin"]
+    role: Literal["desk", "admin", "stand"]
     secret: str
 
 
@@ -23,7 +23,7 @@ class Token(BaseModel):
 
 @router.post("/login")
 def login(body: Login, db: DbSession = Depends(get_db)) -> Token:
-    expected = config.DESK_PIN if body.role == "desk" else config.ADMIN_PASSWORD
+    expected = {"desk": config.DESK_PIN, "admin": config.ADMIN_PASSWORD, "stand": config.STAND_PIN}[body.role]
     # An unset PIN or password locks the screen rather than opening it
     if not expected or not hmac.compare_digest(body.secret.encode(), expected.encode()):
         raise HTTPException(401, "wrong_secret")

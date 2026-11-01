@@ -11,8 +11,8 @@ from app.models import Guest
 CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 
 
-def random_code() -> str:
-    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(10))
+def random_code(length: int = 10) -> str:
+    return "".join(secrets.choice(CODE_ALPHABET) for _ in range(length))
 
 
 def new_code(db: DbSession) -> str:

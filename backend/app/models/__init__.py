@@ -59,6 +59,8 @@ class Stage(Base):
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # The banner line guests see when this stage begins
     message: Mapped[str] = mapped_column(Text, default="")
+    # The market opens when the first stage marked «Маркет» starts
+    market: Mapped[bool] = mapped_column(default=False)
 
 
 class Task(Base):
@@ -76,7 +78,8 @@ class Task(Base):
     coins_from_rule: Mapped[bool] = mapped_column(default=False)
     partner_name: Mapped[str] = mapped_column(String(100), default="")
     partner_package: Mapped[str] = mapped_column(String(16), default="")
-    # How a guest does it: "qr" (scan the code at the venue), "link" (open a link, then confirm), "" (not yet)
+    # How a guest does it: "qr" (scan the code at the venue), "link" (open a link, then confirm),
+    # "market" (the guest's first purchase in the market), "" (not yet)
     method: Mapped[str] = mapped_column(String(8), default="")
     link: Mapped[str] = mapped_column(Text, default="")
     # The random code printed in the task's QR; kept across re-uploads so printed codes keep working
@@ -87,3 +90,32 @@ class Task(Base):
     position: Mapped[int] = mapped_column(default=0)
     # Rows removed from the file are hidden, not deleted: later pieces keep what guests did
     active: Mapped[bool] = mapped_column(default=True)
+
+
+class Prize(Base):
+    __tablename__ = "prizes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The admin's ID from the file's «Призы» sheet: re-uploads match rows by it
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(200))
+    partner: Mapped[str] = mapped_column(String(100))
+    price: Mapped[int]
+    quantity: Mapped[int]
+    position: Mapped[int] = mapped_column(default=0)
+    # Rows removed from the file are hidden, not deleted: guests who bought them still get them
+    active: Mapped[bool] = mapped_column(default=True)
+
+
+class Redemption(Base):
+    __tablename__ = "redemptions"
+    # A guest can buy each prize once
+    __table_args__ = (UniqueConstraint("guest_id", "prize_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    prize_id: Mapped[int] = mapped_column(ForeignKey("prizes.id"))
+    # The code in the guest's QR and read out at the stand
+    code: Mapped[str] = mapped_column(String(16), unique=True)
+    issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

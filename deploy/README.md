@@ -10,14 +10,14 @@ One Worker per environment serves the built frontend and passes `/api/*` and `/b
 2. **Cloudflare API token**: My Profile → API Tokens → Create Token → "Edit Cloudflare Workers" template, scoped to this account. If the first deploy says the token can't push the container image, add the Containers permission the error names.
 3. **Neon**: create a project, then copy the connection string of its database for dev.
 4. **GitHub** (repo → Settings → Environments → New environment `dev`):
-   - secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `DATABASE_URL` (the Neon string), `DESK_PIN` (long), `ADMIN_PASSWORD`
+   - secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `DATABASE_URL` (the Neon string), `DESK_PIN` (long), `ADMIN_PASSWORD`, `STAND_PIN` (the partner stands' PIN in the market; not the desk PIN)
    - variable: `APP_URL` = `https://gamify-dev.<your-subdomain>.workers.dev`
 
 The first deploy sets the secrets in the step after the Worker goes up: open the app only when the Deploy job is green.
 
 ## Run it locally
 
-Needs Docker running. In `deploy/`: `npm install`, put test values in `.dev.vars` (git-ignored: `DATABASE_URL`, `DESK_PIN`, `ADMIN_PASSWORD`, `APP_URL=http://localhost:8787`), build the frontend, then `npx wrangler dev --env dev`. The container reaches a Postgres on your Mac at `host.docker.internal`.
+Needs Docker running. In `deploy/`: `npm install`, put test values in `.dev.vars` (git-ignored: `DATABASE_URL`, `DESK_PIN`, `ADMIN_PASSWORD`, `STAND_PIN`, `APP_URL=http://localhost:8787`), build the frontend, then `npx wrangler dev --env dev`. The container reaches a Postgres on your Mac at `host.docker.internal`.
 
 ## Watch for
 

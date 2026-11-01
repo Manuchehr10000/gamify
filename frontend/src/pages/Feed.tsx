@@ -1,4 +1,4 @@
-import { Check, Coins, Star, Trophy, WifiOff, X } from 'lucide-react'
+import { Check, ChevronRight, Coins, ShoppingBag, Star, Trophy, WifiOff, X } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
@@ -98,6 +98,14 @@ export function Feed() {
         </div>
       )}
       <Totals points={feed.points} coins={feed.coins} />
+      <Link
+        to="/market"
+        className="flex items-center gap-3 rounded-2xl bg-amber-50 px-4 py-3 font-medium text-amber-900 ring-1 ring-amber-200"
+      >
+        <ShoppingBag className="size-5" aria-hidden />
+        <span className="flex-1">{t('feed.toMarket')}</span>
+        <ChevronRight className="size-5" aria-hidden />
+      </Link>
       <Body feed={feed} />
     </Screen>
   )

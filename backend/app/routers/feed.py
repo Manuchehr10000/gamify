@@ -19,7 +19,7 @@ PACKAGE_ORDER = list(PACKAGES)
 
 
 def task_reason(task_id: int) -> str:
-    """The score_events reason for doing a task: one award per task per guest. Piece 3 writes it."""
+    """The score_events reason for doing a task: one award per task per guest."""
     return f"task:{task_id}"
 
 
@@ -85,7 +85,8 @@ def _open(t: Task, at: datetime) -> bool:
     return (t.window_start is None or t.window_start <= at) and (t.window_end is None or at < t.window_end)
 
 
-def _totals(db: DbSession, guest: Guest) -> tuple[int, int]:
+def totals(db: DbSession, guest: Guest) -> tuple[int, int]:
+    """Points and coins: everything earned, less the coins spent in the market."""
     row = db.execute(select(func.coalesce(func.sum(ScoreEvent.points), 0), func.coalesce(func.sum(ScoreEvent.coins), 0))
                      .where(ScoreEvent.guest_id == guest.id)).one()
     return int(row[0]), int(row[1])
@@ -94,7 +95,7 @@ def _totals(db: DbSession, guest: Guest) -> tuple[int, int]:
 @router.get("/api/feed")
 def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Feed:
     d = stages.day(db)
-    points, coins = _totals(db, guest)
+    points, coins = totals(db, guest)
     first = d.stages[0].starts_at.astimezone(EVENT_TZ) if d.stages else None
     if d.current is None:
         return Feed(points=points, coins=coins, state=d.state, stage_count=len(d.stages), starts_at=first,

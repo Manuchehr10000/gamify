@@ -6,6 +6,7 @@ interface Env {
   DATABASE_URL: string
   DESK_PIN: string
   ADMIN_PASSWORD: string
+  STAND_PIN: string
 }
 
 // Runs the FastAPI backend (deploy/Dockerfile). Static assets serve the frontend;
@@ -21,6 +22,7 @@ export class Backend extends Container<Env> {
       DATABASE_URL: env.DATABASE_URL,
       DESK_PIN: env.DESK_PIN,
       ADMIN_PASSWORD: env.ADMIN_PASSWORD,
+      STAND_PIN: env.STAND_PIN,
       // App and API share one address, so badge links and CORS both point at it
       PUBLIC_BASE_URL: env.APP_URL,
       FRONTEND_URL: env.APP_URL,

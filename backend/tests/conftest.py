@@ -5,6 +5,7 @@ os.environ["PUBLIC_BASE_URL"] = "http://api.test"
 os.environ["FRONTEND_URL"] = "http://app.test"
 os.environ["DESK_PIN"] = "1234"
 os.environ["ADMIN_PASSWORD"] = "admin-pass"
+os.environ["STAND_PIN"] = "5678"
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
@@ -24,7 +25,7 @@ def schema():
 @pytest.fixture(autouse=True)
 def clean():
     with engine.begin() as c:
-        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages RESTART IDENTITY CASCADE"))
+        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, redemptions RESTART IDENTITY CASCADE"))
 
 
 @pytest.fixture
@@ -33,7 +34,7 @@ def client():
 
 
 def staff_headers(client: TestClient, role: str) -> dict:
-    secret = "1234" if role == "desk" else "admin-pass"
+    secret = {"desk": "1234", "admin": "admin-pass", "stand": "5678"}[role]
     token = client.post("/api/staff/login", json={"role": role, "secret": secret}).json()["token"]
     return {"Authorization": f"Bearer {token}"}
 

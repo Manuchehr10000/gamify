@@ -38,6 +38,11 @@ def day(db: DbSession) -> Day:
     return Day("running", stages, current)
 
 
+def market_opens_at(db: DbSession) -> datetime | None:
+    """The start of the first stage marked «Маркет»; None when no stage is marked."""
+    return db.scalar(select(Stage.starts_at).where(Stage.market).order_by(Stage.number).limit(1))
+
+
 def advance(db: DbSession) -> bool:
     """Start the next stage now. False when there is no next stage (schedule empty, last stage on, or over)."""
     d = day(db)

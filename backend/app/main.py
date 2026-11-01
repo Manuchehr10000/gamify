@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import config
-from app.routers import admin, admin_tasks, badge, desk, feed, staff
+from app.routers import admin, admin_tasks, badge, desk, feed, market, staff, stand
 
 app = FastAPI(title="Event Gamification")
 # The app and the API are separate Railway services; only the app's origin may call the API
 app.add_middleware(CORSMiddleware, allow_origins=[config.FRONTEND_URL], allow_methods=["*"],
                    allow_headers=["Authorization", "Content-Type"])
-for r in (badge.router, staff.router, admin.router, desk.router, feed.router, admin_tasks.router):
+for r in (badge.router, staff.router, admin.router, desk.router, feed.router, admin_tasks.router,
+          market.router, stand.router):
     app.include_router(r)

@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ExternalLink, QrCode } from 'lucide-react'
+import { Check, ChevronLeft, ExternalLink, QrCode, ShoppingBag } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
@@ -32,6 +32,17 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
         <QrCode className="size-5 shrink-0" aria-hidden />
         {t('task.scanHint')}
       </p>
+    )
+  }
+  if (task.method === 'market') {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-slate-700">{t('task.marketHint')}</p>
+        <Link to="/market" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 font-medium text-white">
+          <ShoppingBag className="size-4" aria-hidden />
+          {t('task.toMarket')}
+        </Link>
+      </div>
     )
   }
   if (task.method !== 'link') return <Button disabled>{t('task.doSoon')}</Button>

@@ -43,8 +43,10 @@ export async function download(path: string, token: string, filename: string): P
 }
 
 // Staff and guest logins are kept per role, so the desk tablet can't turn into a guest by accident
+type TokenKey = 'guest' | 'desk' | 'admin' | 'stand'
+
 export const tokens = {
-  get: (key: 'guest' | 'desk' | 'admin') => localStorage.getItem(`${key}_token`),
-  set: (key: 'guest' | 'desk' | 'admin', value: string) => localStorage.setItem(`${key}_token`, value),
-  clear: (key: 'guest' | 'desk' | 'admin') => localStorage.removeItem(`${key}_token`),
+  get: (key: TokenKey) => localStorage.getItem(`${key}_token`),
+  set: (key: TokenKey, value: string) => localStorage.setItem(`${key}_token`, value),
+  clear: (key: TokenKey) => localStorage.removeItem(`${key}_token`),
 }

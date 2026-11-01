@@ -1,10 +1,12 @@
-"""The admin's Excel file: sheet «Этапы» (the day's schedule) and sheet «Задания» (the task catalog).
+"""The admin's Excel file: sheet «Этапы» (the day's schedule), sheet «Задания» (the task catalog)
+and sheet «Призы» (the market's prizes).
 
 Upload reads both sheets; download writes them back the same way, so the file can be edited and uploaded again.
 """
 import io
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -13,11 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.guests import random_code
-from app.models import Stage, Task
+from app.models import Prize, Stage, Task
 from app.stages import EVENT_TZ
 
 STAGES_SHEET = "Этапы"
 TASKS_SHEET = "Задания"
+PRIZES_SHEET = "Призы"
 
 STAGE_COLUMNS = {
     "number": "Номер",
@@ -25,6 +28,7 @@ STAGE_COLUMNS = {
     "starts_at": "Начало",
     "ends_at": "Конец",
     "message": "Сообщение при смене этапа",
+    "market": "Маркет",
 }
 TASK_COLUMNS = {
     "code": "ID",
@@ -40,8 +44,16 @@ TASK_COLUMNS = {
     "method": "Выполнение",
     "link": "Ссылка",
 }
+PRIZE_COLUMNS = {
+    "code": "ID",
+    "name": "Название",
+    "partner": "Партнёр",
+    "price": "Цена в монетах",
+    "quantity": "Количество",
+}
 REQUIRED_STAGE = ("number", "name", "starts_at", "ends_at")
 REQUIRED_TASK = ("code", "stage", "type", "text", "points")
+REQUIRED_PRIZE = tuple(PRIZE_COLUMNS)
 
 # The 10 task types of TAG's rules (section 5). The file names them in Russian; the first name is what export writes.
 TYPES = {
@@ -60,7 +72,11 @@ TYPES = {
 METHODS = {
     "qr": ["QR", "QR-код"],
     "link": ["Ссылка", "Link"],
+    "market": ["Маркет", "Market"],
 }
+# The «Маркет» cell on a stage: «да» marks where the market opens; export writes the first word
+YES = ("да", "yes", "1", "+", "x", "true")
+NO = ("", "нет", "no", "0", "-", "false")
 # Partner packages in feed order (TAG's rules, section 6)
 PACKAGES = {
     "general": ["Генеральный партнёр", "General"],
@@ -84,6 +100,9 @@ class ImportResult:
     added: int = 0
     changed: int = 0
     hidden: int = 0
+    prizes_added: int = 0
+    prizes_changed: int = 0
+    prizes_hidden: int = 0
     failed: list[dict] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
 
@@ -165,8 +184,12 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
         return result
     stage_cols, stage_rows = _sheet_rows(wb[sheets[STAGES_SHEET.lower()]], STAGE_COLUMNS)
     task_cols, task_rows = _sheet_rows(wb[sheets[TASKS_SHEET.lower()]], TASK_COLUMNS)
+    # A file without «Призы» leaves the prizes as they are, so an older file can't empty the market
+    prize_sheet = sheets.get(PRIZES_SHEET.lower())
+    prize_cols, prize_rows = _sheet_rows(wb[prize_sheet], PRIZE_COLUMNS) if prize_sheet else ({}, [])
     result.missing = [f"{STAGES_SHEET}: {STAGE_COLUMNS[c]}" for c in REQUIRED_STAGE if c not in stage_cols] + [
-        f"{TASKS_SHEET}: {TASK_COLUMNS[c]}" for c in REQUIRED_TASK if c not in task_cols]
+        f"{TASKS_SHEET}: {TASK_COLUMNS[c]}" for c in REQUIRED_TASK if c not in task_cols] + [
+        f"{PRIZES_SHEET}: {PRIZE_COLUMNS[c]}" for c in REQUIRED_PRIZE if prize_sheet and c not in prize_cols]
     if result.missing:
         return result
 
@@ -189,12 +212,15 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             ends = _time(_cell(row, stage_cols, "ends_at"), "bad_end")
             if ends <= starts:
                 raise RowError("end_before_start")
+            market_cell = _text(_cell(row, stage_cols, "market")).lower()
+            if market_cell not in YES + NO:
+                raise RowError("bad_market")
         except RowError as e:
             fail(STAGES_SHEET, n, str(e))
             continue
         seen_stages.add(number)
         values = {"name": name, "starts_at": starts, "ends_at": ends,
-                  "message": _text(_cell(row, stage_cols, "message"))}
+                  "message": _text(_cell(row, stage_cols, "message")), "market": market_cell in YES}
         stage = stages.get(number)
         if stage is None:
             stage = Stage(number=number, **values)
@@ -279,8 +305,52 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
         if code not in seen and task.active:
             task.active = False
             result.hidden += 1
+    if prize_sheet:
+        _import_prizes(db, prize_cols, prize_rows, result, fail)
     db.commit()
     return result
+
+
+def _import_prizes(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], result: ImportResult,
+                   fail: Callable[[str, int, str], None]) -> None:
+    prizes = {p.code: p for p in db.scalars(select(Prize))}
+    seen: set[str] = set()
+    for position, (n, row) in enumerate(rows):
+        try:
+            code = _text(_cell(row, cols, "code"))
+            if not code:
+                raise RowError("no_id")
+            if code in seen:
+                raise RowError("duplicate_id")
+            name = _text(_cell(row, cols, "name"))
+            if not name:
+                raise RowError("no_name")
+            partner = _text(_cell(row, cols, "partner"))
+            if not partner:
+                raise RowError("no_partner")
+            price = _int(_cell(row, cols, "price"), "bad_price")
+            if price < 1:
+                raise RowError("bad_price")
+            quantity = _int(_cell(row, cols, "quantity"), "bad_quantity")
+        except RowError as e:
+            fail(PRIZES_SHEET, n, str(e))
+            continue
+        seen.add(code)
+        values = {"name": name, "partner": partner, "price": price, "quantity": quantity,
+                  "position": position, "active": True}
+        prize = prizes.get(code)
+        if prize is None:
+            db.add(Prize(code=code, **values))
+            result.prizes_added += 1
+        else:
+            if any(getattr(prize, k) != v for k, v in values.items() if k != "position"):
+                result.prizes_changed += 1
+            for k, v in values.items():
+                setattr(prize, k, v)
+    for code, prize in prizes.items():
+        if code not in seen and prize.active:
+            prize.active = False
+            result.prizes_hidden += 1
 
 
 def _new_qr(db: DbSession) -> str:
@@ -297,14 +367,14 @@ def _local(dt: datetime | None) -> datetime | None:
 
 
 def export_xlsx(db: DbSession) -> bytes:
-    """Both sheets with what is loaded now; with nothing loaded, an empty template with the right columns."""
+    """All three sheets with what is loaded now; with nothing loaded, an empty template with the right columns."""
     wb = Workbook()
     ws = wb.active
     ws.title = STAGES_SHEET
     ws.append(list(STAGE_COLUMNS.values()))
     stages = list(db.scalars(select(Stage).order_by(Stage.number)))
     for s in stages:
-        ws.append([s.number, s.name, _local(s.starts_at), _local(s.ends_at), s.message])
+        ws.append([s.number, s.name, _local(s.starts_at), _local(s.ends_at), s.message, YES[0] if s.market else None])
     for col in "CD":
         for cell in ws[col][1:]:
             cell.number_format = EXCEL_DATE
@@ -321,6 +391,11 @@ def export_xlsx(db: DbSession) -> bytes:
     for col in "IJ":
         for cell in wt[col][1:]:
             cell.number_format = EXCEL_DATE
+
+    wp = wb.create_sheet(PRIZES_SHEET)
+    wp.append(list(PRIZE_COLUMNS.values()))
+    for p in db.scalars(select(Prize).where(Prize.active).order_by(Prize.position, Prize.id)):
+        wp.append([p.code, p.name, p.partner, p.price, p.quantity])
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()

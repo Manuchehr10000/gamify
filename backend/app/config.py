@@ -19,3 +19,5 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rst
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 DESK_PIN = os.environ.get("DESK_PIN", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+# One PIN shared by the partner stands in the market
+STAND_PIN = os.environ.get("STAND_PIN", "")

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
 import { Button, Card, Input, Screen } from './ui'
 
-export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin'; onLogin: (token: string) => void }) {
+export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand'; onLogin: (token: string) => void }) {
   const { t } = useTranslation()
   const [secret, setSecret] = useState('')
   const [error, setError] = useState('')
@@ -28,11 +28,11 @@ export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin'; onLogin:
     <Screen>
       <Card>
         <form onSubmit={submit} className="flex flex-col gap-4">
-          <h1 className="text-xl font-semibold">{t(role === 'desk' ? 'staff.deskTitle' : 'staff.adminTitle')}</h1>
+          <h1 className="text-xl font-semibold">{t(`staff.${role}Title`)}</h1>
           <Input
             type="password"
-            inputMode={role === 'desk' ? 'numeric' : undefined}
-            placeholder={t(role === 'desk' ? 'staff.pin' : 'staff.password')}
+            inputMode={role === 'admin' ? undefined : 'numeric'}
+            placeholder={t(role === 'admin' ? 'staff.password' : 'staff.pin')}
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
             autoFocus

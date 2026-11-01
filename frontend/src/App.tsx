@@ -4,7 +4,9 @@ import { AdminTasks } from './pages/AdminTasks'
 import { AdminTasksQr } from './pages/AdminTasksQr'
 import { Desk } from './pages/Desk'
 import { Feed } from './pages/Feed'
+import { Market } from './pages/Market'
 import { Scan } from './pages/Scan'
+import { Stand } from './pages/Stand'
 import { TaskDetail } from './pages/TaskDetail'
 import { Welcome } from './pages/Welcome'
 
@@ -19,6 +21,8 @@ export default function App() {
       <Route path="/admin/tasks" element={<AdminTasks />} />
       <Route path="/admin/tasks/qr" element={<AdminTasksQr />} />
       <Route path="/q/:code" element={<Scan />} />
+      <Route path="/market" element={<Market />} />
+      <Route path="/stand/:code" element={<Stand />} />
     </Routes>
   )
 }

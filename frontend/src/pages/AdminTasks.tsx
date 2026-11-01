@@ -13,6 +13,9 @@ type Result = {
   added: number
   changed: number
   hidden: number
+  prizes_added: number
+  prizes_changed: number
+  prizes_hidden: number
   failed: { sheet: string; row: number; reason: string }[]
 }
 
@@ -126,6 +129,13 @@ export function AdminTasks() {
           {(result.stages_added > 0 || result.stages_changed > 0) && (
             <p className="text-slate-600">
               {t('tasksAdmin.stages', { added: result.stages_added, changed: result.stages_changed })}
+            </p>
+          )}
+          {(result.prizes_added > 0 || result.prizes_changed > 0 || result.prizes_hidden > 0) && (
+            <p className="text-slate-600">
+              {t('tasksAdmin.prizes', {
+                added: result.prizes_added, changed: result.prizes_changed, hidden: result.prizes_hidden,
+              })}
             </p>
           )}
           {result.failed.length > 0 && (
