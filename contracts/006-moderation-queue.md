@@ -1,5 +1,5 @@
 # Contract: Moderation queue
-Status: building
+Status: on-dev
 Base: 08dd5d4982
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be60811ea50ceeff02bc975a
