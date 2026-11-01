@@ -1,5 +1,5 @@
 # Contract: Quizzes with a timer
-Status: building
+Status: on-dev
 Base: c002a8f53f
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be6081c38072e3be147aa811
