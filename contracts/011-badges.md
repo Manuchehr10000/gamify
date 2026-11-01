@@ -1,5 +1,5 @@
 # Contract: Badges
-Status: building
+Status: on-dev
 Base: 01fb362e29
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be60813ab10cc0bf08bfc4dc
