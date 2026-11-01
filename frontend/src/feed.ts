@@ -1,3 +1,5 @@
+import type { Badge } from './badges'
+
 export type Stage = { number: number; name: string; starts_at: string; ends_at: string; message: string }
 export type Task = {
   id: number
@@ -26,6 +28,8 @@ export type Feed = {
   to_next: number | null
   // Set once, right after the guest climbed past the level they last saw: the full-screen moment
   new_level: string | null
+  // Badges just earned, sent once each: a full-screen moment each, after the level's
+  new_badges: Badge[]
   state: 'none' | 'before' | 'running' | 'over'
   stage_count: number
   starts_at: string | null

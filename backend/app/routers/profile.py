@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import levels
+from app import badges, levels
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, Prize, ScoreEvent, Submission, Task
@@ -37,6 +37,8 @@ class Profile(BaseModel):
     points: int
     # Below zero when a rejection took back coins already spent
     coins: int
+    # The badges held now, in badges.BADGES order; the page greys out the rest
+    badges: list[str]
     # Newest first
     history: list[Entry]
 
@@ -79,4 +81,4 @@ def profile(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_d
         else:
             entry.rejected = True
     return Profile(level=lv.name if lv else "", to_next=lv.to_next if lv else None, points=points, coins=coins,
-                   history=history)
+                   badges=badges.of(db, guest.id), history=history)

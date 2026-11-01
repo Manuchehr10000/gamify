@@ -202,3 +202,16 @@ class Level(Base):
     # The file's «Уровни» sheet: «Название» and «Баллов от»; the first level starts at 0
     name: Mapped[str] = mapped_column(String(100))
     min_points: Mapped[int] = mapped_column(unique=True)
+
+
+class BadgeAward(Base):
+    __tablename__ = "badge_awards"
+    # A badge the guest holds and has seen; the full-screen moment shows when one is added. A rejection that breaks
+    # its condition removes the row, so earning it again shows the moment again
+    __table_args__ = (UniqueConstraint("guest_id", "badge"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    # One of badges.BADGES: photo_hunter, networker, erudite, brand_friend, forum_spirit
+    badge: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

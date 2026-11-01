@@ -26,7 +26,7 @@ def schema():
 @pytest.fixture(autouse=True)
 def clean():
     with engine.begin() as c:
-        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, redemptions, submissions, questions, quiz_attempts, levels RESTART IDENTITY CASCADE"))
+        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, redemptions, submissions, questions, quiz_attempts, levels, badge_awards RESTART IDENTITY CASCADE"))
         # The levels the migration starts with: TAG's five
         c.execute(text("INSERT INTO levels (name, min_points) VALUES ('Новичок форума', 0), ('Участник', 50), "
                        "('Актив', 150), ('Эксперт форума', 300), ('Легенда MF', 500)"))

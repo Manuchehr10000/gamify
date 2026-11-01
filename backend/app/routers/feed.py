@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Stage, Submission, Task
-from app import levels, photos, stages
+from app import badges, levels, photos, stages
 from app.stages import EVENT_TZ
 from app.task_file import PACKAGES
 
@@ -59,6 +59,8 @@ class Feed(BaseModel):
     to_next: int | None
     # Set once, when the guest has just climbed past the level they last saw: the full-screen moment
     new_level: str | None
+    # Badges just earned and not seen before, in badges.BADGES order: a full-screen moment each, after the level's
+    new_badges: list[str]
     state: str
     stage_count: int
     starts_at: datetime | None
@@ -127,7 +129,8 @@ def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db))
     points, coins = totals(db, guest)
     lv = levels.place(levels.load(db), points)
     mine = {"points": points, "coins": coins, "level": lv.name if lv else "", "to_next": lv.to_next if lv else None,
-            "new_level": lv.name if levels.climbed(db, guest, lv) else None}
+            "new_level": lv.name if levels.climbed(db, guest, lv) else None,
+            "new_badges": badges.fresh(db, guest.id)}
     first = d.stages[0].starts_at.astimezone(EVENT_TZ) if d.stages else None
     if d.current is None:
         return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=None, tasks=[])

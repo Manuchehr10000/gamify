@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DbSession
 
-from app import levels, rating
+from app import badges, levels, rating
 from app.auth import current_guest, require_role
 from app.db import get_db
 from app.models import Guest
@@ -21,6 +21,8 @@ class Place(BaseModel):
     points: int
     # The level the points reach, shown beside the name
     level: str
+    # The badges held now, as small icons beside the name
+    badges: list[str]
 
 
 class GuestPlace(Place):
@@ -45,11 +47,13 @@ def guest_rating(guest: Guest = Depends(current_guest), db: DbSession = Depends(
     settle(db)
     frozen, rows = rating.rows(db)
     lv = levels.load(db)
+    held = badges.earned(db, [r.guest.id for r in rows[:TOP]])
     mine = next((r for r in rows if r.guest.id == guest.id), None)
     return Rating(
         frozen=frozen,
         top=[GuestPlace(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
-                        points=r.points, level=levels.name(lv, r.points), me=r.guest.id == guest.id)
+                        points=r.points, level=levels.name(lv, r.points), badges=held[r.guest.id],
+                        me=r.guest.id == guest.id)
              for r in rows[:TOP]],
         me=Mine(place=mine.place, points=mine.points) if mine else None,
     )
@@ -66,8 +70,10 @@ def hall(db: DbSession = Depends(get_db)) -> Hall:
     settle(db)
     frozen, rows = rating.rows(db)
     lv = levels.load(db)
+    held = badges.earned(db, [r.guest.id for r in rows[:HALL_TOP]])
     return Hall(frozen=frozen, top=[Place(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
-                                          points=r.points, level=levels.name(lv, r.points)) for r in rows[:HALL_TOP]])
+                                          points=r.points, level=levels.name(lv, r.points), badges=held[r.guest.id])
+                                    for r in rows[:HALL_TOP]])
 
 
 class FreezeIn(BaseModel):

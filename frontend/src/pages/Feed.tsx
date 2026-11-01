@@ -1,8 +1,9 @@
-import { Check, ChevronRight, Coins, LoaderCircle, ShoppingBag, Star, Trophy, WifiOff, X } from 'lucide-react'
+import { Check, ChevronRight, Coins, LoaderCircle, ShoppingBag, Star, Trophy, WifiOff, X, type LucideIcon } from 'lucide-react'
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
+import { BADGE_ICONS } from '../badges'
 import { DayBar } from '../components/DayBar'
 import { LevelUp } from '../components/LevelUp'
 import { ReviewNote } from '../components/ReviewNote'
@@ -14,6 +15,8 @@ import { forgetUpload, onSent, useUpload } from '../uploads'
 // The stage can change at any moment (by the clock or the admin's button): ask again well inside a minute
 const POLL_MS = 30_000
 
+type Moment = { title: string; icon?: LucideIcon }
+
 type State =
   | { kind: 'loading' }
   | { kind: 'loggedOut' }
@@ -24,16 +27,21 @@ export function Feed() {
   const { t } = useTranslation()
   const [state, setState] = useState<State>(() => (tokens.get('guest') ? { kind: 'loading' } : { kind: 'loggedOut' }))
   const [banner, setBanner] = useState<Stage | null>(null)
-  // The level just reached; the server sends it once, so only a fresh load (never the saved copy) shows it
-  const [levelUp, setLevelUp] = useState<string | null>(null)
+  // The level just reached, then each badge just earned, one after the other. The server sends them once,
+  // so only a fresh load (never the saved copy) shows them
+  const [moments, setMoments] = useState<Moment[]>([])
 
   const load = useCallback(async () => {
     const token = tokens.get('guest')
     if (!token) return
     try {
       const feed = await api<FeedData>('/api/feed', { token })
-      cache.saveFeed({ ...feed, new_level: null })
-      if (feed.new_level) setLevelUp(feed.new_level)
+      cache.saveFeed({ ...feed, new_level: null, new_badges: [] })
+      const fresh: Moment[] = [
+        ...(feed.new_level ? [{ title: t('level.new', { name: feed.new_level }) }] : []),
+        ...feed.new_badges.map((b) => ({ title: t('badges.new', { name: t(`badges.${b}.name`) }), icon: BADGE_ICONS[b] })),
+      ]
+      if (fresh.length) setMoments((shown) => [...shown, ...fresh])
       // A photo sent back for a retake: the earlier upload's «Выполнено» no longer holds
       feed.tasks.filter((task) => task.review === 'retake').forEach((task) => forgetUpload(task.id))
       if (feed.stage) {
@@ -51,7 +59,7 @@ export function Feed() {
       const saved = cache.feed()
       setState(saved ? { kind: 'ready', feed: saved, offline: true } : { kind: 'error' })
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     // The first load and the timer both refresh the feed from outside React's render
@@ -90,7 +98,9 @@ export function Feed() {
   const { feed, offline } = state
   return (
     <Screen>
-      {levelUp && <LevelUp name={levelUp} onClose={() => setLevelUp(null)} />}
+      {moments.length > 0 && (
+        <LevelUp key={moments[0].title} title={moments[0].title} icon={moments[0].icon} onClose={() => setMoments((m) => m.slice(1))} />
+      )}
       {offline && (
         <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800">
           <WifiOff className="size-4 shrink-0" aria-hidden />

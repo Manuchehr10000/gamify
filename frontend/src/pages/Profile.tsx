@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
+import { BADGE_ICONS, BADGES, type Badge } from '../badges'
 import { Card, Screen } from '../components/ui'
 
 type Entry = {
@@ -23,6 +24,8 @@ type ProfileData = {
   points: number
   // Below zero when a rejection took back coins already spent
   coins: number
+  // The badges held now; the page shows all five and greys out the rest
+  badges: Badge[]
   history: Entry[]
 }
 
@@ -76,6 +79,29 @@ export function Profile() {
           </span>
         </p>
       </Card>
+      <h2 className="font-semibold">{t('badges.title')}</h2>
+      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {BADGES.map((b) => {
+          const Icon = BADGE_ICONS[b]
+          const held = profile.badges.includes(b)
+          return (
+            <li
+              key={b}
+              className={`flex items-center gap-3 rounded-2xl px-4 py-3 ring-1 ${held ? 'bg-amber-50 ring-amber-200' : 'bg-slate-50 ring-slate-200'}`}
+            >
+              <span
+                className={`flex size-10 shrink-0 items-center justify-center rounded-full ${held ? 'bg-amber-300 text-emerald-900' : 'bg-slate-200 text-slate-400'}`}
+              >
+                <Icon className="size-5" aria-hidden />
+              </span>
+              <span className="flex min-w-0 flex-col">
+                <span className={`font-medium ${held ? 'text-slate-900' : 'text-slate-500'}`}>{t(`badges.${b}.name`)}</span>
+                {!held && <span className="text-sm text-slate-500">{t(`badges.${b}.condition`)}</span>}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
       <h2 className="font-semibold">{t('profile.history')}</h2>
       {profile.history.length === 0 ? (
         <p className="py-8 text-center text-slate-500">{t('profile.empty')}</p>

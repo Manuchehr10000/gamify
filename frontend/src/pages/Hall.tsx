@@ -2,6 +2,7 @@ import { Lock, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
+import { BadgeIcons } from '../components/BadgeIcon'
 import type { Hall as HallData } from '../rating'
 
 const POLL_MS = 10_000
@@ -57,6 +58,7 @@ export function Hall() {
               </span>
               <span className="flex min-w-0 flex-1 items-baseline gap-[1.5vw]">
                 <span className="truncate font-semibold">{r.name}</span>
+                <BadgeIcons badges={r.badges} className="gap-[0.4vw] self-center text-[0.55em] text-amber-300" />
                 {r.level && <span className="shrink-0 text-[0.55em] font-medium text-slate-400">{r.level}</span>}
               </span>
               <span className="font-bold tabular-nums text-emerald-400">{r.points}</span>

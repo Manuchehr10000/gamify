@@ -1,4 +1,7 @@
-type Place = { place: number; name: string; points: number; level: string }
+import type { Badge } from './badges'
+
+// badges: the ones held now, as small icons beside the name
+type Place = { place: number; name: string; points: number; level: string; badges: Badge[] }
 export type Rating = {
   frozen: boolean
   top: (Place & { me: boolean })[]

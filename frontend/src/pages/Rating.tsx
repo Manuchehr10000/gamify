@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
+import { BadgeIcons } from '../components/BadgeIcon'
 import { Card, Screen } from '../components/ui'
 import type { Rating as RatingData } from '../rating'
 
@@ -63,7 +64,10 @@ export function Rating() {
             >
               <span className="w-8 text-right tabular-nums text-slate-500">{r.place}</span>
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate">{r.name}</span>
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate">{r.name}</span>
+                  <BadgeIcons badges={r.badges} className="text-sm text-amber-600" />
+                </span>
                 {r.level && <span className="truncate text-xs font-normal text-slate-500">{r.level}</span>}
               </span>
               <span className="tabular-nums">{t('feed.points', { count: r.points })}</span>

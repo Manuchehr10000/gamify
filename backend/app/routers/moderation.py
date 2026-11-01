@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import config, levels, rating, stages
+from app import badges, config, levels, rating, stages
 from app.auth import current_moderator, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Submission, Task
@@ -136,5 +136,9 @@ def decide(submission_id: int, body: DecisionIn, name: str = Depends(current_mod
         db.flush()
         levels.dropped(db, s.guest_id)
     s.status, s.moderator, s.decided_at = STATUS[body.action], name, stages.now()
+    if body.action in ("retake", "penalty"):
+        # A rejected submission no longer counts towards a badge
+        db.flush()
+        badges.lost(db, s.guest_id)
     db.commit()
     return Decision(result="decided", status=s.status, moderator=s.moderator, decided_at=local(s.decided_at))
