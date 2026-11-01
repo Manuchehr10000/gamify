@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
 import { Button, Card, Input, Screen } from './ui'
 
-export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand'; onLogin: (token: string) => void }) {
+export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand' | 'moderator'; onLogin: (token: string) => void }) {
   const { t } = useTranslation()
   const [secret, setSecret] = useState('')
   const [error, setError] = useState('')
@@ -14,7 +14,10 @@ export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand'
     setBusy(true)
     setError('')
     try {
-      const { token } = await api<{ token: string }>('/api/staff/login', { json: { role, secret } })
+      // Each moderator has their own PIN, which tells the server who they are
+      const { token } = role === 'moderator'
+        ? await api<{ token: string }>('/api/moderator/login', { json: { secret } })
+        : await api<{ token: string }>('/api/staff/login', { json: { role, secret } })
       tokens.set(role, token)
       onLogin(token)
     } catch (err) {

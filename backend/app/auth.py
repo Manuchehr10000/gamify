@@ -14,9 +14,9 @@ def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def start_session(db: DbSession, role: str, guest_id: int | None = None) -> str:
+def start_session(db: DbSession, role: str, guest_id: int | None = None, staff_name: str = "") -> str:
     token = secrets.token_urlsafe(32)
-    db.add(Session(token_hash=_hash(token), role=role, guest_id=guest_id))
+    db.add(Session(token_hash=_hash(token), role=role, guest_id=guest_id, staff_name=staff_name))
     db.commit()
     return token
 
@@ -43,3 +43,11 @@ def require_role(role: str) -> Callable[..., None]:
             raise HTTPException(401, "not_logged_in")
 
     return check
+
+
+def current_moderator(authorization: str | None = Header(default=None), db: DbSession = Depends(get_db)) -> str:
+    """The logged-in moderator's name."""
+    s = _session(db, authorization)
+    if not s or s.role != "moderator":
+        raise HTTPException(401, "not_logged_in")
+    return s.staff_name

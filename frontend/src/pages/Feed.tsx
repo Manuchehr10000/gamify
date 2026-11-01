@@ -4,10 +4,11 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { DayBar } from '../components/DayBar'
+import { ReviewNote } from '../components/ReviewNote'
 import { TaskIcon } from '../components/TaskIcon'
 import { Card, Screen } from '../components/ui'
 import { cache, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
-import { onSent, useUpload } from '../uploads'
+import { forgetUpload, onSent, useUpload } from '../uploads'
 
 // The stage can change at any moment (by the clock or the admin's button): ask again well inside a minute
 const POLL_MS = 30_000
@@ -29,6 +30,8 @@ export function Feed() {
     try {
       const feed = await api<FeedData>('/api/feed', { token })
       cache.saveFeed(feed)
+      // A photo sent back for a retake: the earlier upload's «Выполнено» no longer holds
+      feed.tasks.filter((task) => task.review === 'retake').forEach((task) => forgetUpload(task.id))
       if (feed.stage) {
         const last = cache.lastStage()
         if (last !== null && last !== feed.stage.number) setBanner(feed.stage)
@@ -187,7 +190,7 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
   return (
     <Link
       to={`/app/tasks/${task.id}`}
-      className={`flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 transition active:scale-[0.99] ${task.done ? 'ring-emerald-200' : 'ring-slate-200'}`}
+      className={`flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 transition active:scale-[0.99] ${task.review === 'penalty' ? 'ring-red-200' : task.done ? 'ring-emerald-200' : 'ring-slate-200'}`}
     >
       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
         <TaskIcon type={task.type} className="size-4 text-emerald-700" />
@@ -198,9 +201,13 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
         )}
       </div>
       <p className="line-clamp-3 text-base">{task.text}</p>
+      {!sending && <ReviewNote task={task} />}
       <div className="flex items-center justify-between">
         <Reward task={task} />
-        {task.done && (
+        {task.done && task.review === 'penalty' && (
+          <span className="flex items-center gap-1 text-sm font-medium text-red-700">{t('review.rejected')}</span>
+        )}
+        {task.done && task.review !== 'penalty' && (
           <span className="flex items-center gap-1 text-sm font-medium text-emerald-700">
             <Check className="size-4" aria-hidden />
             {t('feed.done')}

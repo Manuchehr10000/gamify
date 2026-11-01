@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, LargeBinary, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -29,9 +29,11 @@ class Session(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
-    # guest, desk or admin
+    # guest, desk, admin, stand or moderator
     role: Mapped[str] = mapped_column(String(16))
     guest_id: Mapped[int | None] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    # The moderator's name from MODERATORS, so their decisions are logged under it
+    staff_name: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -124,8 +126,11 @@ class Redemption(Base):
 
 class Submission(Base):
     __tablename__ = "submissions"
-    # One submission per task per guest; after sending it is final
-    __table_args__ = (UniqueConstraint("guest_id", "task_id"),)
+    # One submission per task per guest; after sending it is final. One sent back for a retake stays as the log
+    __table_args__ = (
+        Index("submissions_guest_task", "guest_id", "task_id", unique=True, postgresql_where=text("status <> 'retake'")),
+        Index("submissions_unchecked", "created_at", postgresql_where=text("status = ''")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
@@ -134,3 +139,9 @@ class Submission(Base):
     photo: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # "" waiting for a moderator · accepted · bonus · retake (task reopened) · penalty (task closed, no points)
+    status: Mapped[str] = mapped_column(String(16), default="")
+    moderator: Mapped[str] = mapped_column(String(100), default="")
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The phone's key for this send, repeated on its retries: a late retry of one sent back is not a new send
+    upload: Mapped[str] = mapped_column(String(64), default="")

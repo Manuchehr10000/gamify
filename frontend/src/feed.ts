@@ -10,6 +10,8 @@ export type Task = {
   done: boolean
   method: 'qr' | 'link' | 'market' | 'photo' | 'text' | 'photo_text' | ''
   link: string
+  // A moderator's word: retake (send again) · penalty (rejected, task closed) · ''
+  review: '' | 'retake' | 'penalty'
 }
 export type Feed = {
   points: number

@@ -6,6 +6,7 @@ os.environ["FRONTEND_URL"] = "http://app.test"
 os.environ["DESK_PIN"] = "1234"
 os.environ["ADMIN_PASSWORD"] = "admin-pass"
 os.environ["STAND_PIN"] = "5678"
+os.environ["MODERATORS"] = "Модератор 1:1111;Модератор 2:2222;Модератор 3:3333"
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
@@ -46,3 +47,8 @@ def open_link(client: TestClient, link: str) -> dict:
     location = r.headers["location"]
     assert location.startswith("http://app.test/app/welcome#token=")
     return {"Authorization": f"Bearer {location.split('#token=')[1]}"}
+
+
+def moderator_headers(client: TestClient, pin: str = "1111") -> dict:
+    token = client.post("/api/moderator/login", json={"secret": pin}).json()["token"]
+    return {"Authorization": f"Bearer {token}"}

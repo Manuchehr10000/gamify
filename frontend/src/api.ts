@@ -34,17 +34,21 @@ export async function api<T>(path: string, options?: Options): Promise<T> {
   return (await request(path, options)).json()
 }
 
+export async function blob(path: string, options?: Options): Promise<Blob> {
+  return (await request(path, options)).blob()
+}
+
 export async function download(path: string, token: string, filename: string): Promise<void> {
-  const blob = await (await request(path, { token })).blob()
+  const file = await blob(path, { token })
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
+  a.href = URL.createObjectURL(file)
   a.download = filename
   a.click()
   URL.revokeObjectURL(a.href)
 }
 
 // Staff and guest logins are kept per role, so the desk tablet can't turn into a guest by accident
-type TokenKey = 'guest' | 'desk' | 'admin' | 'stand'
+type TokenKey = 'guest' | 'desk' | 'admin' | 'stand' | 'moderator'
 
 export const tokens = {
   get: (key: TokenKey) => localStorage.getItem(`${key}_token`),

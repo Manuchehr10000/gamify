@@ -104,19 +104,27 @@ function start(taskId: number, send: (timeoutMs: number) => Promise<Award>) {
   void run(taskId, send)
 }
 
+// One key per send, repeated on its retries: the server tells a late retry of a photo a moderator sent back
+// from the guest sending the same photo or text again
+// (crypto.randomUUID needs https, and a phone on the venue's network may open the app over plain http)
+const uploadKey = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+
 export function sendPhoto(taskId: number, photo: Blob, text?: string) {
+  const upload = uploadKey()
   start(taskId, (timeoutMs) => {
     // A FormData can't be sent twice on every browser: build it for each attempt
     const form = new FormData()
     form.append('photo', photo, 'photo.jpg')
     if (text !== undefined) form.append('text', text)
+    form.append('upload', upload)
     return api<Award>(`/api/tasks/${taskId}/photo`, { token: tokens.get('guest'), form, timeoutMs })
   })
 }
 
 export function sendText(taskId: number, text: string) {
+  const upload = uploadKey()
   start(taskId, (timeoutMs) =>
-    api<Award>(`/api/tasks/${taskId}/text`, { token: tokens.get('guest'), json: { text }, timeoutMs }),
+    api<Award>(`/api/tasks/${taskId}/text`, { token: tokens.get('guest'), json: { text, upload }, timeoutMs }),
   )
 }
 

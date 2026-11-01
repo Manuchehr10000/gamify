@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { AwardView } from '../components/AwardView'
+import { ReviewNote } from '../components/ReviewNote'
 import { TaskIcon } from '../components/TaskIcon'
 import { Button, Card, Screen } from '../components/ui'
 import { cache, type Award, type Task } from '../feed'
@@ -19,6 +20,7 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
+  if (task.done && task.review === 'penalty') return <ReviewNote task={task} />
   if (task.done) {
     return (
       <p className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
@@ -47,7 +49,12 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
     )
   }
   if (task.method === 'photo' || task.method === 'text' || task.method === 'photo_text') {
-    return <Submit task={task} />
+    return (
+      <>
+        <ReviewNote task={task} />
+        <Submit task={task} />
+      </>
+    )
   }
   if (task.method !== 'link') return <Button disabled>{t('task.doSoon')}</Button>
 

@@ -43,6 +43,8 @@ class TaskOut(BaseModel):
     # qr, link, market, photo, text, photo_text or "" (not doable yet)
     method: str
     link: str
+    # A moderator's word on the guest's submission: retake (send again) · penalty (rejected, task closed) · ""
+    review: str = ""
 
 
 class Feed(BaseModel):
@@ -64,10 +66,23 @@ def _done(db: DbSession, guest: Guest) -> set[str]:
     return set(db.scalars(select(ScoreEvent.reason).where(ScoreEvent.guest_id == guest.id)))
 
 
-def _out(t: Task, done: set[str]) -> TaskOut:
+# What the guest is told about a decision; accepted and bonus need no word
+REVIEWS = {"retake", "penalty"}
+
+
+def _reviews(db: DbSession, guest: Guest) -> dict[int, str]:
+    """Each task's latest submission status: a new submission after a retake replaces the old word."""
+    rows = db.execute(select(Submission.task_id, Submission.status).where(Submission.guest_id == guest.id)
+                      .order_by(Submission.id))
+    return {task_id: status for task_id, status in rows}
+
+
+def _out(t: Task, done: set[str], reviews: dict[int, str] | None = None) -> TaskOut:
+    review = (reviews or {}).get(t.id, "")
     return TaskOut(id=t.id, type=t.type, text=t.text, points=t.points, coins=t.coins,
                    partner_name=t.partner_name, done=task_reason(t.id) in done, method=t.method, link=t.link,
-                   window_end=t.window_end.astimezone(EVENT_TZ) if t.window_end else None)
+                   window_end=t.window_end.astimezone(EVENT_TZ) if t.window_end else None,
+                   review=review if review in REVIEWS else "")
 
 
 def _order(t: Task) -> tuple:
@@ -102,9 +117,9 @@ def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db))
                     stage=None, tasks=[])
     t = stages.now()
     tasks = [x for x in db.scalars(select(Task).where(Task.active, Task.stage_id == d.current.id)) if _open(x, t)]
-    done = _done(db, guest)
+    done, reviews = _done(db, guest), _reviews(db, guest)
     return Feed(points=points, coins=coins, state=d.state, stage_count=len(d.stages), starts_at=first,
-                stage=stage_out(d.current), tasks=[_out(x, done) for x in sorted(tasks, key=_order)])
+                stage=stage_out(d.current), tasks=[_out(x, done, reviews) for x in sorted(tasks, key=_order)])
 
 
 @router.get("/api/tasks/{task_id}")
@@ -112,7 +127,7 @@ def task(task_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
     t = db.get(Task, task_id)
     if t is None or not t.active:
         raise HTTPException(404, "task_not_found")
-    return _out(t, _done(db, guest))
+    return _out(t, _done(db, guest), _reviews(db, guest))
 
 
 class Award(BaseModel):
@@ -124,22 +139,39 @@ class Award(BaseModel):
 # Tasks done by sending something; the endpoint each one takes
 SUBMIT_METHODS = {"photo", "text", "photo_text"}
 TEXT_MAX = 500
+# The phone makes one key per send and repeats it on every retry of that send
+UPLOAD_KEY_MAX = 64
 
 
-def _award(db: DbSession, guest: Guest, t: Task, photo: bytes | None = None, text: str = "") -> Award:
+def available(db: DbSession, t: Task) -> bool:
+    """A task can be done now: its stage is the current one and its window is open."""
+    d = stages.day(db)
+    return t.active and d.current is not None and t.stage_id == d.current.id and _open(t, stages.now())
+
+
+def _sent_back(db: DbSession, guest: Guest, t: Task, upload: str) -> bool:
+    """The phone retrying an upload a moderator already sent back: same attempt key, not a new send by the guest,
+    even if the guest sends the same photo or text again."""
+    return bool(upload) and db.scalar(select(Submission.id).where(
+        Submission.guest_id == guest.id, Submission.task_id == t.id, Submission.upload == upload).limit(1)) is not None
+
+
+def _award(db: DbSession, guest: Guest, t: Task, photo: bytes | None = None, text: str = "",
+           upload: str = "") -> Award:
     """Award a task once per guest, only while it is on: its stage is the current one and its window is open.
     A photo or text task keeps what the guest sent, in the same commit as the award."""
     reason = task_reason(t.id)
     if reason in _done(db, guest):
-        return Award(result="already", task=_out(t, {reason}))
-    d = stages.day(db)
-    if not t.active or d.current is None or t.stage_id != d.current.id or not _open(t, stages.now()):
-        return Award(result="unavailable", task=_out(t, set()))
+        return Award(result="already", task=_out(t, {reason}, _reviews(db, guest)))
+    if not available(db, t):
+        return Award(result="unavailable", task=_out(t, set(), _reviews(db, guest)))
+    if t.method in SUBMIT_METHODS and _sent_back(db, guest, t, upload):
+        raise HTTPException(409, "sent_back")
     # Two phones of the same guest scanning at once, or a retried upload, still award once
     added = db.execute(insert(ScoreEvent).values(guest_id=guest.id, reason=reason, points=t.points, coins=t.coins)
                        .on_conflict_do_nothing(index_elements=["guest_id", "reason"])).rowcount
     if added and t.method in SUBMIT_METHODS:
-        db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, text=text))
+        db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, text=text, upload=upload))
     db.commit()
     return Award(result="awarded" if added else "already", task=_out(t, {reason}))
 
@@ -178,6 +210,7 @@ def _submit_task(db: DbSession, task_id: int, methods: set[str]) -> Task:
 
 @router.post("/api/tasks/{task_id}/photo")
 def send_photo(task_id: int, photo: UploadFile = File(), text: str = Form(default=""),
+               upload: str = Form(default="", max_length=UPLOAD_KEY_MAX),
                guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Award:
     t = _submit_task(db, task_id, {"photo", "photo_text"})
     # A plain def runs in the thread pool, so reading the spooled upload and the database don't stall other guests
@@ -195,11 +228,12 @@ def send_photo(task_id: int, photo: UploadFile = File(), text: str = Form(defaul
         raise HTTPException(400, "text_too_long")
     if t.method == "photo_text" and not text:
         raise HTTPException(400, "text_required")
-    return _award(db, guest, t, photo=data, text=text if t.method == "photo_text" else "")
+    return _award(db, guest, t, photo=data, text=text if t.method == "photo_text" else "", upload=upload)
 
 
 class TextIn(BaseModel):
     text: str = Field(max_length=TEXT_MAX)
+    upload: str = Field(default="", max_length=UPLOAD_KEY_MAX)
 
 
 @router.post("/api/tasks/{task_id}/text")
@@ -209,4 +243,4 @@ def send_text(task_id: int, body: TextIn, guest: Guest = Depends(current_guest),
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "text_required")
-    return _award(db, guest, t, text=text)
+    return _award(db, guest, t, text=text, upload=body.upload)
