@@ -189,6 +189,9 @@ export function PartnerBadge({ name }: { name: string }) {
   )
 }
 
+// Whole minutes until a window closes, rounded up; the feed reloads every 30 s, so it stays current
+const minutesLeft = (iso: string) => Math.max(1, Math.ceil((new Date(iso).getTime() - Date.now()) / 60_000))
+
 function TaskCard({ task: fromFeed }: { task: Task }) {
   const { t } = useTranslation()
   const upload = useUpload(fromFeed.id)
@@ -205,7 +208,9 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
         <span>{t(`types.${task.type}`)}</span>
         {task.partner_name && <PartnerBadge name={task.partner_name} />}
         {task.window_end && !task.done && (
-          <span className="text-xs text-red-600">{t('feed.closesAt', { time: hhmm(task.window_end) })}</span>
+          <span className="text-xs text-red-600">
+            {task.method === 'quiz' ? t('feed.closesIn', { count: minutesLeft(task.window_end) }) : t('feed.closesAt', { time: hhmm(task.window_end) })}
+          </span>
         )}
       </div>
       <p className="line-clamp-3 text-base">{task.text}</p>

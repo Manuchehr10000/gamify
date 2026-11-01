@@ -6,6 +6,7 @@ from app import rating
 from app.auth import current_guest, require_role
 from app.db import get_db
 from app.models import Guest
+from app.routers.quiz import settle
 
 router = APIRouter()
 
@@ -38,6 +39,8 @@ class Rating(BaseModel):
 
 @router.get("/api/rating")
 def guest_rating(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Rating:
+    # A quiz pays when its time is up, not when its guest next opens the feed
+    settle(db)
     frozen, rows = rating.rows(db)
     mine = next((r for r in rows if r.guest.id == guest.id), None)
     return Rating(
@@ -56,6 +59,7 @@ class Hall(BaseModel):
 @router.get("/api/hall")
 def hall(db: DbSession = Depends(get_db)) -> Hall:
     """The hall screen: no login, read-only."""
+    settle(db)
     frozen, rows = rating.rows(db)
     return Hall(frozen=frozen, top=[Place(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
                                           points=r.points) for r in rows[:HALL_TOP]])
@@ -84,6 +88,7 @@ class Frozen(BaseModel):
 def freeze(body: FreezeIn, db: DbSession = Depends(get_db)) -> Frozen:
     # Freezing again keeps the first freeze and gives its list back, so the admin page can reprint it
     if body.frozen:
+        settle(db)
         try:
             rating.freeze(db)
         except rating.NothingToFreeze:

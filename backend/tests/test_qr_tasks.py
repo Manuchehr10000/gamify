@@ -120,9 +120,9 @@ def test_method_and_link_round_trip_through_the_file(client, admin):
     load(client, admin, ROWS)
     wb = load_workbook(io.BytesIO(client.get("/api/admin/tasks/export", headers=admin).content))
     rows = {r[0].value: [c.value for c in r] for r in wb["Задания"].iter_rows(min_row=2)}
-    assert rows["qr1"][10:] == ["QR", None]
-    assert rows["link1"][10:] == ["Ссылка", "https://tag.tj/register"]
-    assert rows["plain"][10:] == [None, None]
+    assert rows["qr1"][10:12] == ["QR", None]
+    assert rows["link1"][10:12] == ["Ссылка", "https://tag.tj/register"]
+    assert rows["plain"][10:12] == [None, None]
 
 
 @pytest.mark.parametrize("method,link,reason", [

@@ -8,8 +8,12 @@ export type Task = {
   partner_name: string
   window_end: string | null
   done: boolean
-  method: 'qr' | 'link' | 'market' | 'photo' | 'text' | 'photo_text' | ''
+  method: 'qr' | 'link' | 'market' | 'photo' | 'text' | 'photo_text' | 'quiz' | ''
   link: string
+  // A quiz's countdown in seconds; null without one
+  timer_seconds: number | null
+  // A quiz whose hall QR («Требует») the guest hasn't scanned yet
+  locked: boolean
   // A moderator's word: retake (send again) · penalty (rejected, task closed) · ''
   review: '' | 'retake' | 'penalty'
 }

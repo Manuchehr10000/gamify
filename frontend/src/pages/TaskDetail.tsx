@@ -1,4 +1,4 @@
-import { Camera, Check, ChevronLeft, ExternalLink, LoaderCircle, QrCode, ShoppingBag, WifiOff } from 'lucide-react'
+import { Camera, Check, ChevronLeft, ExternalLink, LoaderCircle, Lock, QrCode, ShoppingBag, WifiOff } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
@@ -21,12 +21,36 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
   const [error, setError] = useState('')
 
   if (task.done && task.review === 'penalty') return <ReviewNote task={task} />
+  // A finished quiz opens its result
+  if (task.done && task.method === 'quiz') {
+    return (
+      <Link to={`/app/quiz/${task.id}`} className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
+        <Check className="size-5" aria-hidden />
+        {t('quiz.seeResult')}
+      </Link>
+    )
+  }
   if (task.done) {
     return (
       <p className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
         <Check className="size-5" aria-hidden />
         {t('feed.done')}
       </p>
+    )
+  }
+  if (task.method === 'quiz') {
+    if (task.locked) {
+      return (
+        <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-amber-800">
+          <Lock className="size-5 shrink-0" aria-hidden />
+          {t('quiz.checkInFirst')}
+        </p>
+      )
+    }
+    return (
+      <Link to={`/app/quiz/${task.id}`} className="inline-flex h-12 items-center justify-center rounded-xl bg-emerald-600 px-5 font-medium text-white">
+        {t('quiz.start')}
+      </Link>
     )
   }
   if (task.method === 'qr') {

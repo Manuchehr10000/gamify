@@ -40,9 +40,13 @@ class TaskOut(BaseModel):
     partner_name: str
     window_end: datetime | None
     done: bool
-    # qr, link, market, photo, text, photo_text or "" (not doable yet)
+    # qr, link, market, photo, text, photo_text, quiz or "" (not doable yet)
     method: str
     link: str
+    # A quiz's countdown in seconds; None without one
+    timer_seconds: int | None = None
+    # A quiz with «Требует» whose hall QR the guest hasn't scanned yet
+    locked: bool = False
     # A moderator's word on the guest's submission: retake (send again) · penalty (rejected, task closed) · ""
     review: str = ""
 
@@ -82,6 +86,8 @@ def _out(t: Task, done: set[str], reviews: dict[int, str] | None = None) -> Task
     return TaskOut(id=t.id, type=t.type, text=t.text, points=t.points, coins=t.coins,
                    partner_name=t.partner_name, done=task_reason(t.id) in done, method=t.method, link=t.link,
                    window_end=t.window_end.astimezone(EVENT_TZ) if t.window_end else None,
+                   timer_seconds=t.timer_seconds,
+                   locked=t.requires_task_id is not None and task_reason(t.requires_task_id) not in done,
                    review=review if review in REVIEWS else "")
 
 
@@ -109,6 +115,9 @@ def totals(db: DbSession, guest: Guest) -> tuple[int, int]:
 
 @router.get("/api/feed")
 def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Feed:
+    # The quiz router builds on this one, so it is imported here, not at the top
+    from app.routers.quiz import settle
+    settle(db, guest.id)
     d = stages.day(db)
     points, coins = totals(db, guest)
     first = d.stages[0].starts_at.astimezone(EVENT_TZ) if d.stages else None

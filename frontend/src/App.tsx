@@ -7,6 +7,7 @@ import { Feed } from './pages/Feed'
 import { Hall } from './pages/Hall'
 import { Market } from './pages/Market'
 import { Moderate } from './pages/Moderate'
+import { Quiz } from './pages/Quiz'
 import { Rating } from './pages/Rating'
 import { Scan } from './pages/Scan'
 import { Stand } from './pages/Stand'
@@ -19,6 +20,7 @@ export default function App() {
       <Route path="/app" element={<Feed />} />
       <Route path="/app/rating" element={<Rating />} />
       <Route path="/app/tasks/:id" element={<TaskDetail />} />
+      <Route path="/app/quiz/:id" element={<Quiz />} />
       <Route path="/app/welcome" element={<Welcome />} />
       <Route path="/desk" element={<Desk />} />
       <Route path="/admin/guests" element={<AdminGuests />} />
