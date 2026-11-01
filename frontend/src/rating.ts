@@ -1,4 +1,4 @@
-type Place = { place: number; name: string; points: number }
+type Place = { place: number; name: string; points: number; level: string }
 export type Rating = {
   frozen: boolean
   top: (Place & { me: boolean })[]

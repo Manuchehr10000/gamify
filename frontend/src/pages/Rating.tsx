@@ -62,7 +62,10 @@ export function Rating() {
               className={`flex items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-0 ${r.me ? 'bg-emerald-50 font-semibold text-emerald-900' : ''}`}
             >
               <span className="w-8 text-right tabular-nums text-slate-500">{r.place}</span>
-              <span className="flex-1 truncate">{r.name}</span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate">{r.name}</span>
+                {r.level && <span className="truncate text-xs font-normal text-slate-500">{r.level}</span>}
+              </span>
               <span className="tabular-nums">{t('feed.points', { count: r.points })}</span>
             </li>
           ))}

@@ -20,6 +20,12 @@ export type Task = {
 export type Feed = {
   points: number
   coins: number
+  // The level the points reach; '' with no levels loaded
+  level: string
+  // Points still needed for the next level; null at the top
+  to_next: number | null
+  // Set once, right after the guest climbed past the level they last saw: the full-screen moment
+  new_level: string | null
   state: 'none' | 'before' | 'running' | 'over'
   stage_count: number
   starts_at: string | null

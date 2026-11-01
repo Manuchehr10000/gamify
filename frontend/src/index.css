@@ -1,1 +1,17 @@
 @import "tailwindcss";
+
+/* The level-up moment: the app's only full-screen animation */
+@theme {
+  --animate-level-up: level-up 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes level-up {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-6deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}

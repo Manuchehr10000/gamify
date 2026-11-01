@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DbSession
 
-from app import rating
+from app import levels, rating
 from app.auth import current_guest, require_role
 from app.db import get_db
 from app.models import Guest
@@ -19,6 +19,8 @@ class Place(BaseModel):
     # First name and last initial
     name: str
     points: int
+    # The level the points reach, shown beside the name
+    level: str
 
 
 class GuestPlace(Place):
@@ -42,11 +44,13 @@ def guest_rating(guest: Guest = Depends(current_guest), db: DbSession = Depends(
     # A quiz pays when its time is up, not when its guest next opens the feed
     settle(db)
     frozen, rows = rating.rows(db)
+    lv = levels.load(db)
     mine = next((r for r in rows if r.guest.id == guest.id), None)
     return Rating(
         frozen=frozen,
         top=[GuestPlace(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
-                        points=r.points, me=r.guest.id == guest.id) for r in rows[:TOP]],
+                        points=r.points, level=levels.name(lv, r.points), me=r.guest.id == guest.id)
+             for r in rows[:TOP]],
         me=Mine(place=mine.place, points=mine.points) if mine else None,
     )
 
@@ -61,8 +65,9 @@ def hall(db: DbSession = Depends(get_db)) -> Hall:
     """The hall screen: no login, read-only."""
     settle(db)
     frozen, rows = rating.rows(db)
+    lv = levels.load(db)
     return Hall(frozen=frozen, top=[Place(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
-                                          points=r.points) for r in rows[:HALL_TOP]])
+                                          points=r.points, level=levels.name(lv, r.points)) for r in rows[:HALL_TOP]])
 
 
 class FreezeIn(BaseModel):

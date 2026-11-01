@@ -141,7 +141,7 @@ def test_reupload_changes_one_hides_one_and_leaves_the_rest(client, admin, guest
 
 def test_download_gives_back_what_is_loaded(client, admin):
     empty = load_workbook(io.BytesIO(client.get("/api/admin/tasks/export", headers=admin).content))
-    assert empty.sheetnames == ["Этапы", "Задания", "Призы", "Вопросы"]
+    assert empty.sheetnames == ["Этапы", "Задания", "Призы", "Вопросы", "Уровни"]
     assert [c.value for c in empty["Задания"][1]] == TASK_HEAD + ["Выполнение", "Ссылка", "Таймер, сек", "Требует"]
     assert empty["Задания"].max_row == 1
 

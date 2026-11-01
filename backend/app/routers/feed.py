@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Stage, Submission, Task
-from app import photos, stages
+from app import levels, photos, stages
 from app.stages import EVENT_TZ
 from app.task_file import PACKAGES
 
@@ -54,6 +54,11 @@ class TaskOut(BaseModel):
 class Feed(BaseModel):
     points: int
     coins: int
+    # The level the current points reach and the points to the next one (None at the top or with no levels)
+    level: str
+    to_next: int | None
+    # Set once, when the guest has just climbed past the level they last saw: the full-screen moment
+    new_level: str | None
     state: str
     stage_count: int
     starts_at: datetime | None
@@ -120,15 +125,16 @@ def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db))
     settle(db, guest.id)
     d = stages.day(db)
     points, coins = totals(db, guest)
+    lv = levels.place(levels.load(db), points)
+    mine = {"points": points, "coins": coins, "level": lv.name if lv else "", "to_next": lv.to_next if lv else None,
+            "new_level": lv.name if levels.climbed(db, guest, lv) else None}
     first = d.stages[0].starts_at.astimezone(EVENT_TZ) if d.stages else None
     if d.current is None:
-        return Feed(points=points, coins=coins, state=d.state, stage_count=len(d.stages), starts_at=first,
-                    stage=None, tasks=[])
+        return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=None, tasks=[])
     t = stages.now()
     tasks = [x for x in db.scalars(select(Task).where(Task.active, Task.stage_id == d.current.id)) if _open(x, t)]
     done, reviews = _done(db, guest), _reviews(db, guest)
-    return Feed(points=points, coins=coins, state=d.state, stage_count=len(d.stages), starts_at=first,
-                stage=stage_out(d.current), tasks=[_out(x, done, reviews) for x in sorted(tasks, key=_order)])
+    return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=stage_out(d.current), tasks=[_out(x, done, reviews) for x in sorted(tasks, key=_order)])
 
 
 @router.get("/api/tasks/{task_id}")

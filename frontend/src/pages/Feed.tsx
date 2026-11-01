@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { DayBar } from '../components/DayBar'
+import { LevelUp } from '../components/LevelUp'
 import { ReviewNote } from '../components/ReviewNote'
 import { TaskIcon } from '../components/TaskIcon'
 import { Card, Screen } from '../components/ui'
@@ -23,13 +24,16 @@ export function Feed() {
   const { t } = useTranslation()
   const [state, setState] = useState<State>(() => (tokens.get('guest') ? { kind: 'loading' } : { kind: 'loggedOut' }))
   const [banner, setBanner] = useState<Stage | null>(null)
+  // The level just reached; the server sends it once, so only a fresh load (never the saved copy) shows it
+  const [levelUp, setLevelUp] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     const token = tokens.get('guest')
     if (!token) return
     try {
       const feed = await api<FeedData>('/api/feed', { token })
-      cache.saveFeed(feed)
+      cache.saveFeed({ ...feed, new_level: null })
+      if (feed.new_level) setLevelUp(feed.new_level)
       // A photo sent back for a retake: the earlier upload's «Выполнено» no longer holds
       feed.tasks.filter((task) => task.review === 'retake').forEach((task) => forgetUpload(task.id))
       if (feed.stage) {
@@ -86,6 +90,7 @@ export function Feed() {
   const { feed, offline } = state
   return (
     <Screen>
+      {levelUp && <LevelUp name={levelUp} onClose={() => setLevelUp(null)} />}
       {offline && (
         <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800">
           <WifiOff className="size-4 shrink-0" aria-hidden />
@@ -103,7 +108,7 @@ export function Feed() {
           </button>
         </div>
       )}
-      <Totals points={feed.points} coins={feed.coins} />
+      <Totals feed={feed} />
       <Link
         to="/market"
         className="flex items-center gap-3 rounded-2xl bg-amber-50 px-4 py-3 font-medium text-amber-900 ring-1 ring-amber-200"
@@ -125,16 +130,29 @@ export function Feed() {
   )
 }
 
-function Totals({ points, coins }: { points: number; coins: number }) {
+// The top bar: the level and how far the next one is, the points and coins; it opens the profile
+function Totals({ feed }: { feed: FeedData }) {
   const { t } = useTranslation()
   return (
-    <div className="flex items-center justify-center gap-6 rounded-2xl bg-white py-3 text-lg font-semibold shadow-sm ring-1 ring-slate-200">
-      <span className="text-emerald-700">{t('feed.points', { count: points })}</span>
-      <span className="flex items-center gap-1.5 text-amber-700">
-        <Coins className="size-5" aria-hidden />
-        {t('feed.coins', { count: coins })}
+    <Link
+      to="/app/profile"
+      aria-label={t('feed.toProfile')}
+      className="flex flex-col items-center gap-1 rounded-2xl bg-white py-3 shadow-sm ring-1 ring-slate-200"
+    >
+      {feed.level && (
+        <span className="flex items-baseline gap-2 text-sm">
+          <span className="font-semibold text-slate-900">{feed.level}</span>
+          {feed.to_next !== null && <span className="text-slate-500">{t('feed.toNext', { count: feed.to_next })}</span>}
+        </span>
+      )}
+      <span className="flex items-center gap-6 text-lg font-semibold">
+        <span className="text-emerald-700">{t('feed.points', { count: feed.points })}</span>
+        <span className="flex items-center gap-1.5 text-amber-700">
+          <Coins className="size-5" aria-hidden />
+          {t('feed.coins', { count: feed.coins })}
+        </span>
       </span>
-    </div>
+    </Link>
   )
 }
 

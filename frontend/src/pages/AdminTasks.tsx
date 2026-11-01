@@ -18,6 +18,7 @@ type Result = {
   prizes_added: number
   prizes_changed: number
   prizes_hidden: number
+  levels_changed: boolean
   failed: { sheet: string; row: number; reason: string }[]
 }
 
@@ -143,6 +144,7 @@ export function AdminTasks() {
                 })}
               </p>
             )}
+            {result.levels_changed && <p className="text-slate-600">{t('tasksAdmin.levels')}</p>}
             {result.failed.length > 0 && (
               <>
                 <p className="mt-2 font-medium text-red-700">{t('admin.failedTitle')}</p>

@@ -1,5 +1,5 @@
 """The admin's Excel file: sheet «Этапы» (the day's schedule), sheet «Задания» (the task catalog),
-sheet «Вопросы» (the quizzes' questions) and sheet «Призы» (the market's prizes).
+sheet «Вопросы» (the quizzes' questions), sheet «Призы» (the market's prizes) and sheet «Уровни» (the levels by points).
 
 Upload reads both sheets; download writes them back the same way, so the file can be edited and uploaded again.
 """
@@ -11,17 +11,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.guests import random_code
-from app.models import Prize, Question, Stage, Task
+from app.models import Level, Prize, Question, Stage, Task
 from app.stages import EVENT_TZ
 
 STAGES_SHEET = "Этапы"
 TASKS_SHEET = "Задания"
 PRIZES_SHEET = "Призы"
 QUESTIONS_SHEET = "Вопросы"
+LEVELS_SHEET = "Уровни"
 
 STAGE_COLUMNS = {
     "number": "Номер",
@@ -63,6 +64,10 @@ PRIZE_COLUMNS = {
     "partner": "Партнёр",
     "price": "Цена в монетах",
     "quantity": "Количество",
+}
+LEVEL_COLUMNS = {
+    "name": "Название",
+    "min_points": "Баллов от",
 }
 REQUIRED_STAGE = ("number", "name", "starts_at", "ends_at")
 REQUIRED_TASK = ("code", "stage", "type", "text", "points")
@@ -122,6 +127,8 @@ class ImportResult:
     prizes_added: int = 0
     prizes_changed: int = 0
     prizes_hidden: int = 0
+    # The «Уровни» sheet replaced the levels (it failed whole, or matched what was loaded, otherwise)
+    levels_changed: bool = False
     failed: list[dict] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
 
@@ -269,11 +276,15 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
     question_sheet = sheets.get(QUESTIONS_SHEET.lower())
     question_cols, question_rows = (_sheet_rows(wb[question_sheet], QUESTION_COLUMNS) if question_sheet
                                     else ({}, []))
+    # A file without «Уровни» leaves the levels as they are
+    level_sheet = sheets.get(LEVELS_SHEET.lower())
+    level_cols, level_rows = _sheet_rows(wb[level_sheet], LEVEL_COLUMNS) if level_sheet else ({}, [])
     result.missing = [f"{STAGES_SHEET}: {STAGE_COLUMNS[c]}" for c in REQUIRED_STAGE if c not in stage_cols] + [
         f"{TASKS_SHEET}: {TASK_COLUMNS[c]}" for c in REQUIRED_TASK if c not in task_cols] + [
         f"{PRIZES_SHEET}: {PRIZE_COLUMNS[c]}" for c in REQUIRED_PRIZE if prize_sheet and c not in prize_cols] + [
         f"{QUESTIONS_SHEET}: {QUESTION_COLUMNS[c]}" for c in REQUIRED_QUESTION
-        if question_sheet and c not in question_cols]
+        if question_sheet and c not in question_cols] + [
+        f"{LEVELS_SHEET}: {LEVEL_COLUMNS[c]}" for c in LEVEL_COLUMNS if level_sheet and c not in level_cols]
     if result.missing:
         return result
 
@@ -421,6 +432,8 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             result.hidden += 1
     if prize_sheet:
         _import_prizes(db, prize_cols, prize_rows, result, fail)
+    if level_sheet:
+        _import_levels(db, level_cols, level_rows, result, fail)
     db.commit()
     return result
 
@@ -487,6 +500,38 @@ def _import_prizes(db: DbSession, cols: dict[str, int], rows: list[tuple[int, li
             result.prizes_hidden += 1
 
 
+def _import_levels(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], result: ImportResult,
+                   fail: Callable[[str, int, str], None]) -> None:
+    """The levels go in whole or not at all: a bad sheet fails with the reason and the old levels stay."""
+    levels: list[tuple[str, int]] = []
+    failed = False
+    for n, row in rows:
+        try:
+            name = _text(_cell(row, cols, "name"))
+            if not name:
+                raise RowError("no_name")
+            points = _int(_cell(row, cols, "min_points"), "bad_level_points")
+            if n == rows[0][0] and points != 0:
+                raise RowError("no_zero_level")
+            if levels and points <= levels[-1][1]:
+                raise RowError("levels_out_of_order")
+        except RowError as e:
+            fail(LEVELS_SHEET, n, str(e))
+            failed = True
+            continue
+        levels.append((name, points))
+    if not rows:
+        # A header with no levels under it: there is no 0 level
+        fail(LEVELS_SHEET, 2, "no_zero_level")
+        failed = True
+    old = [(lv.name, lv.min_points) for lv in db.scalars(select(Level).order_by(Level.min_points))]
+    if failed or levels == old:
+        return
+    db.execute(delete(Level))
+    db.add_all(Level(name=name, min_points=points) for name, points in levels)
+    result.levels_changed = True
+
+
 def _new_qr(db: DbSession) -> str:
     db.flush()
     while True:
@@ -501,7 +546,8 @@ def _local(dt: datetime | None) -> datetime | None:
 
 
 def export_xlsx(db: DbSession) -> bytes:
-    """All four sheets with what is loaded now; with nothing loaded, an empty template with the right columns."""
+    """All five sheets with what is loaded now; with nothing loaded, an empty template with the right columns
+    (and the levels, which start as TAG's five)."""
     wb = Workbook()
     ws = wb.active
     ws.title = STAGES_SHEET
@@ -540,6 +586,11 @@ def export_xlsx(db: DbSession) -> bytes:
     loaded = db.scalars(select(Question).where(Question.task_id.in_(list(order))))
     for q in sorted(loaded, key=lambda q: (order[q.task_id], q.number)):
         wq.append([codes[q.task_id], q.number, q.text, q.option1, q.option2, q.option3, q.option4, q.correct])
+
+    wl = wb.create_sheet(LEVELS_SHEET)
+    wl.append(list(LEVEL_COLUMNS.values()))
+    for lv in db.scalars(select(Level).order_by(Level.min_points)):
+        wl.append([lv.name, lv.min_points])
 
     out = io.BytesIO()
     wb.save(out)

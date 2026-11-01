@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import config, rating, stages
+from app import config, levels, rating, stages
 from app.auth import current_moderator, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Submission, Task
@@ -132,6 +132,9 @@ def decide(submission_id: int, body: DecisionIn, name: str = Depends(current_mod
     elif body.action == "penalty":
         # The award stays, so the task stays closed; this takes its points and coins back. Coins may go below zero
         db.add(ScoreEvent(guest_id=s.guest_id, reason=f"penalty:{s.id}", points=-points, coins=-coins))
+    if body.action in ("retake", "penalty"):
+        db.flush()
+        levels.dropped(db, s.guest_id)
     s.status, s.moderator, s.decided_at = STATUS[body.action], name, stages.now()
     db.commit()
     return Decision(result="decided", status=s.status, moderator=s.moderator, decided_at=local(s.decided_at))

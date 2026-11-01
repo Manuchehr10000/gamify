@@ -27,6 +27,9 @@ class Guest(Base):
     # The place and points when the admin froze the ranking; empty when it isn't frozen
     frozen_place: Mapped[int | None]
     frozen_points: Mapped[int | None]
+    # The threshold («Баллов от») of the level the guest last saw: climbing past it shows the full-screen moment.
+    # A threshold, not a place in the list, so a new level added below doesn't show an old level again
+    level_shown: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -190,3 +193,12 @@ class QuizAttempt(Base):
     # Filled when the quiz ends: what the guest sees as «3 из 5»
     correct: Mapped[int | None]
     total: Mapped[int | None]
+
+
+class Level(Base):
+    __tablename__ = "levels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The file's «Уровни» sheet: «Название» and «Баллов от»; the first level starts at 0
+    name: Mapped[str] = mapped_column(String(100))
+    min_points: Mapped[int] = mapped_column(unique=True)

@@ -55,7 +55,10 @@ export function Hall() {
               <span className={`w-[2.5ch] text-right font-bold tabular-nums ${r.place <= 3 ? 'text-amber-300' : 'text-slate-400'}`}>
                 {r.place}
               </span>
-              <span className="flex-1 truncate font-semibold">{r.name}</span>
+              <span className="flex min-w-0 flex-1 items-baseline gap-[1.5vw]">
+                <span className="truncate font-semibold">{r.name}</span>
+                {r.level && <span className="shrink-0 text-[0.55em] font-medium text-slate-400">{r.level}</span>}
+              </span>
               <span className="font-bold tabular-nums text-emerald-400">{r.points}</span>
             </li>
           ))}
