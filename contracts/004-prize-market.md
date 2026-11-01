@@ -1,5 +1,5 @@
 # Contract: Prize market
-Status: building
+Status: on-dev
 Base: f5d005deb6
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be6081ba9c05c76a43a67af0
