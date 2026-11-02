@@ -1,5 +1,5 @@
 # Contract: Leaderboard and hall screen
-Status: on-dev
+Status: done
 Base: b7c9a3761c
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be608180b660f45ab5121d38
