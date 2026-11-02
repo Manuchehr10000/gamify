@@ -1,5 +1,5 @@
 # Contract: Levels and profile
-Status: on-dev
+Status: done
 Base: e9e23b5bc8
 Approved: 2026-11-01 by Manu
 Tracker: https://app.notion.com/p/40bc62b4be608140b225e62287662dfa
