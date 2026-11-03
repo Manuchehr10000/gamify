@@ -1,5 +1,5 @@
 # Contract: Console look: guest arrival and tasks
-Status: building
+Status: on-dev
 Base: fb34fa6901
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081a88e28f744515bf9d0
