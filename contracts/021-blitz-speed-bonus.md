@@ -1,5 +1,5 @@
 # Contract: Blitz speed bonus
-Status: building
+Status: on-dev
 Base: 6b46ec3157
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081beb962df62860cf61a
