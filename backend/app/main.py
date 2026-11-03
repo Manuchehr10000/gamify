@@ -6,8 +6,8 @@ from fastapi.responses import JSONResponse
 
 from app import accounts, config, photos, settings
 from app.db import SessionLocal
-from app.routers import (admin, admin_settings, admin_tasks, badge, desk, feed, jobs, live, market, moderation, profile,
-                         public, quiz, rating, staff, stand)
+from app.routers import (admin, admin_settings, admin_tasks, badge, claims, desk, feed, jobs, live, market, moderation,
+                         profile, public, quiz, rating, staff, stand)
 
 
 
@@ -25,14 +25,14 @@ app = FastAPI(title="Event Gamification", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=[config.FRONTEND_URL], allow_methods=["*"],
                    allow_headers=["Authorization", "Content-Type"])
 for r in (badge.router, staff.router, admin.router, desk.router, feed.router, admin_tasks.router,
-          market.router, stand.router, moderation.router, rating.router, quiz.router,
+          market.router, claims.router, stand.router, moderation.router, rating.router, quiz.router,
           profile.router, live.router, jobs.router, admin_settings.router, public.router):
     app.include_router(r)
 
 
 
 # Uploads whose size is checked before the body is read: (path ending, largest body, refusal)
-UPLOADS = (("/photo", photos.MAX_BODY, "photo_too_large"),
+UPLOADS = (("/files", photos.MAX_BODY, "photo_too_large"),
            ("/logo", admin_settings.LOGO_MAX + 64 * 1024, "logo_too_large"))
 
 

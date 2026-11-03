@@ -6,7 +6,7 @@ import { LevelUp, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet
 import { BADGE_GLYPHS, type IconName } from '../components/console/glyphs'
 import { Callout, Loading, MessageCard, NavRow, PageHeader, Screen, StatusChip } from '../components/console/ui'
 import { cache, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
-import { forgetUpload, onSent, useUpload } from '../uploads'
+import { forgetUpload, isWaiting, onSent, useUpload } from '../uploads'
 import { useConfigVersion } from '../version'
 
 // The stage can change at any moment (by the clock or the admin's button): ask again well inside a minute
@@ -133,12 +133,17 @@ function Body({ feed }: { feed: FeedData }) {
 // Whole minutes until a window closes, rounded up; the feed reloads every 30 s, so it stays current
 const minutesLeft = (iso: string) => Math.max(1, Math.ceil((new Date(iso).getTime() - Date.now()) / 60_000))
 
+// What the server answers when a send can't count
+const REFUSALS = new Set(['stage_closed', 'time_up', 'claim_lapsed', 'limit'])
+
 function TaskCard({ task: fromFeed }: { task: Task }) {
   const { t } = useTranslation()
   const upload = useUpload(fromFeed.id)
   // A photo or text that just went through counts at once, before the next feed load
   const task = upload?.state === 'sent' && upload.award.result !== 'unavailable' ? upload.award.task : fromFeed
-  const sending = upload?.state === 'sending' || upload?.state === 'offline'
+  const sending = isWaiting(upload)
+  // Refused by the server: the card says why until the guest has seen it on the task
+  const refused = !task.done && upload?.state === 'failed' && REFUSALS.has(upload.reason) ? upload.reason : ''
   const deadline = task.window_end && !task.done
     ? task.method === 'quiz' ? t('feed.closesIn', { count: minutesLeft(task.window_end) }) : t('feed.closesAt', { time: hhmm(task.window_end) })
     : undefined
@@ -153,11 +158,11 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
         <span className="gc-task-card__status">
           {task.done && task.review === 'penalty' && <StatusChip tone="danger" icon="x">{t('review.rejected')}</StatusChip>}
           {task.done && task.review !== 'penalty' && <StatusChip tone="success" icon="check">{t('feed.done')}</StatusChip>}
-          {!task.done && sending && (
-            upload.state === 'offline'
-              ? <StatusChip tone="warning" icon="wifi-off">{t('submit.offlineShort')}</StatusChip>
-              : <StatusChip tone="muted">{t('submit.sending')}</StatusChip>
+          {!task.done && upload?.state === 'sending' && <StatusChip tone="muted">{t('submit.uploading')}</StatusChip>}
+          {!task.done && (upload?.state === 'unclaimed' || upload?.state === 'claimed') && (
+            <StatusChip tone="warning" icon="wifi-off">{t(`submit.${upload.state}`)}</StatusChip>
           )}
+          {refused && <StatusChip tone="danger" icon="x">{t(`submit.errors.${refused}`)}</StatusChip>}
         </span>
       </div>
     </Link>

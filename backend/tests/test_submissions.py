@@ -32,14 +32,35 @@ def ids(client, admin) -> dict[str, int]:
         return {t.code: t.id for t in db.scalars(select(Task))}
 
 
-def send_photo(client, guest, task_id, data=None, text=None):
-    files = {"photo": ("photo.jpg", data if data is not None else jpeg(), "image/jpeg")}
-    form = {"text": text} if text is not None else {}
-    return client.post(f"/api/tasks/{task_id}/photo", files=files, data=form, headers=guest)
+_ids = iter(range(1, 10**9))
 
 
-def send_text(client, guest, task_id, text):
-    return client.post(f"/api/tasks/{task_id}/text", json={"text": text}, headers=guest)
+def new_id() -> str:
+    """A submission ID as the phone makes one."""
+    return f"send-{next(_ids)}"
+
+
+def claim(client, guest, task_id, claim_id, text=""):
+    return client.post(f"/api/tasks/{task_id}/claim", json={"id": claim_id, "text": text}, headers=guest)
+
+
+def send_files(client, guest, claim_id, data=None, thumb=None):
+    files = {"photo": ("photo.jpg", data if data is not None else jpeg(), "image/jpeg"),
+             "thumb": ("thumb.jpg", thumb if thumb is not None else jpeg(300, 400), "image/jpeg")}
+    return client.post(f"/api/claims/{claim_id}/files", files=files, headers=guest)
+
+
+def send_photo(client, guest, task_id, data=None, text=None, claim_id=None, thumb=None):
+    """Both steps, as the phone sends them: the claim, then the files once the place is held."""
+    claim_id = claim_id or new_id()
+    r = claim(client, guest, task_id, claim_id, text or "")
+    if r.status_code != 200 or r.json()["result"] != "claimed":
+        return r
+    return send_files(client, guest, claim_id, data, thumb)
+
+
+def send_text(client, guest, task_id, text, claim_id=None):
+    return claim(client, guest, task_id, claim_id or new_id(), text)
 
 
 def submissions() -> list[Submission]:
@@ -67,9 +88,11 @@ def test_second_photo_and_a_retry_award_once(client, admin, guest, clock):
     clock("09:30")
     task_id = ids(client, admin)["photo1"]
     base = totals(client, guest)
-    assert send_photo(client, guest, task_id).json()["result"] == "awarded"
-    # The phone timed out though the server got it, and sends the same photo again
-    assert send_photo(client, guest, task_id).json()["result"] == "already"
+    assert send_photo(client, guest, task_id, claim_id="one").json()["result"] == "awarded"
+    # The phone timed out though the server got it, and sends the same claim and files again: the first result
+    assert claim(client, guest, task_id, "one").json()["result"] == "awarded"
+    assert send_files(client, guest, "one").json()["result"] == "awarded"
+    # A second photo for the same task is a new send, and finds the task done
     assert send_photo(client, guest, task_id, jpeg(800, 600)).json()["result"] == "already"
     assert totals(client, guest) == (base[0] + 15, base[1] + 15)
     assert len(submissions()) == 1
@@ -79,24 +102,37 @@ def test_photo_must_be_a_shrunk_jpeg(client, admin, guest, clock):
     load(client, admin, ROWS)
     clock("09:30")
     task_id = ids(client, admin)["photo1"]
-    r = send_photo(client, guest, task_id, jpeg(4032, 3024))
+    assert claim(client, guest, task_id, "one").json()["result"] == "claimed"
+    r = send_files(client, guest, "one", jpeg(4032, 3024))
     assert (r.status_code, r.json()["detail"]) == (400, "photo_too_large")
-    r = send_photo(client, guest, task_id, b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    r = send_files(client, guest, "one", b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     assert (r.status_code, r.json()["detail"]) == (400, "not_a_jpeg")
-    r = send_photo(client, guest, task_id, jpeg(pad=5 * 1024 * 1024))
+    # Up to 1 MB: a bigger photo was not redrawn
+    r = send_files(client, guest, "one", jpeg(pad=1024 * 1024))
     assert (r.status_code, r.json()["detail"]) == (413, "photo_too_large")
+    r = send_files(client, guest, "one", jpeg(pad=5 * 1024 * 1024))
+    assert (r.status_code, r.json()["detail"]) == (413, "photo_too_large")
+    # The thumbnail: a JPEG up to 400 px and 100 KB
+    r = send_files(client, guest, "one", thumb=b"GIF89a" + b"\x00" * 100)
+    assert (r.status_code, r.json()["detail"]) == (400, "not_a_jpeg")
+    r = send_files(client, guest, "one", thumb=jpeg(1200, 1600))
+    assert (r.status_code, r.json()["detail"]) == (400, "thumb_too_large")
+    r = send_files(client, guest, "one", thumb=jpeg(300, 400, pad=100 * 1024))
+    assert (r.status_code, r.json()["detail"]) == (413, "thumb_too_large")
     assert submissions() == []
-    assert send_photo(client, guest, task_id, jpeg(1600, 1200)).json()["result"] == "awarded"
+    assert send_files(client, guest, "one", jpeg(1600, 1200)).json()["result"] == "awarded"
 
 
 def test_text_up_to_500_characters(client, admin, guest, clock):
     load(client, admin, ROWS)
     clock("09:30")
     task_id = ids(client, admin)["text1"]
-    assert send_text(client, guest, task_id, "я" * 501).status_code == 422
+    r = send_text(client, guest, task_id, "я" * 501)
+    assert (r.status_code, r.json()["detail"]) == (400, "text_too_long")
     r = send_text(client, guest, task_id, "   ")
     assert (r.status_code, r.json()["detail"]) == (400, "text_required")
     assert submissions() == []
+    # A text-only task counts at the claim: there is no files step
     r = send_text(client, guest, task_id, "я" * 500)
     assert r.json()["result"] == "awarded"
     assert send_text(client, guest, task_id, "ещё раз").json()["result"] == "already"
@@ -107,30 +143,34 @@ def test_photo_and_text_needs_both(client, admin, guest, clock):
     load(client, admin, ROWS)
     clock("09:30")
     task_id = ids(client, admin)["both1"]
-    r = send_photo(client, guest, task_id)
+    r = claim(client, guest, task_id, "one")
     assert (r.status_code, r.json()["detail"]) == (400, "text_required")
-    r = send_text(client, guest, task_id, "Только текст")
-    assert (r.status_code, r.json()["detail"]) == (400, "wrong_method")
-    r = send_photo(client, guest, task_id, text="я" * 501)
+    r = claim(client, guest, task_id, "one", "я" * 501)
     assert (r.status_code, r.json()["detail"]) == (400, "text_too_long")
-    assert submissions() == []
-    # 500 characters on the guest's counter, line breaks included, though the form sends each as \r\n
+    # 500 characters on the guest's counter, line breaks included, though a form may send each as \r\n
     poem = "\r\n".join(["я" * 49] * 10) + "я"
-    r = send_photo(client, guest, task_id, text=poem)
+    assert claim(client, guest, task_id, "one", poem).json()["result"] == "claimed"
+    # The text rides in the claim; nothing counts until the photo comes
+    assert submissions() == []
+    r = send_files(client, guest, "one")
     assert (r.json()["result"], r.json()["task"]["points"]) == ("awarded", 20)
-    [s] = submissions()
-    assert s.text == poem.replace("\r\n", "\n") and len(s.text) == 500
 
 
 def test_endpoint_must_match_the_task(client, admin, guest, clock):
     load(client, admin, ROWS)
     clock("09:30")
     t = ids(client, admin)
-    assert send_text(client, guest, t["photo1"], "текст").json()["detail"] == "wrong_method"
-    assert send_photo(client, guest, t["text1"]).json()["detail"] == "wrong_method"
-    assert send_photo(client, guest, t["qr1"]).json()["detail"] == "wrong_method"
+    assert claim(client, guest, t["qr1"], "one").json()["detail"] == "wrong_method"
+    assert claim(client, guest, 999999, "one").status_code == 404
+    # A text task has no files step
+    assert send_text(client, guest, t["text1"], "текст", claim_id="text").json()["result"] == "awarded"
+    assert send_files(client, guest, "text").json()["detail"] == "wrong_method"
+    assert send_files(client, guest, "nobody").status_code == 404
     assert client.post(f"/api/tasks/{t['photo1']}/complete", headers=guest).json()["detail"] == "not_a_link_task"
-    assert send_photo(client, guest, 999999).status_code == 404
+    # The ID becomes a path segment: letters, digits, - and _ only
+    assert claim(client, guest, t["photo1"], "../x").status_code == 422
+    # The old one-step endpoints are gone
+    assert client.post(f"/api/tasks/{t['text1']}/text", json={"text": "x"}, headers=guest).status_code in (404, 405)
 
 
 def test_partner_photo_gives_coins_by_the_rule(client, admin, guest, clock):
@@ -145,7 +185,7 @@ def test_photo_outside_its_stage_gets_nothing(client, admin, guest, clock):
     clock("09:30")
     base = totals(client, guest)
     r = send_photo(client, guest, ids(client, admin)["photo3"])
-    assert (r.status_code, r.json()["result"], r.json()["task"]["done"]) == (200, "unavailable", False)
+    assert (r.status_code, r.json()["result"], r.json()["task"]["done"]) == (200, "stage_closed", False)
     assert totals(client, guest) == base
     assert submissions() == []
 
@@ -186,6 +226,7 @@ def test_big_body_is_refused_before_it_is_read(client, admin, guest, clock):
     clock("09:30")
     task_id = ids(client, admin)["photo1"]
     big = {"Content-Length": str(10 * 1024 * 1024), "Content-Type": "multipart/form-data; boundary=x", **guest}
-    r = client.post(f"/api/tasks/{task_id}/photo", content=b"--x--", headers=big)
+    assert claim(client, guest, task_id, "one").json()["result"] == "claimed"
+    r = client.post("/api/claims/one/files", content=b"--x--", headers=big)
     assert (r.status_code, r.json()["detail"]) == (413, "photo_too_large")
     assert submissions() == []

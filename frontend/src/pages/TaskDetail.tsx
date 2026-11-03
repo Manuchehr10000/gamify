@@ -5,7 +5,7 @@ import { api, ApiError, tokens } from '../api'
 import { ResultCard, Reward, ReviewNote, TaskTypeTag } from '../components/console/game'
 import { Button, Callout, Card, Checkbox, Icon, Loading, MessageCard, PageHeader, Screen, Spinner } from '../components/console/ui'
 import { cache, type Award, type Task } from '../feed'
-import { forgetUpload, sendPhoto, sendText, shrink, useUpload, type Upload } from '../uploads'
+import { forgetUpload, isWaiting, prepare, send, useUpload, type Upload } from '../uploads'
 import { useConfigVersion } from '../version'
 
 type State = { kind: 'loading' } | { kind: 'missing' } | { kind: 'ready'; task: Task }
@@ -94,25 +94,30 @@ const TEXT_MAX = 500
 function UploadStatus({ upload }: { upload: Upload | null }) {
   const { t } = useTranslation()
   if (upload?.state === 'sending') {
-    return <p className="flex min-h-12 items-center justify-center"><Spinner label={t('submit.sending')} /></p>
+    return <p className="flex min-h-12 items-center justify-center"><Spinner label={t('submit.uploading')} /></p>
   }
-  if (upload?.state === 'offline') return <Callout tone="offline">{t('submit.offline')}</Callout>
+  if (upload?.state === 'unclaimed') return <Callout tone="offline">{t('submit.unclaimed')}</Callout>
+  if (upload?.state === 'claimed') return <Callout tone="offline">{t('submit.claimed')}</Callout>
   if (upload?.state === 'failed') {
     return <Callout tone="danger">{t(`submit.errors.${upload.reason}`, { defaultValue: t('common.error') })}</Callout>
   }
   return null
 }
 
-// Photo, text or both: pick or write, look it over, send once
+// Photo, text or both: pick or write, look it over, send once. «Отправить» saves it on the phone first
+
 function Submit({ task }: { task: Task }) {
   const { t } = useTranslation()
   const upload = useUpload(task.id)
   const picker = useRef<HTMLInputElement>(null)
-  const [photo, setPhoto] = useState<Blob | null>(null)
+  const [photo, setPhoto] = useState<{ photo: Blob; thumb: Blob } | null>(null)
   const [preview, setPreview] = useState('')
   const [text, setText] = useState('')
   const [preparing, setPreparing] = useState(false)
   const [pickError, setPickError] = useState(false)
+  const [full, setFull] = useState(false)
+  // Saving on the phone takes a moment: a second tap meanwhile must not save the send twice
+  const [saving, setSaving] = useState(false)
   const wantsPhoto = task.method !== 'text'
   const wantsText = task.method !== 'photo'
 
@@ -125,9 +130,9 @@ function Submit({ task }: { task: Task }) {
     setPreparing(true)
     setPickError(false)
     try {
-      const small = await shrink(file)
-      setPhoto(small)
-      setPreview(URL.createObjectURL(small))
+      const files = await prepare(file)
+      setPhoto(files)
+      setPreview(URL.createObjectURL(files.photo))
     } catch {
       setPickError(true)
     } finally {
@@ -135,13 +140,18 @@ function Submit({ task }: { task: Task }) {
     }
   }
 
-  const busy = upload?.state === 'sending' || upload?.state === 'offline'
+  const busy = isWaiting(upload)
   const ready = (!wantsPhoto || photo) && (!wantsText || text.trim())
 
-  function send() {
-    if (!ready) return
-    if (wantsPhoto) sendPhoto(task.id, photo!, wantsText ? text.trim() : undefined)
-    else sendText(task.id, text.trim())
+  async function submit() {
+    if (!ready || saving) return
+    setSaving(true)
+    try {
+      // Up to the admin's number of sends wait on one phone; beyond that nothing is saved
+      setFull(!(await send(task.id, wantsText ? text.trim() : '', wantsPhoto ? photo! : undefined)))
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -183,13 +193,14 @@ function Submit({ task }: { task: Task }) {
         </label>
       )}
       {pickError && <Callout tone="danger" icon="camera">{t('submit.badPhoto')}</Callout>}
+      {full && !busy && <Callout tone="warning">{t('submit.queueFull')}</Callout>}
       <UploadStatus upload={upload} />
       {!busy && (
         wantsPhoto && !photo ? (
           <Button busy={preparing} icon="camera" onClick={() => picker.current?.click()}>{t('task.do')}</Button>
         ) : (
           <>
-            <Button disabled={!ready || preparing} onClick={send}>{t('submit.send')}</Button>
+            <Button disabled={!ready || preparing || saving} onClick={() => void submit()}>{t('submit.send')}</Button>
             {wantsPhoto && (
               <Button variant="outline" disabled={preparing} onClick={() => picker.current?.click()}>{t('submit.retake')}</Button>
             )}

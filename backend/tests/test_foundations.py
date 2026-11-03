@@ -393,7 +393,7 @@ def runs() -> list[JobRun]:
 
 def test_each_registered_job_runs_and_is_logged(client, monkeypatch):
     done = []
-    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: done.append(1)), ("second", lambda db: done.append(2))])
+    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: done.append(1) or ""), ("second", lambda db: done.append(2) or "")])
     r = run(client)
     assert r.status_code == 200, r.text
     assert done == [1, 2]
@@ -406,7 +406,7 @@ def test_a_failing_job_is_logged_and_the_next_still_runs(client, monkeypatch):
         db.execute(update(Guest).values(first_name="испорчено"))
         raise RuntimeError("нет связи")
 
-    monkeypatch.setattr(jobs, "JOBS", [("broken", broken), ("fine", lambda db: None)])
+    monkeypatch.setattr(jobs, "JOBS", [("broken", broken), ("fine", lambda db: "")])
     assert run(client).status_code == 200
     (failed, ok) = runs()
     assert (failed.job, failed.result, failed.error) == ("broken", "failed", "RuntimeError: нет связи")
@@ -415,7 +415,7 @@ def test_a_failing_job_is_logged_and_the_next_still_runs(client, monkeypatch):
 
 def test_a_run_while_the_previous_holds_the_lock_is_skipped(client, monkeypatch):
     done = []
-    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: done.append(1))])
+    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: done.append(1) or "")])
     with engine.connect() as c:
         c.execute(text("SELECT pg_advisory_lock(:key)"), {"key": jobs.RUN_LOCK})
         try:
@@ -429,7 +429,7 @@ def test_a_run_while_the_previous_holds_the_lock_is_skipped(client, monkeypatch)
 
 
 def test_a_run_left_open_by_a_dead_process_is_closed_as_failed(client, monkeypatch):
-    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: None)])
+    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: "")])
     with SessionLocal() as db:
         db.add(JobRun(job="first", result=""))
         db.commit()
@@ -441,7 +441,7 @@ def test_a_run_left_open_by_a_dead_process_is_closed_as_failed(client, monkeypat
 @pytest.mark.parametrize("secret", [None, "", "wrong"])
 def test_the_job_endpoint_needs_the_workers_secret(client, monkeypatch, secret):
     done = []
-    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: done.append(1))])
+    monkeypatch.setattr(jobs, "JOBS", [("first", lambda db: done.append(1) or "")])
     assert run(client, secret).status_code == 401
     assert done == [] and runs() == []
 

@@ -23,9 +23,12 @@ class Run(BaseModel):
     # ok · failed · skipped
     result: str
     error: str
+    # What an ok run did, e.g. how many claims lapsed
+    detail: str
 
 
 @router.post("/run")
 def run() -> list[Run]:
-    return [Run(job=r.job, started_at=r.started_at, finished_at=r.finished_at, result=r.result, error=r.error)
+    return [Run(job=r.job, started_at=r.started_at, finished_at=r.finished_at, result=r.result, error=r.error,
+                detail=r.detail)
             for r in jobs.run_all()]

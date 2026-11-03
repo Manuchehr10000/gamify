@@ -209,16 +209,43 @@ class Submission(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
     task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"))
-    # The JPEG as the phone sent it; deferred so listing submissions never loads the bytes
+    # The JPEG as the phone sent it, metadata stripped; deferred so listing submissions never loads the bytes
     photo: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    # The phone's 400 px copy for the moderation list; empty for photos sent before thumbnails
+    thumb: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # "" waiting for a moderator · accepted · bonus · retake (task reopened) · penalty (task closed, no points)
     status: Mapped[str] = mapped_column(String(16), default="")
     moderator: Mapped[str] = mapped_column(String(100), default="")
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # The phone's key for this send, repeated on its retries: a late retry of one sent back is not a new send
+    # The phone's key for this send (its claim's ID), repeated on its retries: a late retry of one sent back is not
+    # a new send
     upload: Mapped[str] = mapped_column(String(64), default="")
+
+
+class Claim(Base):
+    """The first step of sending a photo or text: the phone's submission ID, checked and timed by the server. The
+    files follow in a second step; points are paid when they arrive (a text-only claim pays at once)."""
+    __tablename__ = "claims"
+    __table_args__ = (
+        Index("claims_open_guest_task", "guest_id", "task_id", unique=True, postgresql_where=text("state = 'open'")),
+        Index("claims_open_expires", "expires_at", postgresql_where=text("state = 'open'")),
+    )
+
+    # Made on the phone, repeated on every retry: the same ID never pays twice
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"))
+    # A text or photo+text task's text rides in the claim
+    text: Mapped[str] = mapped_column(Text, default="")
+    # The server's time of the claim: it sets the stage, and later the stock (piece 15) and multiplier (piece 16)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    stage_id: Mapped[int | None] = mapped_column(ForeignKey("stages.id", ondelete="SET NULL"))
+    # Past this the claim lapses and frees its place; files that come later are refused
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # open (waiting for files) · done · lapsed
+    state: Mapped[str] = mapped_column(String(8), default="open")
 
 
 class Question(Base):
@@ -295,6 +322,8 @@ class JobRun(Base):
     # ok · failed (error says why) · skipped (the previous run still held the lock)
     result: Mapped[str] = mapped_column(String(16), default="")
     error: Mapped[str] = mapped_column(Text, default="")
+    # What an ok run did, in the job's words, e.g. how many claims lapsed
+    detail: Mapped[str] = mapped_column(Text, default="")
 
 
 class Setting(Base):

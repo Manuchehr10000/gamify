@@ -12,7 +12,7 @@ from tests.conftest import moderator_headers, open_link, staff_headers
 from tests.test_market import buy, market
 from tests.test_market import load as load_market
 from tests.test_qr_tasks import load, row, totals
-from tests.test_submissions import ROWS, ids, jpeg, send_photo, send_text
+from tests.test_submissions import ROWS, ids, jpeg, send_files, send_photo, send_text
 from tests.test_tasks import admin, clock, guest  # noqa: F401 (fixtures)
 
 MOD_ROWS = ROWS + [row("photo35", 1, "Фото на 35", points=35, method="Фото")]
@@ -188,8 +188,7 @@ def test_retake_takes_the_award_back_and_reopens_the_task(client, admin, guest, 
 
 
 def keyed_photo(client, guest, task_id, data, upload):
-    files = {"photo": ("photo.jpg", data, "image/jpeg")}
-    return client.post(f"/api/tasks/{task_id}/photo", files=files, data={"upload": upload}, headers=guest)
+    return send_photo(client, guest, task_id, data, claim_id=upload)
 
 
 def test_a_late_retry_of_the_rejected_upload_is_not_awarded_again(client, admin, guest, clock):
@@ -201,6 +200,8 @@ def test_a_late_retry_of_the_rejected_upload_is_not_awarded_again(client, admin,
     decide(client, mod, queue(client, mod)["items"][0]["id"], "retake")
     # The phone never got the first answer and retries the same send after the retake
     r = keyed_photo(client, guest, t["photo1"], data, "send-1")
+    assert (r.status_code, r.json()["detail"]) == (409, "sent_back")
+    r = send_files(client, guest, "send-1", data)
     assert (r.status_code, r.json()["detail"]) == (409, "sent_back")
     assert totals(client, guest) == base
     assert queue(client, mod)["items"] == []
@@ -216,7 +217,7 @@ def test_retake_of_a_text_task_lets_the_guest_write_again(client, admin, guest, 
     mod = moderator_headers(client)
     decide(client, mod, queue(client, mod)["items"][0]["id"], "retake")
     # The same words again, typed anew, count
-    r = client.post(f"/api/tasks/{t['text1']}/text", json={"text": "Первый", "upload": "send-2"}, headers=guest)
+    r = send_text(client, guest, t["text1"], "Первый", claim_id="send-2")
     assert r.json()["result"] == "awarded"
     assert totals(client, guest)[0] > base[0]
     assert send_text(client, guest, t["text1"], "Третий").json()["result"] == "already"

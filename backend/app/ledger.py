@@ -2,6 +2,7 @@
 score_events row and moves the guest's stored totals in the same transaction. Rows are never edited or deleted;
 a retake adds a reversal row that points at the award it takes back."""
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Literal
 
 from sqlalchemy import ColumnElement, exists, select, update
 from sqlalchemy.orm import Session as DbSession, aliased
@@ -43,18 +44,23 @@ def points_of(base_points: int, multiplier: Decimal) -> int:
 
 
 def write(db: DbSession, guest_id: int, reason: str, action: str, base_points: int, coins: int,
-          multiplier: Decimal = Decimal(1), reverses: ScoreEvent | None = None) -> ScoreEvent | None:
+          multiplier: Decimal = Decimal(1), reverses: ScoreEvent | None = None,
+          stage_id: int | None | Literal["now"] = "now") -> ScoreEvent | None:
     """Add one row and move the guest's totals by it. An award (arrival, task, badge) is written only when no
-    standing one has the same reason; None then. A reversal is always written. The caller commits."""
+    standing one has the same reason; None then. A reversal is always written. stage_id: a claim's stage, for an
+    award paid after it, kept as given even when that stage was deleted since (None); "now": the stage running now.
+    The caller commits."""
     assert action in ACTIONS
     lock(db, guest_id)
     if action in AWARDS and reverses is None and award(db, guest_id, reason) is not None:
         return None
-    d = stages.day(db)
+    if stage_id == "now":
+        d = stages.day(db)
+        stage_id = d.current.id if d.current else None
     points = points_of(base_points, multiplier)
     event = ScoreEvent(guest_id=guest_id, reason=reason, action=action, base_points=base_points,
                        multiplier=multiplier, points=points, coins=coins,
-                       stage_id=d.current.id if d.current else None,
+                       stage_id=stage_id,
                        reverses_id=reverses.id if reverses else None)
     db.add(event)
     db.execute(update(Guest).where(Guest.id == guest_id)

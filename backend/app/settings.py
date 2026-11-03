@@ -39,6 +39,10 @@ SETTINGS: dict[str, Spec] = {
     "hall_top": Spec(Decimal(10), Decimal(3), Decimal(30)),
     # A guest counts as active on /admin/live for this many minutes after doing something
     "active_window_minutes": Spec(Decimal(15), Decimal(1), Decimal(120)),
+    # A photo's claim holds the guest's place this many minutes; files that come later are refused
+    "claim_minutes": Spec(Decimal(60), Decimal(10), Decimal(240)),
+    # Submissions one phone keeps waiting to send; beyond that «Дождитесь загрузки предыдущих фото»
+    "upload_queue_size": Spec(Decimal(5), Decimal(1), Decimal(10)),
 }
 
 # Raised by every admin save; phones and screens poll it and reload when it moves

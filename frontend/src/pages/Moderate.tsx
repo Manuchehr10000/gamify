@@ -107,7 +107,9 @@ export function Moderate() {
 function ItemCard({ item, token, onDecided, onLoggedOut }:
   { item: Item; token: string; onDecided: () => void; onLoggedOut: () => void }) {
   const { t } = useTranslation()
-  const photo = usePhoto(item.photo ? item.id : null, token)
+  // The list shows the 400 px copy; a tap opens the full photo
+  const photo = usePhoto(item.photo ? item.id : null, token, true)
+  const [full, setFull] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [already, setAlready] = useState('')
@@ -133,12 +135,19 @@ function ItemCard({ item, token, onDecided, onLoggedOut }:
   return (
     <article className="gc-moderation-card" aria-busy={busy || undefined} aria-label={`${item.guest} · ${item.task}`}>
       {item.photo && (
-        <div className="gc-photo-frame gc-crt" aria-busy={!photo || undefined}>
+        <button
+          type="button"
+          className="gc-photo-frame gc-crt cursor-zoom-in bg-transparent"
+          aria-busy={!photo || undefined}
+          aria-label={t('moderate.openPhoto')}
+          onClick={() => setFull(true)}
+        >
           {photo
             ? <img src={photo} alt={t('moderate.photoAlt')} className="gc-photo-frame__img" />
             : <Spinner size={32} label={t('common.loading')} />}
-        </div>
+        </button>
       )}
+      {full && <FullPhoto id={item.id} token={token} onClose={() => setFull(false)} />}
       {item.text && <p className="gc-moderation-card__text gc-body">{item.text}</p>}
       <p className="gc-moderation-card__task gc-label">{item.task}</p>
       <p className="gc-moderation-card__meta gc-body-s">
@@ -161,11 +170,32 @@ function ItemCard({ item, token, onDecided, onLoggedOut }:
   )
 }
 
+// The full photo over the whole screen; a tap anywhere or Escape closes it
+function FullPhoto({ id, token, onClose }: { id: number; token: string; onClose: () => void }) {
+  const { t } = useTranslation()
+  const photo = usePhoto(id, token, false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div role="dialog" aria-modal="true" aria-label={t('moderate.photoAlt')} className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={onClose}>
+      {photo
+        ? <img src={photo} alt={t('moderate.photoAlt')} className="max-h-full max-w-full object-contain" />
+        : <Spinner size={32} label={t('common.loading')} />}
+      <div className="absolute right-4 top-4">
+        <Button variant="outline" icon="x" block={false} onClick={onClose}>{t('moderate.closePhoto')}</Button>
+      </div>
+    </div>
+  )
+}
+
 // Try a photo that didn't load again after this long, so a dropped connection doesn't leave the card blank
 const PHOTO_RETRY_MS = 3_000
 
 // An <img> can't send the moderator's token: fetch the photo, show it from memory, let it go when the card leaves
-function usePhoto(id: number | null, token: string): string {
+function usePhoto(id: number | null, token: string, thumb: boolean): string {
   const [url, setUrl] = useState('')
   const [attempt, setAttempt] = useState(0)
   useEffect(() => {
@@ -173,7 +203,7 @@ function usePhoto(id: number | null, token: string): string {
     let objectUrl = ''
     let gone = false
     let retry: ReturnType<typeof setTimeout> | undefined
-    blob(`/api/submissions/${id}/photo`, { token })
+    blob(`/api/submissions/${id}/photo${thumb ? '?thumb=1' : ''}`, { token })
       .then((photo) => {
         if (gone) return
         objectUrl = URL.createObjectURL(photo)
@@ -187,6 +217,6 @@ function usePhoto(id: number | null, token: string): string {
       clearTimeout(retry)
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [id, token, attempt])
+  }, [id, token, thumb, attempt])
   return url
 }

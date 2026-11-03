@@ -44,3 +44,91 @@ self.addEventListener('fetch', (e) => {
       }),
   )
 })
+
+// Photos and texts waiting on the phone (src/uploads.ts saves them in IndexedDB the moment the guest presses
+// «Отправить»). On Android, Background Sync wakes this worker once there is a network and it sends them, even with
+// the app closed; an iPhone has no Background Sync and sends them the next time the app opens.
+// Keep DB, the stores and the entry shape in step with src/uploads.ts
+const DB = 'gamify-uploads'
+const QUEUE = 'queue'
+const META = 'meta'
+const SYNC_TAG = 'uploads'
+const LOCK = 'gamify-uploads'
+
+function done(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+function database() {
+  const req = indexedDB.open(DB, 1)
+  req.onupgradeneeded = () => {
+    req.result.createObjectStore(QUEUE, { keyPath: 'id' })
+    req.result.createObjectStore(META)
+  }
+  return done(req)
+}
+
+const inStore = (db, name, mode, run) => done(run(db.transaction(name, mode).objectStore(name)))
+
+// The server's answer, { refused } when it said no, or { loggedOut } when it no longer knows the guest's login (the
+// entry keeps its bytes and waits); no answer at all throws, so the browser tries again later
+async function post(api, e, path, init) {
+  const headers = { Authorization: `Bearer ${e.token}`, ...init.headers }
+  const res = await fetch(api + path, { method: 'POST', ...init, headers })
+  if (res.ok) return res.json()
+  if (res.status === 401) return { loggedOut: true }
+  if (res.status >= 500 || res.status === 408 || res.status === 429) throw new Error(`API ${res.status}`)
+  const { detail } = await res.json().catch(() => ({}))
+  return { refused: typeof detail === 'string' ? detail : 'error' }
+}
+
+// Both steps of one send, as the app does them, under the login of the guest who sent it
+async function sendOne(db, api, e) {
+  const fail = (reason) => inStore(db, QUEUE, 'readwrite', (s) => s.put({ ...e, photo: undefined, thumb: undefined, failed: reason }))
+  // The phone's copy goes once the server has confirmed it
+  const remove = () => inStore(db, QUEUE, 'readwrite', (s) => s.delete(e.id))
+  if (!e.claimed) {
+    const r = await post(api, e, `/api/tasks/${e.taskId}/claim`, {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: e.id, text: e.text }),
+    })
+    if (r.loggedOut) return
+    if (r.refused) return fail(r.refused)
+    if (r.result === 'awarded' || r.result === 'already') return remove()
+    if (r.result !== 'claimed') return fail(r.result)
+    e = { ...e, claimed: true }
+    await inStore(db, QUEUE, 'readwrite', (s) => s.put(e))
+  }
+  if (!e.photo || !e.thumb) return fail('error')
+  const form = new FormData()
+  form.append('photo', new Blob([e.photo], { type: 'image/jpeg' }), 'photo.jpg')
+  form.append('thumb', new Blob([e.thumb], { type: 'image/jpeg' }), 'thumb.jpg')
+  const r = await post(api, e, `/api/claims/${e.id}/files`, { body: form })
+  if (r.loggedOut) return
+  return r.refused ? fail(r.refused) : remove()
+}
+
+async function sendWaiting() {
+  const db = await database()
+  const api = await inStore(db, META, 'readonly', (s) => s.get('api'))
+  if (api === undefined) return
+  try {
+    // The app holds the same lock while it sends: read the queue only once it is ours, so nothing sent or changed by
+    // the app meanwhile is sent again or written back
+    const run = async () => {
+      const waiting = (await inStore(db, QUEUE, 'readonly', (s) => s.getAll())).filter((e) => !e.failed).sort((a, b) => a.at - b.at)
+      for (const e of waiting) await sendOne(db, api, e)
+    }
+    await (navigator.locks ? navigator.locks.request(LOCK, run) : run())
+  } finally {
+    // An open app shows what changed and fetches the new totals
+    for (const client of await self.clients.matchAll({ type: 'window' })) client.postMessage(SYNC_TAG)
+  }
+}
+
+self.addEventListener('sync', (e) => {
+  if (e.tag === SYNC_TAG) e.waitUntil(sendWaiting())
+})

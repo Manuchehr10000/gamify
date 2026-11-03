@@ -86,8 +86,10 @@ def queue(top20: bool = False, name: str = Depends(current_moderator), db: DbSes
 
 
 @router.get("/api/submissions/{submission_id}/photo", dependencies=[Depends(current_moderator)])
-def photo(submission_id: int, db: DbSession = Depends(get_db)) -> Response:
-    data = db.scalar(select(Submission.photo).where(Submission.id == submission_id))
+def photo(submission_id: int, thumb: bool = False, db: DbSession = Depends(get_db)) -> Response:
+    # ?thumb=1: the 400 px copy for the list; a photo sent before thumbnails has none, so the photo itself
+    column = func.coalesce(Submission.thumb, Submission.photo) if thumb else Submission.photo
+    data = db.scalar(select(column).where(Submission.id == submission_id))
     if data is None:
         raise HTTPException(404, "photo_not_found")
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})

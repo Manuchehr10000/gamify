@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.tsx'
 import './i18n'
 import './index.css'
+import { resumeUploads } from './uploads'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-// Lets /app open from the phone's copy when the network drops
+// Lets /app open from the phone's copy when the network drops, and sends waiting photos with the app closed (Android)
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
 }
+// Photos and texts saved on the phone before the app was last closed go on sending
+resumeUploads()

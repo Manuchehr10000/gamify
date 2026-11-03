@@ -30,6 +30,8 @@ export type Feed = {
   new_level: string | null
   // Badges just earned, sent once each: a full-screen moment each, after the level's
   new_badges: Badge[]
+  // How many photos and texts this phone may keep waiting to send (the admin's setting)
+  queue_size: number
   state: 'none' | 'before' | 'running' | 'over'
   stage_count: number
   starts_at: string | null
