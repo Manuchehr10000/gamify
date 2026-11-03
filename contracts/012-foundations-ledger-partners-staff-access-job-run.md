@@ -1,5 +1,5 @@
 # Contract: Foundations: ledger, partners, staff access, job runner
-Status: building
+Status: on-dev
 Base: 1acec1e125
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be608138b830c2088d0d536c
