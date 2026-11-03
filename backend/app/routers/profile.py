@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import badges, levels
+from app import badges, ledger, levels
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, Prize, ScoreEvent, Submission, Task
@@ -48,7 +48,8 @@ def profile(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_d
     settle(db, guest.id)
     points, coins = totals(db, guest)
     lv = levels.place(levels.load(db), points)
-    events = list(db.scalars(select(ScoreEvent).where(ScoreEvent.guest_id == guest.id)
+    # An award a retake reversed, and its reversal, leave the history together
+    events = list(db.scalars(select(ScoreEvent).where(ScoreEvent.guest_id == guest.id, ledger.standing())
                              .order_by(ScoreEvent.created_at.desc(), ScoreEvent.id.desc())))
     ids = {kind: {int(e.reason.split(":")[1]) for e in events if e.reason.startswith(kind + ":")}
            for kind in ("task", "bonus", "penalty", "buy")}

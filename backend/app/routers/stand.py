@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session as DbSession
 from app import stages
 from app.auth import require_role
 from app.db import get_db
-from app.models import Guest, Prize, Redemption
+from app.models import Guest, Partner, Prize, Redemption
 from app.routers.market import local
 
 # Partner stands scan a guest's market QR and hand the prize over
@@ -38,7 +38,7 @@ def _redemption(db: DbSession, code: str, lock: bool = False) -> Redemption:
 
 def _handover(db: DbSession, r: Redemption) -> Handover:
     prize = db.get(Prize, r.prize_id)
-    return Handover(prize=prize.name, partner=prize.partner, first_name=db.get(Guest, r.guest_id).first_name,
+    return Handover(prize=prize.name, partner=db.get(Partner, prize.partner_id).name, first_name=db.get(Guest, r.guest_id).first_name,
                     issued_at=local(r.issued_at))
 
 

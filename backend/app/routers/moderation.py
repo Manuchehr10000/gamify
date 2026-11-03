@@ -1,4 +1,3 @@
-import hmac
 import math
 from datetime import datetime
 from typing import Literal
@@ -8,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import badges, config, levels, rating, stages
+from app import accounts, badges, ledger, levels, rating, stages
 from app.auth import current_moderator, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Submission, Task
@@ -31,11 +30,11 @@ class ModeratorToken(BaseModel):
 
 @router.post("/api/moderator/login")
 def login(body: Login, db: DbSession = Depends(get_db)) -> ModeratorToken:
-    # No MODERATORS set: nobody can log in
-    name = next((n for n, pin in config.MODERATORS if hmac.compare_digest(body.secret.encode(), pin.encode())), None)
-    if name is None:
+    # The PIN alone says which moderator it is; no moderator accounts: nobody can log in
+    account = accounts.find(db, "moderator", body.secret)
+    if account is None:
         raise HTTPException(401, "wrong_secret")
-    return ModeratorToken(token=start_session(db, "moderator", staff_name=name), name=name)
+    return ModeratorToken(token=start_session(db, account), name=account.name)
 
 
 class Item(BaseModel):
@@ -69,7 +68,8 @@ def queue(top20: bool = False, name: str = Depends(current_moderator), db: DbSes
         where.append(Submission.guest_id.in_(select(top.c.guest_id)))
     waiting, oldest = db.execute(select(func.count(), func.min(Submission.created_at)).where(*where)).one()
     # The points sending it earned, the base of «Бонус +50%», even if the task file was uploaded again since
-    award = (ScoreEvent.guest_id == Submission.guest_id) & (ScoreEvent.reason == "task:" + cast(Submission.task_id, String))
+    award = ((ScoreEvent.guest_id == Submission.guest_id)
+             & (ScoreEvent.reason == "task:" + cast(Submission.task_id, String)) & ledger.standing())
     rows = db.execute(
         select(Submission.id, Task.text, func.coalesce(ScoreEvent.points, Task.points), Guest.first_name,
                Guest.last_name, Submission.text, Submission.photo.isnot(None), Submission.created_at)
@@ -121,17 +121,16 @@ def decide(submission_id: int, body: DecisionIn, name: str = Depends(current_mod
     if s.status:
         return Decision(result="already", status=s.status, moderator=s.moderator, decided_at=local(s.decided_at))
     # What sending it earned, which may differ from the task now if the file was uploaded again since
-    award = db.scalar(select(ScoreEvent).where(ScoreEvent.guest_id == s.guest_id,
-                                               ScoreEvent.reason == task_reason(s.task_id)))
-    points, coins = (award.points, award.coins) if award else (0, 0)
+    award = ledger.award(db, s.guest_id, task_reason(s.task_id))
+    points = award.points if award else 0
     if body.action == "bonus":
-        db.add(ScoreEvent(guest_id=s.guest_id, reason=f"bonus:{s.id}", points=math.ceil(points / 2), coins=0))
+        ledger.write(db, s.guest_id, f"bonus:{s.id}", "bonus", math.ceil(points / 2), 0)
     elif body.action == "retake" and award:
-        # Taking the award back reopens the task: the guest's next submission is awarded afresh
-        db.delete(award)
-    elif body.action == "penalty":
+        # A reversal row takes the award back and reopens the task: the guest's next submission is awarded afresh
+        ledger.take_back(db, award, f"retake:{s.id}", "retake", reverse=True)
+    elif body.action == "penalty" and award:
         # The award stays, so the task stays closed; this takes its points and coins back. Coins may go below zero
-        db.add(ScoreEvent(guest_id=s.guest_id, reason=f"penalty:{s.id}", points=-points, coins=-coins))
+        ledger.take_back(db, award, f"penalty:{s.id}", "penalty", reverse=False)
     if body.action in ("retake", "penalty"):
         db.flush()
         levels.dropped(db, s.guest_id)

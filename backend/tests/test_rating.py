@@ -2,9 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
+from app import ledger
 from app.db import SessionLocal
 from app.guest_list import import_csv
-from app.models import Guest, ScoreEvent
+from app.models import Guest
 from tests.conftest import moderator_headers, open_link, staff_headers
 from tests.test_guest_list import export, upload
 from tests.test_market import buy, make_guest, market
@@ -26,8 +27,8 @@ def guests(text: str) -> dict[str, Guest]:
 def score(g: Guest, points: int, minute: int, reason: str | None = None, coins: int = 0) -> None:
     """Give a guest points at T0 + minute, so who reached a score first is known."""
     with SessionLocal() as db:
-        db.add(ScoreEvent(guest_id=g.id, reason=reason or f"seed{minute}", points=points, coins=coins,
-                          created_at=T0 + timedelta(minutes=minute)))
+        event = ledger.write(db, g.id, reason or f"seed{minute}", "bonus", points, coins)
+        event.created_at = T0 + timedelta(minutes=minute)
         db.commit()
 
 

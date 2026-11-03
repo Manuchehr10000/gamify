@@ -15,7 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.guests import random_code
-from app.models import Level, Prize, Question, Stage, Task
+from app.models import Level, Partner, Prize, Question, Stage, Task
 from app.stages import EVENT_TZ
 
 STAGES_SHEET = "Этапы"
@@ -256,6 +256,17 @@ def _save_questions(db: DbSession, task: Task, rows: list[QuestionRow]) -> bool:
     return True
 
 
+def _partner(db: DbSession, partners: dict[str, Partner], name: str) -> Partner:
+    """The partner with this name; a new name adds one (with no package until «Задания» gives it)."""
+    partner = partners.get(name)
+    if partner is None:
+        partner = Partner(name=name)
+        db.add(partner)
+        db.flush()
+        partners[name] = partner
+    return partner
+
+
 def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
     result = ImportResult()
     try:
@@ -334,7 +345,9 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
     methods = {_text(_cell(r, task_cols, "code")): _lookup(METHODS, _text(_cell(r, task_cols, "method")))
                for _, r in task_rows}
     # Rows that passed their own checks; «Требует» is checked once all rows are read, since its QR row may sit lower
-    parsed: list[tuple[int, str, dict, str]] = []
+    parsed: list[tuple[int, str, dict, str, str]] = []
+    # Each partner's package as the first row naming it gives it; a row giving another one fails
+    packages: dict[str, str] = {}
     ids: set[str] = set()
     # Quiz rows loaded in this upload: their «Требует» and whether they already count as added or changed
     quizzes: dict[str, tuple[str, bool]] = {}
@@ -390,21 +403,29 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             requires = _text(_cell(row, task_cols, "requires")) if method == "quiz" else ""
             if method == "quiz" and not questions.get(code):
                 raise RowError("no_questions")
+            # A blank package cell gives none; two different ones for one partner can't both hold
+            if package and packages.setdefault(partner_name, package) != package:
+                raise RowError("package_conflict")
         except RowError as e:
             fail(TASKS_SHEET, n, str(e))
             continue
         ids.add(code)
         parsed.append((n, code, {"stage_id": stage.id, "type": type_, "text": text, "points": points, "coins": coins,
-                                 "coins_from_rule": from_rule, "partner_name": partner_name,
-                                 "partner_package": package, "window_start": window_start, "window_end": window_end,
+                                 "coins_from_rule": from_rule, "window_start": window_start, "window_end": window_end,
                                  "method": method, "link": link, "timer_seconds": timer, "position": position,
-                                 "active": True}, requires))
+                                 "active": True}, requires, partner_name))
+    partners = {p.name: p for p in db.scalars(select(Partner))}
     # A quiz gated on a QR row that is missing or failed would open to everyone, or never: it fails instead
-    loaded_qr = {code for _, code, values, _ in parsed if values["method"] == "qr"}
-    for n, code, values, requires in parsed:
+    loaded_qr = {code for _, code, values, _, _ in parsed if values["method"] == "qr"}
+    for n, code, values, requires, partner_name in parsed:
         if requires and requires not in loaded_qr:
             fail(TASKS_SHEET, n, "unknown_requires")
             continue
+        partner = _partner(db, partners, partner_name) if partner_name else None
+        if partner is not None:
+            # The «Задания» sheet sets the package: the one its rows give, or none
+            partner.package = packages.get(partner_name, "")
+        values["partner_id"] = partner.id if partner else None
         seen.add(code)
         method = values["method"]
         task = tasks.get(code)
@@ -431,7 +452,7 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             task.active = False
             result.hidden += 1
     if prize_sheet:
-        _import_prizes(db, prize_cols, prize_rows, result, fail)
+        _import_prizes(db, prize_cols, prize_rows, partners, result, fail)
     if level_sheet:
         _import_levels(db, level_cols, level_rows, result, fail)
     db.commit()
@@ -458,8 +479,8 @@ def _link_quizzes(db: DbSession, tasks: dict[str, Task], quizzes: dict[str, tupl
                 fail(QUESTIONS_SHEET, q.row, "not_a_quiz")
 
 
-def _import_prizes(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], result: ImportResult,
-                   fail: Callable[[str, int, str], None]) -> None:
+def _import_prizes(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], partners: dict[str, Partner],
+                   result: ImportResult, fail: Callable[[str, int, str], None]) -> None:
     prizes = {p.code: p for p in db.scalars(select(Prize))}
     seen: set[str] = set()
     for position, (n, row) in enumerate(rows):
@@ -483,8 +504,9 @@ def _import_prizes(db: DbSession, cols: dict[str, int], rows: list[tuple[int, li
             fail(PRIZES_SHEET, n, str(e))
             continue
         seen.add(code)
-        values = {"name": name, "partner": partner, "price": price, "quantity": quantity,
-                  "position": position, "active": True}
+        # Matched by name, or added with no package: only «Задания» gives packages
+        values = {"name": name, "partner_id": _partner(db, partners, partner).id, "price": price,
+                  "quantity": quantity, "position": position, "active": True}
         prize = prizes.get(code)
         if prize is None:
             db.add(Prize(code=code, **values))
@@ -562,12 +584,15 @@ def export_xlsx(db: DbSession) -> bytes:
     wt = wb.create_sheet(TASKS_SHEET)
     wt.append(list(TASK_COLUMNS.values()))
     numbers = {s.id: s.number for s in stages}
+    partners = {p.id: p for p in db.scalars(select(Partner))}
     active = list(db.scalars(select(Task).where(Task.active).order_by(Task.position, Task.id)))
     codes = {t.id: t.code for t in active}
     for t in active:
+        # «Партнёр» and «Пакет партнёра» are written back from the partner
+        partner = partners.get(t.partner_id)
         wt.append([t.code, numbers[t.stage_id], TYPES[t.type][0], t.text, t.points,
-                   None if t.coins_from_rule else t.coins, t.partner_name,
-                   PACKAGES[t.partner_package][0] if t.partner_package else None,
+                   None if t.coins_from_rule else t.coins, partner.name if partner else "",
+                   PACKAGES[partner.package][0] if partner and partner.package else None,
                    _local(t.window_start), _local(t.window_end),
                    METHODS[t.method][0] if t.method else None, t.link or None, t.timer_seconds,
                    codes.get(t.requires_task_id)])
@@ -578,7 +603,7 @@ def export_xlsx(db: DbSession) -> bytes:
     wp = wb.create_sheet(PRIZES_SHEET)
     wp.append(list(PRIZE_COLUMNS.values()))
     for p in db.scalars(select(Prize).where(Prize.active).order_by(Prize.position, Prize.id)):
-        wp.append([p.code, p.name, p.partner, p.price, p.quantity])
+        wp.append([p.code, p.name, partners[p.partner_id].name, p.price, p.quantity])
 
     wq = wb.create_sheet(QUESTIONS_SHEET)
     wq.append(list(QUESTION_COLUMNS.values()))

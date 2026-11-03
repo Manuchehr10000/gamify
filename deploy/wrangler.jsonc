@@ -24,7 +24,9 @@
           "max_instances": 1
         }
       ],
-      "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] }
+      "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] },
+      // The job runner: one call a minute to POST /api/jobs/run (keeps the container awake all day)
+      "triggers": { "crons": ["* * * * *"] }
     },
     // main branch → production (the Live URL)
     "production": {
@@ -38,7 +40,8 @@
           "max_instances": 1
         }
       ],
-      "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] }
+      "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] },
+      "triggers": { "crons": ["* * * * *"] }
     }
   }
 }

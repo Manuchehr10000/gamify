@@ -4,10 +4,10 @@ from threading import Barrier, Thread
 import pytest
 from sqlalchemy import select, update
 
-from app import config, stages
+from app import config, ledger, stages
 from app.db import SessionLocal
 from app.guest_list import import_csv
-from app.models import Guest, ScoreEvent, Submission
+from app.models import Guest, Submission
 from tests.conftest import moderator_headers, open_link, staff_headers
 from tests.test_market import buy, market
 from tests.test_market import load as load_market
@@ -264,7 +264,7 @@ def test_rejection_after_spending_leaves_coins_negative_and_the_market_locked(cl
     # Earned back up to the price: the market opens to them again
     with SessionLocal() as db:
         g = db.scalars(select(Guest)).one()
-        db.add(ScoreEvent(guest_id=g.id, reason="earned_back", points=0, coins=10 - m["coins"]))
+        ledger.write(db, g.id, "earned_back", "bonus", 0, 10 - m["coins"])
         db.commit()
     assert buy(client, guest, market(client, guest), "Блокнот").status_code == 200
 
@@ -318,7 +318,7 @@ def test_top20_shows_only_submissions_from_the_top_by_points(client, admin, gues
     heads = [open_link(client, f"http://api.test/b/{g.code}") for g in others]
     with SessionLocal() as db:
         for g in others[:21]:
-            db.add(ScoreEvent(guest_id=g.id, reason="seed", points=1000, coins=0))
+            ledger.write(db, g.id, "seed", "bonus", 1000, 0)
         db.commit()
     send_photo(client, heads[0], t["photo1"])
     send_photo(client, heads[21], t["photo1"])

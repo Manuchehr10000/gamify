@@ -3,8 +3,9 @@ import io
 from openpyxl import load_workbook
 from sqlalchemy import select
 
+from app import ledger
 from app.db import SessionLocal
-from app.models import Guest, ScoreEvent
+from app.models import Guest
 from tests.conftest import moderator_headers
 from tests.test_market import market_file, make_guest, market, buy
 from tests.test_moderation import decide, queue
@@ -35,7 +36,7 @@ def top_up(client, h, points: int) -> None:
     have = feed(client, h)["points"]
     with SessionLocal() as db:
         g = db.scalar(select(Guest))
-        db.add(ScoreEvent(guest_id=g.id, reason=f"seed{points}", points=points - have))
+        ledger.write(db, g.id, f"seed{points}", "bonus", points - have, 0)
         db.commit()
 
 

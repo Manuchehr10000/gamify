@@ -2,14 +2,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth import current_guest
 from app.db import get_db
-from app.models import Guest, ScoreEvent, Stage, Submission, Task
-from app import badges, levels, photos, stages
+from app.models import Guest, Partner, Stage, Submission, Task
+from app import badges, ledger, levels, photos, stages
 from app.stages import EVENT_TZ
 from app.task_file import PACKAGES
 
@@ -74,7 +73,7 @@ def stage_out(s: Stage) -> StageOut:
 
 
 def _done(db: DbSession, guest: Guest) -> set[str]:
-    return set(db.scalars(select(ScoreEvent.reason).where(ScoreEvent.guest_id == guest.id)))
+    return ledger.done(db, guest.id)
 
 
 # What the guest is told about a decision; accepted and bonus need no word
@@ -88,22 +87,29 @@ def _reviews(db: DbSession, guest: Guest) -> dict[int, str]:
     return {task_id: status for task_id, status in rows}
 
 
-def _out(t: Task, done: set[str], reviews: dict[int, str] | None = None) -> TaskOut:
+def partners(db: DbSession) -> dict[int, Partner]:
+    return {p.id: p for p in db.scalars(select(Partner))}
+
+
+def _out(t: Task, done: set[str], reviews: dict[int, str] | None = None,
+         by_id: dict[int, Partner] | None = None) -> TaskOut:
     review = (reviews or {}).get(t.id, "")
+    partner = (by_id or {}).get(t.partner_id)
     return TaskOut(id=t.id, type=t.type, text=t.text, points=t.points, coins=t.coins,
-                   partner_name=t.partner_name, done=task_reason(t.id) in done, method=t.method, link=t.link,
+                   partner_name=partner.name if partner else "", done=task_reason(t.id) in done, method=t.method, link=t.link,
                    window_end=t.window_end.astimezone(EVENT_TZ) if t.window_end else None,
                    timer_seconds=t.timer_seconds,
                    locked=t.requires_task_id is not None and task_reason(t.requires_task_id) not in done,
                    review=review if review in REVIEWS else "")
 
 
-def _order(t: Task) -> tuple:
+def _order(t: Task, by_id: dict[int, Partner]) -> tuple:
     # Tasks with a time window first (soonest to close on top), then partners by package, then the rest
     if t.window_end or t.window_start:
         return (0, t.window_end or t.window_start, t.position)
-    if t.partner_name:
-        rank = PACKAGE_ORDER.index(t.partner_package) if t.partner_package else len(PACKAGE_ORDER)
+    partner = by_id.get(t.partner_id)
+    if partner:
+        rank = PACKAGE_ORDER.index(partner.package) if partner.package else len(PACKAGE_ORDER)
         return (1, rank, t.position)
     return (2, 0, t.position)
 
@@ -114,10 +120,9 @@ def _open(t: Task, at: datetime) -> bool:
 
 
 def totals(db: DbSession, guest: Guest) -> tuple[int, int]:
-    """Points and coins: everything earned, less the coins spent in the market."""
-    row = db.execute(select(func.coalesce(func.sum(ScoreEvent.points), 0), func.coalesce(func.sum(ScoreEvent.coins), 0))
-                     .where(ScoreEvent.guest_id == guest.id)).one()
-    return int(row[0]), int(row[1])
+    """Points and coins: everything earned, less the coins spent in the market. The stored totals, read fresh."""
+    row = db.execute(select(Guest.points, Guest.coins).where(Guest.id == guest.id)).one()
+    return row[0], row[1]
 
 
 @router.get("/api/feed")
@@ -136,8 +141,8 @@ def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db))
         return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=None, tasks=[])
     t = stages.now()
     tasks = [x for x in db.scalars(select(Task).where(Task.active, Task.stage_id == d.current.id)) if _open(x, t)]
-    done, reviews = _done(db, guest), _reviews(db, guest)
-    return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=stage_out(d.current), tasks=[_out(x, done, reviews) for x in sorted(tasks, key=_order)])
+    done, reviews, by_id = _done(db, guest), _reviews(db, guest), partners(db)
+    return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=stage_out(d.current), tasks=[_out(x, done, reviews, by_id) for x in sorted(tasks, key=lambda x: _order(x, by_id))])
 
 
 @router.get("/api/tasks/{task_id}")
@@ -145,7 +150,7 @@ def task(task_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
     t = db.get(Task, task_id)
     if t is None or not t.active:
         raise HTTPException(404, "task_not_found")
-    return _out(t, _done(db, guest), _reviews(db, guest))
+    return _out(t, _done(db, guest), _reviews(db, guest), partners(db))
 
 
 class Award(BaseModel):
@@ -179,19 +184,20 @@ def _award(db: DbSession, guest: Guest, t: Task, photo: bytes | None = None, tex
     """Award a task once per guest, only while it is on: its stage is the current one and its window is open.
     A photo or text task keeps what the guest sent, in the same commit as the award."""
     reason = task_reason(t.id)
+    by_id = partners(db)
     if reason in _done(db, guest):
-        return Award(result="already", task=_out(t, {reason}, _reviews(db, guest)))
+        return Award(result="already", task=_out(t, {reason}, _reviews(db, guest), by_id))
     if not available(db, t):
-        return Award(result="unavailable", task=_out(t, set(), _reviews(db, guest)))
+        return Award(result="unavailable", task=_out(t, set(), _reviews(db, guest), by_id))
     if t.method in SUBMIT_METHODS and _sent_back(db, guest, t, upload):
         raise HTTPException(409, "sent_back")
-    # Two phones of the same guest scanning at once, or a retried upload, still award once
-    added = db.execute(insert(ScoreEvent).values(guest_id=guest.id, reason=reason, points=t.points, coins=t.coins)
-                       .on_conflict_do_nothing(index_elements=["guest_id", "reason"])).rowcount
+    # Two phones of the same guest scanning at once, or a retried upload, still award once: the ledger checks
+    # under the guest's lock
+    added = ledger.write(db, guest.id, reason, "task", t.points, t.coins) is not None
     if added and t.method in SUBMIT_METHODS:
         db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, text=text, upload=upload))
     db.commit()
-    return Award(result="awarded" if added else "already", task=_out(t, {reason}))
+    return Award(result="awarded" if added else "already", task=_out(t, {reason}, by_id=by_id))
 
 
 class Scan(BaseModel):

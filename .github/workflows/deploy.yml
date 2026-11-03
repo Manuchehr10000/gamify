@@ -52,6 +52,7 @@ jobs:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           STAND_PIN: ${{ secrets.STAND_PIN }}
           MODERATORS: ${{ secrets.MODERATORS }}
+          JOBS_SECRET: ${{ secrets.JOBS_SECRET }}
         run: |
-          jq -n '{DATABASE_URL: env.DATABASE_URL, DESK_PIN: env.DESK_PIN, ADMIN_PASSWORD: env.ADMIN_PASSWORD, STAND_PIN: env.STAND_PIN, MODERATORS: env.MODERATORS}' \
+          jq -n '{DATABASE_URL: env.DATABASE_URL, DESK_PIN: env.DESK_PIN, ADMIN_PASSWORD: env.ADMIN_PASSWORD, STAND_PIN: env.STAND_PIN, MODERATORS: env.MODERATORS, JOBS_SECRET: env.JOBS_SECRET}' \
             | npx wrangler secret bulk --env dev

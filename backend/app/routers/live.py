@@ -5,13 +5,13 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import String, cast, exists, func, select, union
+from sqlalchemy import String, cast, exists, func, or_, select, union
 from sqlalchemy.orm import Session as DbSession
 
-from app import stages
+from app import ledger, stages
 from app.auth import require_role
 from app.db import get_db
-from app.models import Prize, Redemption, ScoreEvent, Session, Stage, Submission, Task
+from app.models import Guest, Partner, Prize, Redemption, ScoreEvent, Session, Stage, Submission, Task
 from app.task_file import PACKAGES
 
 # The organizer's live numbers during the forum, and the partners' report after it
@@ -21,14 +21,14 @@ ACTIVE_WINDOW = timedelta(minutes=15)
 
 
 def completions():
-    """(guest_id, task_id) for every task a guest has done. A task sent back for a retake has no award;
+    """(guest_id, task_id) for every task a guest has done. A task sent back for a retake has its award reversed;
     a submission rejected with a penalty keeps its award, so it is left out here."""
     # Kept as text: the task's ID after «task:», compared with the ID written out, never cast
     task_id = func.substr(ScoreEvent.reason, 6)
     penalized = exists().where(Submission.guest_id == ScoreEvent.guest_id, Submission.status == "penalty",
                                cast(Submission.task_id, String) == task_id)
     return (select(ScoreEvent.guest_id.label("guest_id"), task_id.label("task_id"))
-            .where(ScoreEvent.reason.like("task:%"), ~penalized).subquery())
+            .where(ScoreEvent.reason.like("task:%"), ledger.standing(), ~penalized).subquery())
 
 
 class Count(BaseModel):
@@ -81,9 +81,9 @@ def live(db: DbSession = Depends(get_db)) -> Live:
                          .group_by(Task.type).order_by(func.count().desc(), Task.type)).all()
     stage_counts = dict(db.execute(select(Task.stage_id, func.count()).join(done, on).group_by(Task.stage_id)).all())
     partners = db.execute(
-        select(Task.partner_name, func.count(), func.count(func.distinct(done.c.guest_id)))
-        .join(done, on).where(Task.partner_name != "")
-        .group_by(Task.partner_name).order_by(func.count().desc(), Task.partner_name)).all()
+        select(Partner.name, func.count(), func.count(func.distinct(done.c.guest_id)))
+        .select_from(Task).join(done, on).join(Partner, Partner.id == Task.partner_id)
+        .group_by(Partner.id).order_by(func.count().desc(), Partner.name)).all()
 
     waiting, oldest = db.execute(select(func.count(), func.min(Submission.created_at))
                                  .where(Submission.status == "")).one()
@@ -117,11 +117,12 @@ def cell(text: str) -> str:
 def partners_export(db: DbSession = Depends(get_db)) -> Response:
     done = completions()
     rows = db.execute(
-        select(Task.partner_name, Task.partner_package, Task.text, func.count(done.c.guest_id),
+        select(Partner.name, Partner.package, Task.text, func.count(done.c.guest_id),
                func.count(func.distinct(done.c.guest_id)))
-        .outerjoin(done, done.c.task_id == cast(Task.id, String)).where(Task.partner_name != "")
-        .group_by(Task.id).having(Task.active | (func.count(done.c.guest_id) > 0))
-        .order_by(Task.partner_name, Task.position, Task.id)).all()
+        .select_from(Task).join(Partner, Partner.id == Task.partner_id)
+        .outerjoin(done, done.c.task_id == cast(Task.id, String))
+        .group_by(Task.id, Partner.id).having(Task.active | (func.count(done.c.guest_id) > 0))
+        .order_by(Partner.name, Task.position, Task.id)).all()
     out = io.StringIO()
     # Semicolons and a BOM so Excel opens Cyrillic correctly
     w = csv.writer(out, delimiter=";")
@@ -130,3 +131,25 @@ def partners_export(db: DbSession = Depends(get_db)) -> Response:
         w.writerow([cell(partner), cell(PACKAGES[package][0] if package else ""), cell(text), n, guests])
     return Response("﻿" + out.getvalue(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="partners.csv"'})
+
+
+class Mismatch(BaseModel):
+    name: str
+    # Stored on the guest, and the sum of their score_events
+    points: int
+    points_sum: int
+    coins: int
+    coins_sum: int
+
+
+@router.get("/balance-check")
+def balance_check(db: DbSession = Depends(get_db)) -> list[Mismatch]:
+    """Guests whose stored totals differ from the sum of their events. Only reports; changes nothing."""
+    sums = (select(ScoreEvent.guest_id, func.sum(ScoreEvent.points).label("points_sum"),
+                   func.sum(ScoreEvent.coins).label("coins_sum")).group_by(ScoreEvent.guest_id).subquery())
+    points, coins = func.coalesce(sums.c.points_sum, 0), func.coalesce(sums.c.coins_sum, 0)
+    rows = db.execute(select(Guest, points, coins).outerjoin(sums, sums.c.guest_id == Guest.id)
+                      .where(or_(Guest.points != points, Guest.coins != coins))
+                      .order_by(Guest.last_name, Guest.first_name, Guest.id)).all()
+    return [Mismatch(name=f"{g.first_name} {g.last_name}".strip(), points=g.points, points_sum=int(p),
+                     coins=g.coins, coins_sum=int(c)) for g, p, c in rows]

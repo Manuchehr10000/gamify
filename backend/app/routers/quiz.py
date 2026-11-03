@@ -12,10 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
-from app import stages
+from app import ledger, stages
 from app.auth import current_guest
 from app.db import get_db
-from app.models import Guest, Question, QuizAttempt, ScoreEvent, Task
+from app.models import Guest, Question, QuizAttempt, Task
 from app.routers.feed import _done, available, task_reason
 
 router = APIRouter(prefix="/api/quiz")
@@ -91,10 +91,8 @@ def _finish(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -
     a.total = len(questions)
     a.finished_at = stages.now()
     # A zero score still marks the task done in the feed
-    db.execute(insert(ScoreEvent).values(guest_id=a.guest_id, reason=task_reason(t.id),
-                                         points=_share(t.points, a.correct, a.total),
-                                         coins=_share(t.coins, a.correct, a.total))
-               .on_conflict_do_nothing(index_elements=["guest_id", "reason"]))
+    ledger.write(db, a.guest_id, task_reason(t.id), "task", _share(t.points, a.correct, a.total),
+                 _share(t.coins, a.correct, a.total))
     db.commit()
 
 
@@ -122,8 +120,7 @@ def _options(a: QuizAttempt, q: Question) -> list[Option]:
 def _state(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -> QuizState:
     answered = sum(1 for q in questions if str(q.number) in a.answers)
     if a.finished_at is not None:
-        event = db.scalar(select(ScoreEvent).where(ScoreEvent.guest_id == a.guest_id,
-                                                   ScoreEvent.reason == task_reason(t.id)))
+        event = ledger.award(db, a.guest_id, task_reason(t.id))
         result = Result(correct=a.correct or 0, total=a.total or 0,
                         points=event.points if event else 0, coins=event.coins if event else 0)
         return QuizState(text=t.text, total=a.total or 0, answered=answered, question=None, seconds_left=None,

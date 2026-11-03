@@ -17,6 +17,9 @@ type Live = {
   left: number
 }
 
+// A guest whose stored totals differ from the sum of their score events
+type Mismatch = { name: string; points: number; points_sum: number; coins: number; coins_sum: number }
+
 const POLL_MS = 30_000
 
 function Stat({ label, value }: { label: string; value: ReactNode }) {
@@ -57,6 +60,8 @@ export function AdminLive() {
   const [token, setToken] = useState(tokens.get('admin'))
   const [live, setLive] = useState<Live | null>(null)
   const [error, setError] = useState(false)
+  const [mismatches, setMismatches] = useState<Mismatch[] | null>(null)
+  const [checking, setChecking] = useState(false)
 
   const fail = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) {
@@ -87,6 +92,14 @@ export function AdminLive() {
   }, [token, fail])
 
   if (!token) return <StaffLogin role="admin" onLogin={setToken} />
+
+  function checkBalance() {
+    setChecking(true)
+    api<Mismatch[]>('/api/admin/balance-check', { token })
+      .then(setMismatches)
+      .catch(fail)
+      .finally(() => setChecking(false))
+  }
 
   const oldest = live?.oldest_seconds
   return (
@@ -144,6 +157,14 @@ export function AdminLive() {
         <Button variant="outline" onClick={() => download('/api/admin/partners/export', token, 'partners.csv').catch(fail)}>
           {t('live.report')}
         </Button>
+        <Card className="flex flex-col gap-3">
+          <p className="text-sm text-slate-600">{t('live.balanceHint')}</p>
+          <Button variant="outline" disabled={checking} onClick={checkBalance}>{t('live.balance')}</Button>
+          {mismatches && (mismatches.length === 0
+            ? <p className="text-sm text-slate-500">{t('live.balanceOk')}</p>
+            : <Table head={[t('live.guest'), t('live.points'), t('live.pointsSum'), t('live.coins'), t('live.coinsSum')]}
+                rows={mismatches.map((m) => [m.name, m.points, m.points_sum, m.coins, m.coins_sum])} />)}
+        </Card>
       </div>
     </main>
   )

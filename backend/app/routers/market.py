@@ -3,15 +3,14 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
-from app import stages
+from app import ledger, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.guests import random_code
-from app.models import Guest, Prize, Redemption, ScoreEvent, Task
-from app.routers.feed import task_reason, totals
+from app.models import Guest, Prize, Redemption, Task
+from app.routers.feed import partners, task_reason, totals
 from app.stages import EVENT_TZ
 
 router = APIRouter(prefix="/api/market")
@@ -48,13 +47,14 @@ def _market(db: DbSession, guest: Guest) -> Market:
     opens_at = stages.market_opens_at(db)
     mine = {r.prize_id: r for r in db.scalars(select(Redemption).where(Redemption.guest_id == guest.id))}
     sold = _sold(db)
+    by_id = partners(db)
     # A prize removed from the file stays on the screen of a guest who already bought it
     prizes = [p for p in db.scalars(select(Prize).order_by(Prize.position, Prize.id)) if p.active or p.id in mine]
     return Market(
         coins=totals(db, guest)[1],
         open=opens_at is not None and stages.now() >= opens_at,
         opens_at=local(opens_at),
-        prizes=[PrizeOut(id=p.id, name=p.name, partner=p.partner, price=p.price,
+        prizes=[PrizeOut(id=p.id, name=p.name, partner=by_id[p.partner_id].name, price=p.price,
                          left=max(0, p.quantity - sold.get(p.id, 0)),
                          code=mine[p.id].code if p.id in mine else None,
                          issued_at=local(mine[p.id].issued_at) if p.id in mine else None) for p in prizes],
@@ -88,13 +88,13 @@ def buy(prize_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
         raise HTTPException(409, "already_bought")
     if _sold(db).get(prize.id, 0) >= prize.quantity:
         raise HTTPException(409, "sold_out")
+    # The stored total, read under the guest's lock
     if totals(db, guest)[1] < prize.price:
         raise HTTPException(409, "not_enough_coins")
     db.add(Redemption(guest_id=guest.id, prize_id=prize.id, code=_new_code(db)))
-    db.add(ScoreEvent(guest_id=guest.id, reason=f"buy:{prize.id}", points=0, coins=-prize.price))
+    ledger.write(db, guest.id, f"buy:{prize.id}", "buy", 0, -prize.price)
     # «Выполнение» = Маркет: the first purchase completes the task, once
     for t in db.scalars(select(Task).where(Task.active, Task.method == "market")):
-        db.execute(insert(ScoreEvent).values(guest_id=guest.id, reason=task_reason(t.id), points=t.points,
-                                             coins=t.coins).on_conflict_do_nothing(index_elements=["guest_id", "reason"]))
+        ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins)
     db.commit()
     return _market(db, guest)

@@ -17,6 +17,9 @@ def _database_url() -> str:
 DATABASE_URL = _database_url()
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+# The Cloudflare Worker's shared secret for POST /api/jobs/run; unset: the job endpoint refuses every call
+JOBS_SECRET = os.environ.get("JOBS_SECRET", "")
+# The staff secrets below fill an empty staff table once, at app start (app.accounts); after that they are ignored
 DESK_PIN = os.environ.get("DESK_PIN", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 # One PIN shared by the partner stands in the market

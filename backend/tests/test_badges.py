@@ -1,7 +1,8 @@
 from sqlalchemy import select
 
+from app import ledger
 from app.db import SessionLocal
-from app.models import Guest, ScoreEvent
+from app.models import Guest
 from tests.conftest import moderator_headers
 from tests.test_levels import feed, profile
 from tests.test_moderation import decide, queue
@@ -36,7 +37,7 @@ def send(client, guest, task_id, text=None):
 
 def seed(points):
     with SessionLocal() as db:
-        db.add(ScoreEvent(guest_id=db.scalar(select(Guest.id)), reason=f"seed{points}", points=points))
+        ledger.write(db, db.scalar(select(Guest.id)), f"seed{points}", "bonus", points, 0)
         db.commit()
 
 

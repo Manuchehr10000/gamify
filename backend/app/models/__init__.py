@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, String, Text, UniqueConstraint, func, text
+from decimal import Decimal
+
+from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -30,6 +32,9 @@ class Guest(Base):
     # The threshold («Баллов от») of the level the guest last saw: climbing past it shows the full-screen moment.
     # A threshold, not a place in the list, so a new level added below doesn't show an old level again
     level_shown: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # The sum of the guest's score_events, kept by app.ledger in the same transaction as each row
+    points: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    coins: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -41,21 +46,46 @@ class Session(Base):
     # guest, desk, admin, stand or moderator
     role: Mapped[str] = mapped_column(String(16))
     guest_id: Mapped[int | None] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
-    # The moderator's name from MODERATORS, so their decisions are logged under it
+    # The staff account acting in this session; empty for guests
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    # The account's name when it logged in, so a moderator's decisions are logged under it
     staff_name: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Staff(Base):
+    __tablename__ = "staff"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    # admin, moderator, desk or stand
+    role: Mapped[str] = mapped_column(String(16))
+    # bcrypt of the PIN or password; the secret alone identifies the account, so each one is unique
+    secret_hash: Mapped[str] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ScoreEvent(Base):
+    """The points and coins record. Append-only: written by app.ledger only, never edited or deleted."""
     __tablename__ = "score_events"
-    # One award per reason per guest: opening the link again or on a second phone adds nothing
-    __table_args__ = (UniqueConstraint("guest_id", "reason"),)
+    __table_args__ = (Index("score_events_guest_reason", "guest_id", "reason"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    # What it is for: task:{id}, bonus:{submission}, retake:{submission}, penalty:{submission}, buy:{prize},
+    # forum_arrival. One open award per reason per guest: opening the link again or on a second phone adds nothing
     reason: Mapped[str] = mapped_column(String(32))
+    # arrival, task, bonus, retake, penalty, buy, speed, badge or withdraw
+    action: Mapped[str] = mapped_column(String(16))
+    # points = base_points × multiplier, rounded to whole points, halves up
+    base_points: Mapped[int]
+    multiplier: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(1), server_default=text("1"))
     points: Mapped[int]
     coins: Mapped[int] = mapped_column(default=0)
+    # The stage running when it was written; empty outside the day's schedule
+    stage_id: Mapped[int | None] = mapped_column(ForeignKey("stages.id", ondelete="SET NULL"))
+    # A retake's reversal: the award it takes back. An award with a reversal no longer counts as done
+    reverses_id: Mapped[int | None] = mapped_column(ForeignKey("score_events.id"), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -74,6 +104,18 @@ class Stage(Base):
     market: Mapped[bool] = mapped_column(default=False)
 
 
+class Partner(Base):
+    __tablename__ = "partners"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Uploads of «Задания» and «Призы» match partners by it; a new name adds a partner
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    # general, headliner, mf_partner, supporters, or "" (none given): set by the «Задания» sheet
+    package: Mapped[str] = mapped_column(String(16), default="")
+    logo: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+
+
 class Task(Base):
     __tablename__ = "tasks"
 
@@ -87,8 +129,7 @@ class Task(Base):
     coins: Mapped[int]
     # Blank coins cell: filled by the rule, so the export gives it back blank
     coins_from_rule: Mapped[bool] = mapped_column(default=False)
-    partner_name: Mapped[str] = mapped_column(String(100), default="")
-    partner_package: Mapped[str] = mapped_column(String(16), default="")
+    partner_id: Mapped[int | None] = mapped_column(ForeignKey("partners.id"))
     # How a guest does it: "qr" (scan the code at the venue), "link" (open a link, then confirm),
     # "market" (the guest's first purchase in the market), "photo", "text", "photo_text" (send a submission),
     # "quiz" (answer the questions on the quiz screen), "" (not yet)
@@ -115,7 +156,7 @@ class Prize(Base):
     # The admin's ID from the file's «Призы» sheet: re-uploads match rows by it
     code: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(200))
-    partner: Mapped[str] = mapped_column(String(100))
+    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id"))
     price: Mapped[int]
     quantity: Mapped[int]
     position: Mapped[int] = mapped_column(default=0)
@@ -215,3 +256,16 @@ class BadgeAward(Base):
     # One of badges.BADGES: photo_hunter, networker, erudite, brand_friend, forum_spirit
     badge: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class JobRun(Base):
+    __tablename__ = "job_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The registered job's name in app.jobs.JOBS
+    job: Mapped[str] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # ok · failed (error says why) · skipped (the previous run still held the lock)
+    result: Mapped[str] = mapped_column(String(16), default="")
+    error: Mapped[str] = mapped_column(Text, default="")

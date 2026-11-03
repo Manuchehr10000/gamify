@@ -5,9 +5,10 @@ import pytest
 from openpyxl import load_workbook
 from sqlalchemy import select
 
+from app import ledger
 from app.db import SessionLocal
 from app.guest_list import import_csv
-from app.models import Guest, ScoreEvent
+from app.models import Guest
 from tests.conftest import open_link, staff_headers
 from tests.test_tasks import STAGE_HEAD, STAGES, TASK_HEAD, admin, clock, upload, xlsx  # noqa: F401 (fixtures)
 
@@ -46,7 +47,7 @@ def make_guest(client, reg: str, name: str, coins: int = 0) -> dict:
         import_csv(db, f"ID;Имя\n{reg};{name}\n".encode())
         g = db.scalar(select(Guest).where(Guest.reg_id == reg))
         if coins:
-            db.add(ScoreEvent(guest_id=g.id, reason="test_coins", points=0, coins=coins))
+            ledger.write(db, g.id, "test_coins", "bonus", 0, coins)
             db.commit()
     return open_link(client, f"http://api.test/b/{g.code}")
 

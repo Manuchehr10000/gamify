@@ -1,18 +1,31 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app import config, photos
-from app.routers import (admin, admin_tasks, badge, desk, feed, live, market, moderation, profile, quiz, rating, staff,
-                         stand)
+from app import accounts, config, photos
+from app.db import SessionLocal
+from app.routers import (admin, admin_tasks, badge, desk, feed, jobs, live, market, moderation, profile, quiz, rating,
+                         staff, stand)
 
-app = FastAPI(title="Event Gamification")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # After `alembic upgrade head` (deploy/Dockerfile): an empty staff table takes the environment's PINs once
+    with SessionLocal() as db:
+        accounts.seed_if_empty(db)
+    yield
+
+
+app = FastAPI(title="Event Gamification", lifespan=lifespan)
 # The app and the API are separate Railway services; only the app's origin may call the API
 app.add_middleware(CORSMiddleware, allow_origins=[config.FRONTEND_URL], allow_methods=["*"],
                    allow_headers=["Authorization", "Content-Type"])
 for r in (badge.router, staff.router, admin.router, desk.router, feed.router, admin_tasks.router,
           market.router, stand.router, moderation.router, rating.router, quiz.router,
-          profile.router, live.router):
+          profile.router, live.router, jobs.router):
     app.include_router(r)
 
 

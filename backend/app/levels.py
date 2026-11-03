@@ -1,10 +1,10 @@
 """Levels by points: the thresholds come from the file's «Уровни» sheet, never from the code."""
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
-from app.models import Guest, Level, ScoreEvent
+from app.models import Guest, Level
 
 
 def load(db: DbSession) -> list[Level]:
@@ -53,8 +53,8 @@ def climbed(db: DbSession, guest: Guest, p: Place | None) -> bool:
 def dropped(db: DbSession, guest_id: int) -> None:
     """Lower the mark where points go down (a moderator's rejection), so climbing back shows the moment again even
     when the guest never opened the feed in between. The caller commits."""
-    points = db.scalar(select(func.coalesce(func.sum(ScoreEvent.points), 0)).where(ScoreEvent.guest_id == guest_id))
-    p = place(load(db), int(points))
+    points = db.scalar(select(Guest.points).where(Guest.id == guest_id))
+    p = place(load(db), points)
     if p is not None:
         db.execute(update(Guest).where(Guest.id == guest_id, Guest.level_shown > p.min_points)
                    .values(level_shown=p.min_points))

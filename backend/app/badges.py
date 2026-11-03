@@ -7,6 +7,7 @@ from sqlalchemy import String, cast, delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
+from app import ledger
 from app.models import BadgeAward, Guest, QuizAttempt, ScoreEvent, Submission, Task
 
 # In the order guests see them
@@ -20,12 +21,12 @@ PARTNER_TASKS = 3
 
 def earned(db: DbSession, guest_ids: list[int]) -> dict[int, list[str]]:
     """Each guest's badges, in BADGES order. A task counts as done while its award stands and no moderator rejected
-    its submission (a retake takes the award back; a penalty keeps it but rejects the submission)."""
+    its submission (a retake reverses the award; a penalty keeps it but rejects the submission)."""
     if not guest_ids:
         return {}
     award = ScoreEvent.reason == "task:" + cast(Task.id, String)
-    done = db.execute(select(ScoreEvent.guest_id, Task.id, Task.type, Task.method, Task.partner_name)
-                      .join(Task, award).where(ScoreEvent.guest_id.in_(guest_ids))).all()
+    done = db.execute(select(ScoreEvent.guest_id, Task.id, Task.type, Task.method, Task.partner_id)
+                      .join(Task, award).where(ScoreEvent.guest_id.in_(guest_ids), ledger.standing())).all()
     rejected = set(db.execute(select(Submission.guest_id, Submission.task_id)
                               .where(Submission.guest_id.in_(guest_ids), Submission.status == "penalty")).all())
     spirit = set(db.scalars(select(Submission.guest_id).join(Task, Task.id == Submission.task_id)

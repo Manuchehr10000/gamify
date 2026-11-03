@@ -4,8 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from openpyxl import Workbook, load_workbook
 
-from app import stages
-from app.models import ScoreEvent
+from app import ledger, stages
 from app.db import SessionLocal
 from tests.conftest import open_link, staff_headers
 
@@ -223,7 +222,7 @@ def test_task_card_details_and_done(client, admin, guest, clock):
     r = client.get(f"/api/tasks/{t['id']}", headers=guest).json()
     assert (r["text"], r["points"], r["coins"]) == ("Полный текст задания", 25, 25)
     with SessionLocal() as db:
-        db.add(ScoreEvent(guest_id=1, reason=f"task:{t['id']}", points=25))
+        ledger.write(db, 1, f"task:{t['id']}", "task", 25, 25)
         db.commit()
     assert feed(client, guest)["tasks"][0]["done"] is True
     assert client.get("/api/tasks/999", headers=guest).status_code == 404
