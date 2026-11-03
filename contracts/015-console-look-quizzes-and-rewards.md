@@ -1,5 +1,5 @@
 # Contract: Console look: quizzes and rewards
-Status: building
+Status: on-dev
 Base: fa8abec589
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be60813a967af83661ffcda0
