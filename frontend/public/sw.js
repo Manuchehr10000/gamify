@@ -132,3 +132,52 @@ async function sendWaiting() {
 self.addEventListener('sync', (e) => {
   if (e.tag === SYNC_TAG) e.waitUntil(sendWaiting())
 })
+
+// Pushes (piece 19): the server sends { id, sub, title, body, url }. The phone shows it, then tells the server it
+// arrived, with no login: this worker can't read the app's stored login, so the push's id and its subscription key
+// are what it reports. Tapping it opens the quiz's task page, or the feed
+async function reportArrival(data) {
+  try {
+    const db = await database()
+    const api = (await inStore(db, META, 'readonly', (s) => s.get('api'))) ?? ''
+    await fetch(`${api}/api/push/${data.id}/received`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: data.sub }),
+    })
+  } catch {
+    // Not counted; the push itself was shown
+  }
+}
+
+self.addEventListener('push', (e) => {
+  let data
+  try {
+    data = e.data.json()
+  } catch {
+    return
+  }
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(data.title, {
+      body: data.body || undefined,
+      icon: '/icon-192.png',
+      tag: `push-${data.id}`,
+      data: { url: data.url || '/app' },
+    }),
+    reportArrival(data),
+  ]))
+})
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close()
+  const url = new URL(e.notification.data?.url || '/app', self.location.origin).href
+  e.waitUntil((async () => {
+    const open = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    const app = open.find((c) => new URL(c.url).origin === self.location.origin)
+    if (app) {
+      await app.focus()
+      return app.navigate(url).catch(() => self.clients.openWindow(url))
+    }
+    return self.clients.openWindow(url)
+  })())
+})

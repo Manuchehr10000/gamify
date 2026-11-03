@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { hhmm, multiplierMark, type Award, type Feed, type Stage, type Task } from '../../feed'
+import type { FeedPush } from '../../push'
 import { splitNumber, typeIcon, type IconName } from './glyphs'
 import { Amount, Button, Callout, Icon, Stripe } from './ui'
 
@@ -116,6 +117,73 @@ export function StageBanner({ stage, onClose }: { stage: Stage; onClose: () => v
         <div className="gc-stage-banner__body">
           <p className="gc-stage-banner__title gc-body-l">{t(mark ? 'feed.newStageMultiplier' : 'feed.newStage', { name: stage.name, mark })}</p>
           {stage.message && <p className="gc-stage-banner__message gc-body-s">{stage.message}</p>}
+        </div>
+        <button type="button" onClick={onClose} aria-label={t('feed.close')} className="gc-stage-banner__close">
+          <Icon name="x" size={20} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// A push's text for anyone with the app open: the market opening, a quiz, an organizers' message. A quiz push leads
+// to the quiz
+export function PushBanner({ push, onClose }: { push: FeedPush; onClose: () => void }) {
+  const { t } = useTranslation()
+  const body = (
+    <div className="gc-stage-banner__body">
+      <p className="gc-stage-banner__title gc-body-l">{push.title}</p>
+      {push.text && <p className="gc-stage-banner__message gc-body-s">{push.text}</p>}
+    </div>
+  )
+  return (
+    <div className="gc-stage-banner" role="status">
+      <Stripe />
+      <div className="gc-stage-banner__row">
+        <span className="gc-stage-banner__num gc-crt gc-glow" aria-hidden><Icon name={push.url === '/app' ? 'sparkle' : 'quiz'} size={24} /></span>
+        {push.url === '/app' ? body : <Link to={push.url} className="gc-push-banner__link" onClick={onClose}>{body}</Link>}
+        <button type="button" onClick={onClose} aria-label={t('feed.close')} className="gc-stage-banner__close">
+          <Icon name="x" size={20} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Asked once, after the guest's first task points; «Включить» opens the browser's own prompt
+export function PushAsk({ busy, onYes, onLater }: { busy: boolean; onYes: () => void; onLater: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <Callout
+      tone="info"
+      icon="zap"
+      action={(
+        <div className="gc-push-ask__buttons">
+          <Button busy={busy} onClick={onYes}>{t('push.yes')}</Button>
+          <Button variant="outline" onClick={onLater}>{t('push.later')}</Button>
+        </div>
+      )}
+    >
+      {t('push.ask')}
+    </Callout>
+  )
+}
+
+// iPhone Safari takes no pushes: how to add the app to the Home Screen, where it can
+export function HomeScreenGuide({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation()
+  return (
+    <div className="gc-stage-banner" role="note">
+      <Stripe />
+      <div className="gc-stage-banner__row">
+        <span className="gc-stage-banner__num gc-crt gc-glow" aria-hidden><Icon name="plus" size={24} /></span>
+        <div className="gc-stage-banner__body">
+          <p className="gc-stage-banner__title gc-body-l">{t('push.guideTitle')}</p>
+          <ol className="gc-push-guide__steps gc-body-s">
+            <li>{t('push.guideShare')}</li>
+            <li>{t('push.guideAdd')}</li>
+            <li>{t('push.guideOpen')}</li>
+          </ol>
         </div>
         <button type="button" onClick={onClose} aria-label={t('feed.close')} className="gc-stage-banner__close">
           <Icon name="x" size={20} />

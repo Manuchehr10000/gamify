@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
 import { BADGES, type Badge } from '../badges'
+import { HomeScreenGuide } from '../components/console/game'
 import { BadgeTile, SectionHeading } from '../components/console/rewards'
-import { Amount, Card, Loading, MessageCard, PageHeader, Screen, StatusChip } from '../components/console/ui'
+import { Amount, Button, Card, Loading, MessageCard, PageHeader, Screen, StatusChip } from '../components/console/ui'
+import { needsHomeScreen, useLoginInAddress } from '../push'
 import { useConfigVersion } from '../version'
 
 type Entry = {
@@ -34,6 +36,9 @@ type State = { kind: 'loading' } | { kind: 'loggedOut' } | { kind: 'error' } | {
 export function Profile() {
   const { t } = useTranslation()
   const [state, setState] = useState<State>(() => (tokens.get('guest') ? { kind: 'loading' } : { kind: 'loggedOut' }))
+  // The Home Screen guide closed in the feed opens again here (iPhone Safari only)
+  const [guide, setGuide] = useState(false)
+  useLoginInAddress(guide)
 
   const load = useCallback(() => {
     const token = tokens.get('guest')
@@ -75,6 +80,9 @@ export function Profile() {
           <Amount kind="coins" count={profile.coins} alarm />
         </p>
       </Card>
+      {needsHomeScreen() && (guide
+        ? <HomeScreenGuide onClose={() => setGuide(false)} />
+        : <Button variant="outline" icon="plus" onClick={() => setGuide(true)}>{t('profile.pushGuide')}</Button>)}
       <SectionHeading>{t('badges.title')}</SectionHeading>
       <ul className="gc-badge-grid">
         {BADGES.map((b) => (

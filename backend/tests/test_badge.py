@@ -11,9 +11,9 @@ def first_link(client) -> str:
 def test_first_visit_asks_consent_then_gives_10(client):
     guest = open_link(client, first_link(client))
     me = client.get("/api/me", headers=guest).json()
-    assert me == {"first_name": "Иван", "consented": False, "arrival_points": 0}
+    assert me == {"first_name": "Иван", "consented": False, "arrival_points": 0, "vapid_public_key": ""}
     me = client.post("/api/consent", headers=guest).json()
-    assert me == {"first_name": "Иван", "consented": True, "arrival_points": 10}
+    assert me == {"first_name": "Иван", "consented": True, "arrival_points": 10, "vapid_public_key": ""}
 
 
 def test_second_visit_and_second_phone_add_nothing(client):
@@ -24,7 +24,7 @@ def test_second_visit_and_second_phone_add_nothing(client):
     client.post("/api/consent", headers=again)
     other_phone = open_link(client, link)
     me = client.get("/api/me", headers=other_phone).json()
-    assert me == {"first_name": "Иван", "consented": True, "arrival_points": 10}
+    assert me == {"first_name": "Иван", "consented": True, "arrival_points": 10, "vapid_public_key": ""}
 
 
 def test_wrong_code_shows_badge_not_found(client):

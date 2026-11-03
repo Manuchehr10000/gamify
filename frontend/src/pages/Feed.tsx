@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { LevelUp, MultiplierCorner, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
+import { HomeScreenGuide, LevelUp, MultiplierCorner, PushAsk, PushBanner, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
 import { BADGE_GLYPHS, type IconName } from '../components/console/glyphs'
 import { Callout, Loading, MessageCard, NavRow, PageHeader, Screen, StatusChip } from '../components/console/ui'
 import { cache, feedPath, hhmm, multiplierMark, type Feed as FeedData, type Stage, type Task } from '../feed'
+import { closeGuide, enablePush, firstSight, guideClosed, markAsked, mayAsk, needsHomeScreen, useLoginInAddress, type FeedPush } from '../push'
 import { forgetUpload, isWaiting, onSent, useUpload } from '../uploads'
 import { useConfigVersion } from '../version'
 
@@ -27,6 +28,15 @@ export function Feed() {
   // The level just reached, then each badge just earned, one after the other. The server sends them once,
   // so only a fresh load (never the saved copy) shows them
   const [moments, setMoments] = useState<Moment[]>([])
+  // A push's text, once per push; a stage push is the stage banner above
+  const [pushBanner, setPushBanner] = useState<FeedPush | null>(null)
+  // The question after the first task points, answered on this page; the iPhone Safari guide shows when the app opens
+  const [answered, setAnswered] = useState(false)
+  const [enabling, setEnabling] = useState(false)
+  // The server's push key, read before the question shows: the tap must reach the browser's prompt with no wait
+  const [pushKey, setPushKey] = useState('')
+  const [guide, setGuide] = useState(() => needsHomeScreen() && !guideClosed())
+  useLoginInAddress(guide)
 
   const load = useCallback(async () => {
     const token = tokens.get('guest')
@@ -42,6 +52,7 @@ export function Feed() {
       if (fresh.length) setMoments((shown) => [...shown, ...fresh])
       // A photo sent back for a retake: the earlier upload's «Выполнено» no longer holds
       feed.tasks.filter((task) => task.review === 'retake').forEach((task) => forgetUpload(task.id))
+      if (feed.push && feed.push.kind !== 'stage' && firstSight(feed.push.id)) setPushBanner(feed.push)
       if (feed.stage) {
         const last = cache.lastStage()
         if (last !== null && last !== feed.stage.number) setBanner(feed.stage)
@@ -85,6 +96,33 @@ export function Feed() {
     return () => clearTimeout(timer)
   }, [banner])
 
+  useEffect(() => {
+    if (!pushBanner) return
+    const timer = setTimeout(() => setPushBanner(null), 15_000)
+    return () => clearTimeout(timer)
+  }, [pushBanner])
+
+  const askNow = state.kind === 'ready' && !state.offline && !!state.feed.ask_push && !answered && mayAsk()
+  useEffect(() => {
+    const token = tokens.get('guest')
+    if (!askNow || pushKey || !token) return
+    api<{ vapid_public_key: string }>('/api/me', { token })
+      .then((me) => setPushKey(me.vapid_public_key))
+      .catch(() => {})
+  }, [askNow, pushKey])
+
+  async function enable() {
+    const token = tokens.get('guest')
+    if (!token) return
+    // A refusal or a browser that can't: the app doesn't ask again either way
+    const asked = enablePush(token, pushKey).catch(() => false)
+    setEnabling(true)
+    await asked
+    setEnabling(false)
+    setAnswered(true)
+    load()
+  }
+
   if (state.kind === 'loading') return <Screen><Loading /></Screen>
   if (state.kind === 'loggedOut' || state.kind === 'error') {
     return (
@@ -103,6 +141,25 @@ export function Feed() {
       <PageHeader title={t('common.title')} />
       {offline && <Callout tone="offline">{t('feed.offline')}</Callout>}
       {banner && <StageBanner stage={banner} onClose={() => setBanner(null)} />}
+      {pushBanner && <PushBanner push={pushBanner} onClose={() => setPushBanner(null)} />}
+      {guide && (
+        <HomeScreenGuide
+          onClose={() => {
+            closeGuide()
+            setGuide(false)
+          }}
+        />
+      )}
+      {askNow && pushKey && (
+        <PushAsk
+          busy={enabling}
+          onYes={enable}
+          onLater={() => {
+            markAsked()
+            setAnswered(true)
+          }}
+        />
+      )}
       <Wallet feed={feed} />
       <NavRow to="/market" icon="bag" tone="market" label={t('feed.toMarket')} />
       <NavRow to="/app/rating" icon="trophy" label={t('feed.toRating')} />

@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
-from app import settings, stages
+from app import push, settings, stages
 from app.models import HallState, LogoShow, Partner, Stage, Staff, Task
 
 # The packages from biggest to smallest; a partner with no package shows like the smallest
@@ -112,9 +112,16 @@ class Push:
     text: str
 
 
-def latest_push(_db: DbSession) -> Push | None:
-    """The latest push sent in the last 15 seconds. Piece 19 sends pushes and fills this; until then none."""
-    return None
+# How long a push stays in the hall body: the screen shows each push once, for 15 seconds
+PUSH_SECONDS = timedelta(seconds=15)
+
+
+def latest_push(db: DbSession) -> Push | None:
+    """The latest push sent in the last 15 seconds (or due then while pushes were off), title and text together."""
+    m = push.latest(db, PUSH_SECONDS)
+    if m is None:
+        return None
+    return Push(m.id, f"{m.title}\n{m.text}" if m.text else m.title)
 
 
 @dataclass

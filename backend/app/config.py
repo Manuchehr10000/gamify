@@ -19,6 +19,11 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rst
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 # The Cloudflare Worker's shared secret for POST /api/jobs/run; unset: the job endpoint refuses every call
 JOBS_SECRET = os.environ.get("JOBS_SECRET", "")
+# Web push (VAPID): the public key goes to phones in /api/me, the private key signs each push, the subject is a
+# mailto: or https: address the push services can reach. Any one unset: phones are never asked and nothing is sent
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "")
 # The staff secrets below fill an empty staff table once, at app start (app.accounts); after that they are ignored
 DESK_PIN = os.environ.get("DESK_PIN", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")

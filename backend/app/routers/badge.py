@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import config, ledger, settings
+from app import config, ledger, push, settings
 from app.auth import current_guest, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent
@@ -20,13 +20,15 @@ class Me(BaseModel):
     first_name: str
     consented: bool
     arrival_points: int
+    # The app's web push key; empty when pushes aren't set up, and then the app never asks
+    vapid_public_key: str
 
 
 def _me(db: DbSession, guest: Guest) -> Me:
     points = db.scalar(select(ScoreEvent.points).where(
         ScoreEvent.guest_id == guest.id, ScoreEvent.reason == ARRIVAL))
     return Me(first_name=guest.first_name, consented=guest.consented_at is not None,
-              arrival_points=points or 0)
+              arrival_points=points or 0, vapid_public_key=config.VAPID_PUBLIC_KEY if push.ready() else "")
 
 
 @router.get("/b/{code}")

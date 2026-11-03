@@ -1,4 +1,5 @@
 import type { Badge } from './badges'
+import type { FeedPush } from './push'
 
 // multiplier: the stage's points multiplier (1 to 5 in steps of 0.5); a feed saved before it came has none
 export type Stage = { number: number; name: string; starts_at: string; ends_at: string; message: string; multiplier?: number }
@@ -36,6 +37,10 @@ export type Feed = {
   new_badges: Badge[]
   // How many photos and texts this phone may keep waiting to send (the admin's setting)
   queue_size: number
+  // The latest push still inside its 10-minute life: its banner shows once; a feed saved before pushes has none
+  push?: FeedPush | null
+  // Task points earned: the app may ask, once per phone
+  ask_push?: boolean
   state: 'none' | 'before' | 'running' | 'over'
   stage_count: number
   starts_at: string | null

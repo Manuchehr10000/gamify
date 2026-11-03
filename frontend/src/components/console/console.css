@@ -342,6 +342,9 @@ html[data-theme="label"] body {
 .gc-stage-banner__close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: var(--target); height: var(--target); margin: calc(var(--space-1) * -1) 0; padding: 0; background: transparent; border: var(--border-w) solid transparent; border-radius: var(--radius-0); color: var(--ink-muted); cursor: pointer; }
 .gc-stage-banner__close:active { background: var(--surface-sunken); color: var(--ink); }
 @media (hover: hover) { .gc-stage-banner__close:hover { color: var(--ink); border-color: var(--border); } }
+.gc-push-banner__link { flex: 1 1 auto; min-width: 0; display: grid; color: inherit; text-decoration: none; }
+.gc-push-ask__buttons { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.gc-push-guide__steps { margin: 0; padding-left: 1.25em; color: var(--ink-muted); display: grid; gap: var(--space-1); }
 @keyframes gc-stage-banner-in { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* Level-up and badge moment: wood trim, stripe, a big pixel tile */
@@ -704,7 +707,7 @@ html[data-theme="label"] body {
 .gc-hall-board__slide { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--space-4); min-height: 0; animation: gc-hall-fade 600ms ease-out; }
 @keyframes gc-hall-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .gc-hall-board__slide { animation: none; } }
-.gc-hall-board__push { margin: auto; max-width: 24ch; color: var(--primary-ink); font-family: var(--font-sans); font-weight: 700; font-size: max(var(--hall-min-font), clamp(48px, 5vw, 112px)); line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
+.gc-hall-board__push { white-space: pre-line; margin: auto; max-width: 24ch; color: var(--primary-ink); font-family: var(--font-sans); font-weight: 700; font-size: max(var(--hall-min-font), clamp(48px, 5vw, 112px)); line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
 .gc-hall-board__countdown { display: flex; flex: 1 1 auto; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-6); text-align: center; }
 .gc-hall-board__countdown-what { margin: 0; color: var(--ink-muted); font-family: var(--font-display); font-size: max(var(--hall-min-font), clamp(32px, 3vw, 64px)); line-height: 1.3; }
 .gc-hall-board__countdown-name { margin: 0; max-width: 30ch; color: var(--ink); font-family: var(--font-sans); font-weight: 700; font-size: max(var(--hall-min-font), clamp(32px, 3vw, 64px)); line-height: 1.2; overflow-wrap: anywhere; }

@@ -11,9 +11,9 @@ import { Button, Card, Input } from '../components/ui'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 
-type Kind = 'stages' | 'tasks' | 'prizes' | 'questions' | 'levels' | 'partners' | 'staff'
+type Kind = 'stages' | 'tasks' | 'prizes' | 'questions' | 'levels' | 'partners' | 'staff' | 'push'
 type Tab = Kind | 'settings' | 'log'
-const TABS: Tab[] = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'settings', 'log']
+const TABS: Tab[] = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'push', 'settings', 'log']
 
 type Value = string | number | boolean | null
 type Field = {
@@ -30,7 +30,12 @@ type Field = {
 }
 type Row = { id: number; version: number; values: Record<string, Value>; extra: Record<string, Value> }
 type List = { fields: Field[]; rows: Row[] }
-type Setting = { key: string; value: number; min: number; max: number; effect: Field['effect']; integer: boolean; version: number }
+// text: a text setting's value (min and max are then its length); null for a number
+type Setting = {
+  key: string; value: number; min: number; max: number; effect: Field['effect']; integer: boolean; text: string | null; version: number
+}
+// The push switch and texts show on the «Push» tab, not with the other settings
+const isPush = (key: string) => key.startsWith('push_')
 type Event = {
   id: number
   created_at: string
@@ -52,6 +57,7 @@ const COLUMNS: Record<Kind, string[]> = {
   levels: ['name', 'min_points'],
   partners: ['name', 'package', 'active'],
   staff: ['name', 'role', 'active'],
+  push: ['at', 'kind', 'title', 'text', 'state'],
 }
 
 const when = new Intl.DateTimeFormat('ru-RU', {
@@ -99,8 +105,9 @@ export function AdminSettings() {
           ))}
         </nav>
         {tab === 'settings' && <Settings token={token} loggedOut={loggedOut} />}
+        {tab === 'push' && <PushSettings token={token} loggedOut={loggedOut} />}
         {tab === 'log' && <Log token={token} loggedOut={loggedOut} />}
-        {tab !== 'settings' && tab !== 'log' && <ListTab key={tab} kind={tab} token={token} loggedOut={loggedOut} />}
+        {tab !== 'settings' && tab !== 'log' && tab !== 'push' && <ListTab key={tab} kind={tab} token={token} loggedOut={loggedOut} />}
       </div>
     </main>
   )
@@ -130,6 +137,18 @@ function ListTab({ kind, token, loggedOut }: TabProps & { kind: Kind }) {
   }, [kind, token, fail])
 
   useEffect(load, [load])
+
+  // «Отправить сейчас»: any push, whatever its time or state
+  async function sendNow(row: Row) {
+    if (!window.confirm(t('settingsAdmin.push.confirmSend', { item: String(row.values.title) }))) return
+    setError('')
+    try {
+      await api(`/api/admin/push/${row.id}/send`, { token, method: 'POST' })
+      load()
+    } catch (err) {
+      fail(err)
+    }
+  }
 
   async function remove(row: Row) {
     if (!window.confirm(t('settingsAdmin.confirmDelete', { item: String(row.values[COLUMNS[kind][0]]) }))) return
@@ -190,6 +209,14 @@ function ListTab({ kind, token, loggedOut }: TabProps & { kind: Kind }) {
                       <td key={c} className="max-w-xs truncate px-3 py-2">{shown(t, fields[c], row.values[c])}</td>
                     ))}
                     <td className="whitespace-nowrap px-3 py-2 text-right">
+                      {kind === 'push' && (
+                        <>
+                          <span className="mr-3 text-xs text-slate-500">{t('settingsAdmin.push.counts', row.extra)}</span>
+                          <button className="mr-3 font-medium text-emerald-700 hover:underline" onClick={() => sendNow(row)}>
+                            {t('settingsAdmin.push.sendNow')}
+                          </button>
+                        </>
+                      )}
                       <button className="font-medium text-emerald-700 hover:underline" onClick={() => setEditing(row)}>
                         {t('settingsAdmin.edit')}
                       </button>
@@ -271,7 +298,7 @@ function RowForm({ kind, token, fields, row, onDone, onCancel, loggedOut }: TabP
     resolver: zodResolver(schema),
     defaultValues: Object.fromEntries(fields.map((f) => [f.name, row
       ? (row.values[f.name] ?? (f.type === 'bool' ? false : ''))
-      : (f.type === 'bool' ? f.name === 'active' : '')])),
+      : (f.type === 'bool' ? f.name === 'active' : kind === 'push' && f.name === 'kind' ? 'one_off' : '')])),
   })
   const values = useWatch({ control })
   const [error, setError] = useState('')
@@ -429,7 +456,8 @@ function Settings({ token, loggedOut }: TabProps) {
   const fail = useFail(loggedOut, setError, label)
 
   const load = useCallback(() => {
-    api<Setting[]>('/api/admin/settings', { token }).then((r) => {
+    api<Setting[]>('/api/admin/settings', { token }).then((all) => {
+      const r = all.filter((s) => !isPush(s.key))
       setRows(r)
       setDrafts(Object.fromEntries(r.map((s) => [s.key, String(s.value)])))
     }).catch(fail)
@@ -487,7 +515,77 @@ function Settings({ token, loggedOut }: TabProps) {
   )
 }
 
-const LOG_KINDS = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'settings', 'rating', 'guests']
+// The «Push» tab's own settings: the switch, then each kind's text. The schedule below is the push list
+function PushSettings({ token, loggedOut }: TabProps) {
+  const { t } = useTranslation()
+  const [rows, setRows] = useState<Setting[] | null>(null)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState('')
+  const label = useCallback((f: string) => t(`settingsAdmin.fields.settings.${f}`), [t])
+  const fail = useFail(loggedOut, setError, label)
+
+  const load = useCallback(() => {
+    api<Setting[]>('/api/admin/settings', { token }).then((all) => {
+      const r = all.filter((s) => isPush(s.key))
+      setRows(r)
+      setDrafts(Object.fromEntries(r.filter((s) => s.text !== null).map((s) => [s.key, s.text ?? ''])))
+    }).catch(fail)
+  }, [token, fail])
+
+  useEffect(load, [load])
+
+  async function save(s: Setting, value: string | number) {
+    setError('')
+    setSaved('')
+    try {
+      await api(`/api/admin/settings/${s.key}`, { token, method: 'PUT', json: { value, version: s.version } })
+      setSaved(s.key)
+      load()
+    } catch (err) {
+      fail(err)
+    }
+  }
+
+  if (!rows) return <p className="text-slate-500">{t('common.loading')}</p>
+  const enabled = rows.find((s) => s.key === 'push_enabled')
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="flex flex-col gap-4">
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {enabled && (
+          <label className="flex items-center gap-3 text-sm font-medium">
+            <input type="checkbox" className="size-5" checked={enabled.value === 1} onChange={(e) => save(enabled, e.target.checked ? 1 : 0)} />
+            {t('settingsAdmin.push.switch')}
+            <span className="text-xs font-normal text-slate-500">{t('settingsAdmin.push.switchHint')}</span>
+          </label>
+        )}
+        <span className="text-sm font-semibold">{t('settingsAdmin.push.texts')}</span>
+        {rows.filter((s) => s.text !== null).map((s) => (
+          <div key={s.key} className="flex flex-col gap-1">
+            <span className="text-sm font-medium">{label(s.key)}</span>
+            <div className="flex items-center gap-3">
+              <Input
+                maxLength={s.max}
+                value={drafts[s.key] ?? ''}
+                onChange={(e) => setDrafts((d) => ({ ...d, [s.key]: e.target.value }))}
+              />
+              <Button variant="outline" onClick={() => save(s, drafts[s.key] ?? '')} disabled={drafts[s.key] === s.text}>
+                {t('settingsAdmin.save')}
+              </Button>
+              {saved === s.key && <span className="text-sm text-emerald-700">{t('settingsAdmin.saved')}</span>}
+            </div>
+            <span className="text-xs text-slate-500">{t(`settingsAdmin.effect.${s.effect}`)}</span>
+          </div>
+        ))}
+      </Card>
+      <h2 className="text-base font-semibold">{t('settingsAdmin.push.schedule')}</h2>
+      <ListTab kind="push" token={token} loggedOut={loggedOut} />
+    </div>
+  )
+}
+
+const LOG_KINDS = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'settings', 'rating', 'guests', 'push']
 
 function Log({ token, loggedOut }: TabProps) {
   const { t } = useTranslation()

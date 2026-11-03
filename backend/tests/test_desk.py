@@ -28,7 +28,7 @@ def test_walk_in_gets_a_working_qr(client):
     assert walk_in["phone"] == "992935550011"
     guest = open_link(client, walk_in["link"])
     me = client.post("/api/consent", headers=guest).json()
-    assert me == {"first_name": "Зарина", "consented": True, "arrival_points": 10}
+    assert me == {"first_name": "Зарина", "consented": True, "arrival_points": 10, "vapid_public_key": ""}
 
 
 def test_desk_needs_the_pin(client):

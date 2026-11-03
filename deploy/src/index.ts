@@ -9,6 +9,9 @@ interface Env {
   STAND_PIN: string
   MODERATORS: string
   JOBS_SECRET: string
+  VAPID_PUBLIC_KEY: string
+  VAPID_PRIVATE_KEY: string
+  VAPID_SUBJECT: string
 }
 
 // Runs the FastAPI backend (deploy/Dockerfile). Static assets serve the frontend;
@@ -27,6 +30,10 @@ export class Backend extends Container<Env> {
       STAND_PIN: env.STAND_PIN,
       MODERATORS: env.MODERATORS,
       JOBS_SECRET: env.JOBS_SECRET,
+      // Web push; any one missing and the backend sends no pushes
+      VAPID_PUBLIC_KEY: env.VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: env.VAPID_SUBJECT,
       // App and API share one address, so badge links and CORS both point at it
       PUBLIC_BASE_URL: env.APP_URL,
       FRONTEND_URL: env.APP_URL,

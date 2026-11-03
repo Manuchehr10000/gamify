@@ -18,6 +18,11 @@ type Live = {
   bought: number
   issued: number
   left: number
+  // Pushes: active subscriptions, accepted by the push service, reported arrived by phones, refused or gone
+  push_opt_ins: number
+  push_sends: number
+  push_deliveries: number
+  push_failures: number
 }
 
 // A guest whose stored totals differ from the sum of their score events
@@ -100,6 +105,15 @@ export function AdminLive() {
             <StatTile label={t('live.issued')} value={live.issued} />
             <StatTile label={t('live.left')} value={live.left} />
           </div>
+          <Card>
+            <SectionHeading>{t('live.push')}</SectionHeading>
+            <div className="gc-admin-stats">
+              <StatTile label={t('live.pushOptIns')} value={live.push_opt_ins} />
+              <StatTile label={t('live.pushSends')} value={live.push_sends} />
+              <StatTile label={t('live.pushDeliveries')} value={live.push_deliveries} />
+              <StatTile label={t('live.pushFailures')} value={live.push_failures} />
+            </div>
+          </Card>
           <Card>
             <SectionHeading>{t('live.byType')}</SectionHeading>
             <DataTable

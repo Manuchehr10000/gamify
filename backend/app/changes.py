@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session as DbSession
 
-from app.models import ChangeEvent, Partner, Prize, Question, Staff, Stage, Task
+from app.models import ChangeEvent, Partner, Prize, PushMessage, Question, Staff, Stage, Task
 from app.stages import EVENT_TZ
 
 CREATED = "_created"
@@ -38,6 +38,8 @@ def label(db: DbSession, row: object) -> str:
         return f"{row.number}. {row.name}"
     if isinstance(row, (Task, Prize)):
         return row.code
+    if isinstance(row, PushMessage):
+        return f"{row.at.astimezone(EVENT_TZ):%H:%M} · {row.title}"
     if isinstance(row, Question):
         task = db.get(Task, row.task_id)
         return f"{task.code if task else row.task_id} · {row.number}"

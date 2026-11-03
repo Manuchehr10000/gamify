@@ -22,6 +22,12 @@ class Spec:
     integer: bool = True
     # Changing it while a stage runs asks for confirmation first
     live: bool = False
+    # A text setting: its default text; min and max are then its length
+    text: str | None = None
+
+
+def _text(default: str) -> Spec:
+    return Spec(Decimal(0), Decimal(1), Decimal(200), text=default)
 
 
 SETTINGS: dict[str, Spec] = {
@@ -57,6 +63,13 @@ SETTINGS: dict[str, Spec] = {
     "hall_mf_partner_every": Spec(Decimal(2), Decimal(1), Decimal(10)),
     "hall_supporters_size": Spec(Decimal(1), Decimal(1), Decimal(3)),
     "hall_supporters_every": Spec(Decimal(3), Decimal(1), Decimal(10)),
+    # Pushes to phones on (1) or off (0); off, the banner still shows in open apps and on the hall screen
+    "push_enabled": Spec(Decimal(1), Decimal(0), Decimal(1)),
+    # The push titles per kind, in Russian; the stage push takes the stage's banner instead
+    "push_text_quiz_before": _text("Через 5 минут — квиз"),
+    "push_text_quiz_open": _text("Квиз открыт: 5 минут"),
+    "push_text_market": _text("Маркет открыт — обменяйте монеты на призы"),
+    "push_text_one_off": _text("Сообщение организаторов"),
 }
 
 # Raised by every admin save; phones and screens poll it and reload when it moves
@@ -65,10 +78,10 @@ VERSION = "config_version"
 
 def ensure(db: DbSession) -> None:
     """Run at every start: add missing keys with their default; limits and effect follow the code."""
-    rows = [{"key": k, "value": s.default, "min_value": s.min, "max_value": s.max, "effect": s.effect}
-            for k, s in SETTINGS.items()]
+    rows = [{"key": k, "value": s.default, "min_value": s.min, "max_value": s.max, "effect": s.effect,
+             "text_value": s.text} for k, s in SETTINGS.items()]
     rows.append({"key": VERSION, "value": Decimal(1), "min_value": Decimal(0), "max_value": Decimal(10) ** 9,
-                 "effect": ""})
+                 "effect": "", "text_value": None})
     stmt = insert(Setting).values(rows)
     db.execute(stmt.on_conflict_do_update(index_elements=["key"], set_={
         "min_value": stmt.excluded.min_value, "max_value": stmt.excluded.max_value, "effect": stmt.excluded.effect}))
@@ -82,6 +95,11 @@ def get(db: DbSession, key: str) -> Decimal:
 
 def number(db: DbSession, key: str) -> int:
     return int(get(db, key))
+
+
+def text(db: DbSession, key: str) -> str:
+    """A text setting's value, read fresh."""
+    return db.scalar(select(Setting.text_value).where(Setting.key == key)) or ""
 
 
 def bump(db: DbSession) -> None:

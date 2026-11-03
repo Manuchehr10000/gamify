@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app import accounts, config, photos, settings
 from app.db import SessionLocal
 from app.routers import (admin, admin_settings, admin_tasks, badge, claims, desk, feed, jobs, live, market, moderation,
-                         profile, public, quiz, rating, staff, stand)
+                         profile, public, push, quiz, rating, staff, stand)
 
 
 
@@ -26,7 +26,7 @@ app.add_middleware(CORSMiddleware, allow_origins=[config.FRONTEND_URL], allow_me
                    allow_headers=["Authorization", "Content-Type"])
 for r in (badge.router, staff.router, admin.router, desk.router, feed.router, admin_tasks.router,
           market.router, claims.router, stand.router, moderation.router, rating.router, quiz.router,
-          profile.router, live.router, jobs.router, admin_settings.router, public.router):
+          profile.router, live.router, jobs.router, admin_settings.router, public.router, push.router):
     app.include_router(r)
 
 

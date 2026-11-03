@@ -59,7 +59,8 @@ def test_live_gives_the_seven_readouts_and_the_three_tables(client, admin):  # n
         "Гостей вошло", "Активны за 15 минут", "Ждут проверки", "Самая старая ждёт",
         "Призов куплено", "Выдано на стендах", "Осталось"]
     page = PAGES["AdminLive"]
-    assert page.count("<StatTile ") == 7
+    # Seven readouts, and piece 19's four push counts
+    assert page.count("<StatTile ") == 11
     assert page.count("<DataTable") == 4  # the three tables and the balance check's mismatches
     # Types and stages have Выполнений only; partners also Уникальных участников
     assert page.count("t('live.guests')") == 1

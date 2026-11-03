@@ -160,12 +160,14 @@ def test_the_job_run_marks_a_claim_past_its_time_lapsed(client, admin, guest, cl
     clock("10:31")
     r = client.post("/api/jobs/run", headers={"X-Jobs-Secret": "jobs-secret"})
     assert r.status_code == 200
-    assert [(x["job"], x["result"], x["detail"]) for x in r.json()] == [("lapsed_claims", "ok", "истекло заявок: 1")]
+    assert [(x["job"], x["result"], x["detail"]) for x in r.json() if x["job"] == "lapsed_claims"] == [
+        ("lapsed_claims", "ok", "истекло заявок: 1")]
     assert {c.id: c.state for c in claims()} == {"s1": "lapsed", "s2": "open"}
     # The next run finds nothing more to lapse, and the log says so
     client.post("/api/jobs/run", headers={"X-Jobs-Secret": "jobs-secret"})
     with SessionLocal() as db:
-        assert [(j.job, j.result, j.detail) for j in db.scalars(select(JobRun).order_by(JobRun.id))] == [
+        lapses = db.scalars(select(JobRun).where(JobRun.job == "lapsed_claims").order_by(JobRun.id))
+        assert [(j.job, j.result, j.detail) for j in lapses] == [
             ("lapsed_claims", "ok", "истекло заявок: 1"), ("lapsed_claims", "ok", "истекло заявок: 0")]
     # The lapse freed the place: a new send of the same task counts
     assert send_photo(client, guest, t["photo1"]).json()["result"] == "stage_closed"

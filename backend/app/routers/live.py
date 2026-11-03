@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, exists, func, or_, select, union
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, settings, stages
+from app import ledger, push, settings, stages
 from app.auth import require_role
 from app.db import get_db
 from app.models import Guest, Partner, Prize, Redemption, ScoreEvent, Session, Stage, Submission, Task
@@ -58,6 +58,11 @@ class Live(BaseModel):
     bought: int
     issued: int
     left: int
+    # Pushes: active subscriptions, accepted by the push service, reported arrived by phones, refused or gone
+    push_opt_ins: int
+    push_sends: int
+    push_deliveries: int
+    push_failures: int
 
 
 @router.get("/live")
@@ -87,6 +92,7 @@ def live(db: DbSession = Depends(get_db)) -> Live:
     sold = dict(db.execute(select(Redemption.prize_id, func.count()).group_by(Redemption.prize_id)).all())
     issued = db.scalar(select(func.count()).where(Redemption.issued_at.is_not(None)))
     left = sum(max(0, p.quantity - sold.get(p.id, 0)) for p in db.scalars(select(Prize).where(Prize.active)))
+    pushes = push.counts(db)
     return Live(
         logged_in=logged_in,
         active=active,
@@ -99,6 +105,10 @@ def live(db: DbSession = Depends(get_db)) -> Live:
         bought=sum(sold.values()),
         issued=issued,
         left=left,
+        push_opt_ins=pushes.opt_ins,
+        push_sends=pushes.sends,
+        push_deliveries=pushes.deliveries,
+        push_failures=pushes.failures,
     )
 
 

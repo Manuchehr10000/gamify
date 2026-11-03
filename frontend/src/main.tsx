@@ -4,7 +4,11 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.tsx'
 import './i18n'
 import './index.css'
+import { takeLoginFromAddress } from './push'
 import { resumeUploads } from './uploads'
+
+// The Home Screen app's first opening: the login came in the address
+takeLoginFromAddress()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

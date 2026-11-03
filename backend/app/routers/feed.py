@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.auth import current_guest
 from app.db import get_db
 from app.models import FeedRotation, Guest, Partner, Stage, Submission, Task
-from app import badges, ledger, levels, places, settings, stages
+from app import badges, ledger, levels, places, push, settings, stages
 from app.places import SUBMIT_METHODS
 from app.stages import EVENT_TZ
 from app.task_file import PACKAGES
@@ -58,6 +58,16 @@ class TaskOut(BaseModel):
     review: str = ""
 
 
+class FeedPush(BaseModel):
+    id: int
+    # stage · market · quiz_before · quiz_open · one_off; a stage push is the stage banner the app already shows
+    kind: str
+    title: str
+    text: str
+    # Where tapping it leads: a quiz's task page, or the feed
+    url: str
+
+
 class Feed(BaseModel):
     points: int
     coins: int
@@ -70,6 +80,10 @@ class Feed(BaseModel):
     new_badges: list[str]
     # How many photos and texts the phone may keep waiting to send (the admin's setting)
     queue_size: int
+    # The latest push still inside its 10-minute life: the banner for anyone with the app open, push or not
+    push: FeedPush | None
+    # The guest has earned task points: the app may ask (once per phone, which the phone itself remembers)
+    ask_push: bool
     state: str
     stage_count: int
     starts_at: datetime | None
@@ -226,6 +240,11 @@ def _further(card: Task, last: Task | None, after: Task | None, v: View) -> bool
     return place(card) > place(last)
 
 
+def _push(db: DbSession) -> FeedPush | None:
+    m = push.latest(db, push.LIFE)
+    return FeedPush(id=m.id, kind=m.kind, title=m.title, text=m.text, url=push.url(m)) if m else None
+
+
 def _feed(db: DbSession, guest: Guest, advance: bool) -> Feed:
     # The quiz router builds on this one, so it is imported here, not at the top
     from app.routers.quiz import settle
@@ -235,7 +254,8 @@ def _feed(db: DbSession, guest: Guest, advance: bool) -> Feed:
     lv = levels.place(levels.load(db), points)
     mine = {"points": points, "coins": coins, "level": lv.name if lv else "", "to_next": lv.to_next if lv else None,
             "new_level": lv.name if levels.climbed(db, guest, lv) else None,
-            "new_badges": badges.fresh(db, guest.id), "queue_size": settings.number(db, "upload_queue_size")}
+            "new_badges": badges.fresh(db, guest.id), "queue_size": settings.number(db, "upload_queue_size"),
+            "push": _push(db), "ask_push": push.should_ask(db, guest.id)}
     first = d.stages[0].starts_at.astimezone(EVENT_TZ) if d.stages else None
     if d.current is None:
         return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=None, tasks=[])

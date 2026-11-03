@@ -108,6 +108,9 @@ class ListOut(BaseModel):
 @router.get("/lists/{kind}")
 def list_rows(kind: str, db: DbSession = Depends(get_db)) -> ListOut:
     k = _kind(kind)
+    if k.refresh is not None:
+        k.refresh(db)
+        db.commit()
     rows = list(db.scalars(select(k.model).order_by(*k.order())))
     extra = k.extra(db, rows)
     return ListOut(fields=schema(db, k), rows=[row_out(k, r, extra.get(r.id, {})) for r in rows])
@@ -203,13 +206,16 @@ class SettingOut(BaseModel):
     max: float
     effect: str
     integer: bool
+    # A text setting's value (min and max are then its length); None for a number
+    text: str | None
     version: int
 
 
 def _setting_out(s: Setting) -> SettingOut:
     spec = settings.SETTINGS[s.key]
     return SettingOut(key=s.key, value=float(s.value), min=float(s.min_value), max=float(s.max_value),
-                      effect=s.effect, integer=spec.integer, version=s.version)
+                      effect=s.effect, integer=spec.integer, text=s.text_value if spec.text is not None else None,
+                      version=s.version)
 
 
 @router.get("/settings")
@@ -228,6 +234,8 @@ def save_setting(key: str, value: str | float = Body(), version: int = Body(), c
     if s.version != version:
         db.rollback()
         raise refuse(STALE, status=409)
+    if spec.text is not None:
+        return _save_text(db, admin, s, value)
     try:
         new = Decimal(str(value).replace(",", ".")).normalize()
     except InvalidOperation:
@@ -260,6 +268,22 @@ def save_setting(key: str, value: str | float = Body(), version: int = Body(), c
         if coins != t.coins:
             changes.record(db, admin, "tasks", t.id, t.code, "coins", t.coins, coins)
             t.coins = coins
+    _flush(db)
+    settings.bump(db)
+    db.commit()
+    return _setting_out(s)
+
+
+def _save_text(db: DbSession, admin: Staff, s: Setting, value: str | float) -> SettingOut:
+    """A text setting (a push text): its length is checked against the limits; it applies from now on."""
+    new = value.strip() if isinstance(value, str) else None
+    if new is None or not s.min_value <= len(new) <= s.max_value:
+        raise refuse("length", field=s.key, min=int(s.min_value), max=int(s.max_value))
+    if new == s.text_value:
+        db.rollback()
+        return _setting_out(s)
+    changes.record(db, admin, "settings", None, s.key, "value", s.text_value, new)
+    s.text_value = new
     _flush(db)
     settings.bump(db)
     db.commit()
@@ -344,7 +368,7 @@ def change_log(kind: str = "", item: str = "", staff_id: int | None = None, date
 LOG_HEAD = ["Время", "Администратор", "Раздел", "Запись", "Поле", "Было", "Стало", "Источник"]
 KIND_NAMES = {"stages": "Этапы", "tasks": "Задания", "prizes": "Призы", "questions": "Вопросы", "levels": "Уровни",
               "partners": "Партнёры", "staff": "Доступ", "settings": "Настройки", "rating": "Рейтинг",
-              "guests": "Гости"}
+              "guests": "Гости", "push": "Push"}
 SOURCES = {"form": "Форма", "excel": "Excel"}
 # The file names fields as the forms and the Excel sheets do
 FIELD_NAMES = {
@@ -360,6 +384,7 @@ FIELD_NAMES = {
     "option4": "Вариант 4", "correct": "Правильный", "min_points": "Баллов от", "levels": "Уровни",
     "package": "Пакет партнёра", "logo": "Логотип", "role": "Роль", "secret": "PIN / пароль",
     "value": "Значение", "frozen": "Заморожен", "_import": "Загрузка списка",
+    "kind": "Вид", "at": "Время", "title": "Заголовок", "state": "Состояние",
 }
 
 

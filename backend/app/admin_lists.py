@@ -11,8 +11,8 @@ from fastapi import HTTPException
 from sqlalchemy import ColumnElement, delete, exists, func, inspect, select, text
 from sqlalchemy.orm import Session as DbSession
 
-from app import accounts, changes, settings, stages
-from app.models import (ChangeEvent, Level, Partner, Prize, Question, QuizAttempt, ScoreEvent, Session,
+from app import accounts, changes, push, settings, stages
+from app.models import (ChangeEvent, Level, Partner, Prize, PushMessage, Question, QuizAttempt, ScoreEvent, Session,
                         Stage, Staff, Submission, Task)
 from app.stages import EVENT_TZ
 from app.task_file import (BATCH_SIZE, BLITZ_FIELDS, LIMITS, METHODS, PACKAGES, SPEED_DEFAULTS, TYPES, rule_coins, sold,
@@ -70,6 +70,8 @@ class Kind:
     after: Callable[[DbSession, object, dict], None] = lambda db, row, changed: None
     # Read-only facts shown beside each row, keyed by row id
     extra: Callable[[DbSession, list], dict[int, dict]] = lambda db, rows: {}
+    # Brings the rows up to date before the list is read (the push schedule follows its sources)
+    refresh: Callable[[DbSession], None] | None = None
     secret_fields: tuple[str, ...] = field(default=())
 
 
@@ -402,6 +404,61 @@ def _staff_keep(db: DbSession, s: Staff) -> str | None:
     return "in_use" if db.scalar(select(exists().where(ChangeEvent.staff_id == s.id))) else None
 
 
+# Pushes ----------------------------------------------------------------------------------------------------------
+
+def _was(row: object, name: str) -> object:
+    """A field's value before this save."""
+    history = inspect(row).attrs[name].history
+    return history.deleted[0] if history.deleted else getattr(row, name)
+
+
+def _changed(row: object, name: str) -> bool:
+    return inspect(row).persistent and inspect(row).attrs[name].history.has_changes()
+
+
+def _push_after(db: DbSession, m: PushMessage, changed: dict) -> None:
+    if not m.state:
+        m.state = "planned"
+    # A one-off message's blank title is the «one-off» text from the settings
+    if not m.title and m.kind == "one_off":
+        m.title = settings.text(db, push.TEXT_KEYS["one_off"])
+    if _changed(m, "at"):
+        old = _was(m, "at")
+        # The form shows minutes: an unmoved push whose source time has seconds keeps its time
+        if old.astimezone(EVENT_TZ).strftime("%Y-%m-%dT%H:%M") == m.at.astimezone(EVENT_TZ).strftime("%Y-%m-%dT%H:%M"):
+            m.at = old
+        elif m.source_at is not None:
+            # Kept as a shift from the source, so it survives the source moving
+            m.shift_seconds = int((m.at - m.source_at).total_seconds())
+    if m.source is not None and (_changed(m, "title") or _changed(m, "text")):
+        m.text_edited = True
+
+
+def _push_check(db: DbSession, m: PushMessage, creating: bool) -> None:
+    if creating and m.kind != "one_off":
+        raise refuse("one_off_only", field="kind")
+    if not m.title:
+        raise refuse("required", field="title")
+    before = None if creating else _was(m, "state")
+    if before in ("sent", "expired") and any(_changed(m, f) for f in ("at", "title", "text", "state")):
+        raise refuse("push_done", field="state")
+    # Only planned and cancelled are the admin's to set; sent and expired are the job's
+    if m.state not in ("planned", "cancelled") and m.state != before:
+        raise refuse("bad_value", field="state")
+
+
+def _push_keep(db: DbSession, m: PushMessage) -> str | None:
+    if m.state == "sent":
+        return "in_use"
+    # A push that follows a stage or quiz comes back with its source: it is cancelled instead
+    return "source_push" if m.source is not None else None
+
+
+def _push_extra(db: DbSession, rows: list) -> dict[int, dict]:
+    return {m.id: {"sends": m.sends, "deliveries": m.deliveries, "failures": m.failures,
+                   "source": m.source is not None} for m in rows}
+
+
 def set_secret(db: DbSession, s: Staff, secret: str) -> None:
     if accounts.taken(db, s.role, secret, s.id):
         raise refuse("secret_taken", field="secret")
@@ -478,4 +535,11 @@ KINDS: dict[str, Kind] = {
          Field("secret", "secret", min=4, max=72), Field("active", "bool")],
         lambda: [Staff.role, Staff.name],
         check=_staff_check, keep=_staff_keep, after=_staff_after, secret_fields=("secret",)),
+    "push": Kind(
+        PushMessage,
+        [Field("kind", "choice", True, choices=push.KINDS, fixed=True), Field("at", "datetime", True),
+         Field("title", "text", False, 1, 200), Field("text", "text", max=500),
+         Field("state", "choice", choices=push.STATES)],
+        lambda: [PushMessage.at, PushMessage.id],
+        check=_push_check, keep=_push_keep, after=_push_after, extra=_push_extra, refresh=push.regenerate),
 }

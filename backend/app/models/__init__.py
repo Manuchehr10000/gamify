@@ -2,8 +2,8 @@ from datetime import datetime
 
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -371,6 +371,8 @@ class Setting(Base):
     max_value: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     # now (from now on) · recheck (past activity is checked again) · locked (refused while running)
     effect: Mapped[str] = mapped_column(String(16))
+    # A text setting's value (the push texts); min_value and max_value are then its length. Empty for numbers
+    text_value: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(default=1, server_default="1")
     __mapper_args__ = {"version_id_col": version}
 
@@ -420,3 +422,60 @@ class LogoShow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     seconds: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PushSubscription(Base):
+    """A phone that allowed pushes. The push service's «gone» answer switches it off; there is no unsubscribe."""
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Random, carried in each push so the phone's arrival report names its subscription without a login
+    key: Mapped[str] = mapped_column(String(32), unique=True)
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
+    # The browser's push address and keys, as PushSubscription.toJSON() gives them
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    p256dh: Mapped[str] = mapped_column(String(200))
+    auth: Mapped[str] = mapped_column(String(100))
+    active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PushMessage(Base):
+    """One push in the schedule. Rows with a source are kept in step with it by app.push.regenerate; one-off messages
+    are the admin's. The counts are per push, not per phone."""
+    __tablename__ = "push_messages"
+    __table_args__ = (Index("push_messages_state_at", "state", "at"), Index("push_messages_shown_at", "shown_at"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # stage · quiz_before · quiz_open · market · one_off
+    kind: Mapped[str] = mapped_column(String(16))
+    # What it follows: stage:{id}, quiz_before:{task}, quiz_open:{task}, market; empty for a one-off message
+    source: Mapped[str | None] = mapped_column(String(32), unique=True)
+    # A quiz push opens this task's page
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    # The source's time; at = source_at + shift_seconds, so an admin's move survives the source moving
+    source_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shift_seconds: Mapped[int] = mapped_column(default=0, server_default="0")
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    title: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Tajik: the columns are ready and stay empty; guests get Russian
+    text_tg: Mapped[str] = mapped_column(Text, default="", server_default="")
+    title_tg: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # An admin edited the title or text: the source's text no longer replaces it
+    text_edited: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # planned · sent · cancelled · expired (past due and never sent)
+    state: Mapped[str] = mapped_column(String(16), default="planned", server_default="planned")
+    # When it went out to open apps and the hall screen (sent, or due while pushes were off)
+    shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Accepted by the push service · reported arrived by the phone · refused or gone
+    sends: Mapped[int] = mapped_column(default=0, server_default="0")
+    deliveries: Mapped[int] = mapped_column(default=0, server_default="0")
+    failures: Mapped[int] = mapped_column(default=0, server_default="0")
+    # The ids of the subscriptions whose arrival report was already counted for this push, so each counts once; only
+    # for that check, never shown or reported (the counts stay per push)
+    counted_subscriptions: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list, server_default="{}")
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __mapper_args__ = {"version_id_col": version}
