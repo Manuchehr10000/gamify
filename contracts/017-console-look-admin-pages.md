@@ -1,5 +1,5 @@
 # Contract: Console look: admin pages
-Status: building
+Status: on-dev
 Base: d34794d21b
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081bc8952dfe40dc2ed70
