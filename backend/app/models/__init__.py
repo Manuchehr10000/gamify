@@ -109,6 +109,8 @@ class Stage(Base):
     market: Mapped[bool] = mapped_column(default=False)
     # Switched off in the admin's form: left out of the day's schedule. A stage with tasks is never deleted
     active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # «Карточек в ленте»: how many cards a guest's feed shows at once in this stage (open time windows included)
+    batch_size: Mapped[int] = mapped_column(default=15, server_default=text("15"))
     # Raised by every save; a form sends the version it read, and a stale one is refused
     version: Mapped[int] = mapped_column(default=1, server_default="1")
     __mapper_args__ = {"version_id_col": version}
@@ -159,6 +161,8 @@ class Task(Base):
     requires_task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))
     # Row order in the last upload: the tie-break inside each group of the feed
     position: Mapped[int] = mapped_column(default=0)
+    # «Лимит»: how many guests may do it in all (app.places counts them); empty = no limit
+    limit: Mapped[int | None]
     # Rows removed from the file are hidden, not deleted: later pieces keep what guests did
     active: Mapped[bool] = mapped_column(default=True)
     # Raised by every save; a form sends the version it read, and a stale one is refused
@@ -246,6 +250,20 @@ class Claim(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # open (waiting for files) · done · lapsed
     state: Mapped[str] = mapped_column(String(8), default="open")
+
+
+class FeedRotation(Base):
+    """Where a guest's feed is in a stage's rotation. Moved on by POST /api/feed/next, on a page load of /app:
+    the next batch starts after the last card shown (a poll that filled the batch from a later card moves that mark). Tasks are found again by their place in the order, even if
+    done, switched off or moved since; empty = from the top."""
+    __tablename__ = "feed_rotations"
+
+    guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"), primary_key=True)
+    stage_id: Mapped[int] = mapped_column(ForeignKey("stages.id", ondelete="CASCADE"), primary_key=True)
+    # The batch on screen starts after this card, so polls and coming back show the same batch
+    after_task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
+    # The last rotating card shown since that page load: the next one starts after it
+    last_task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"))
 
 
 class Question(Base):

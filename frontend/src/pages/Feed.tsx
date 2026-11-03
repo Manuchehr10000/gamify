@@ -5,7 +5,7 @@ import { api, ApiError, tokens } from '../api'
 import { LevelUp, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
 import { BADGE_GLYPHS, type IconName } from '../components/console/glyphs'
 import { Callout, Loading, MessageCard, NavRow, PageHeader, Screen, StatusChip } from '../components/console/ui'
-import { cache, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
+import { cache, feedPath, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
 import { forgetUpload, isWaiting, onSent, useUpload } from '../uploads'
 import { useConfigVersion } from '../version'
 
@@ -32,7 +32,8 @@ export function Feed() {
     const token = tokens.get('guest')
     if (!token) return
     try {
-      const feed = await api<FeedData>('/api/feed', { token })
+      const { path, method } = feedPath()
+      const feed = await api<FeedData>(path, { token, method })
       cache.saveFeed({ ...feed, new_level: null, new_badges: [] })
       const fresh: Moment[] = [
         ...(feed.new_level ? [{ title: t('level.new', { name: feed.new_level }) }] : []),
@@ -147,7 +148,7 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
   const deadline = task.window_end && !task.done
     ? task.method === 'quiz' ? t('feed.closesIn', { count: minutesLeft(task.window_end) }) : t('feed.closesAt', { time: hhmm(task.window_end) })
     : undefined
-  const edge = task.review === 'penalty' ? 'gc-task-card--rejected' : task.done ? 'gc-task-card--done' : ''
+  const edge = task.review === 'penalty' ? 'gc-task-card--rejected' : task.state === 'done' ? 'gc-task-card--done' : ''
   return (
     <Link to={`/app/tasks/${task.id}`} className={`gc-task-card ${edge}`}>
       <TaskTypeTag task={task} deadline={deadline} />
@@ -157,7 +158,10 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
         <Reward task={task} />
         <span className="gc-task-card__status">
           {task.done && task.review === 'penalty' && <StatusChip tone="danger" icon="x">{t('review.rejected')}</StatusChip>}
-          {task.done && task.review !== 'penalty' && <StatusChip tone="success" icon="check">{t('feed.done')}</StatusChip>}
+          {task.state === 'review' && task.review !== 'penalty' && <StatusChip tone="warning" icon="clock">{t('feed.review')}</StatusChip>}
+          {task.state === 'done' && task.review !== 'penalty' && <StatusChip tone="success" icon="check">{t('feed.done')}</StatusChip>}
+          {task.state === 'full' && !sending && !refused && <StatusChip tone="muted" icon="lock">{t('feed.full')}</StatusChip>}
+          {task.state === 'available' && !sending && !refused && <StatusChip tone="muted" icon="chevron-right">{t('feed.available')}</StatusChip>}
           {!task.done && upload?.state === 'sending' && <StatusChip tone="muted">{t('submit.uploading')}</StatusChip>}
           {!task.done && (upload?.state === 'unclaimed' || upload?.state === 'claimed') && (
             <StatusChip tone="warning" icon="wifi-off">{t(`submit.${upload.state}`)}</StatusChip>

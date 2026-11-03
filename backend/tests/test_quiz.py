@@ -117,7 +117,7 @@ def test_three_of_five_pays_three_fifths_and_hides_the_answers(client, admin, gu
     assert state["question"] is None
     assert set(state) == {"text", "total", "answered", "question", "seconds_left", "result"}
     assert totals(client, guest) == (base[0] + 30, base[1] + 30)
-    assert card(client, guest, "Квиз")["done"] is True
+    assert client.get(f"/api/tasks/{task['id']}", headers=guest).json()["done"] is True
 
 
 def test_partner_quiz_pays_coins_by_the_rule(client, admin, guest, at):
@@ -169,7 +169,7 @@ def test_timer_end_pays_even_if_the_screen_was_closed(client, admin, guest, at):
     answer(client, guest, task_id, 1, 1)
     at("09:32:00")
     assert totals(client, guest) == (base[0] + 10, base[1] + 10)
-    assert card(client, guest, "Блиц")["done"] is True
+    assert client.get(f"/api/tasks/{task_id}", headers=guest).json()["done"] is True
 
 
 def test_timer_end_counts_in_the_hall_before_the_guest_comes_back(client, admin, guest, at):
@@ -307,10 +307,10 @@ def test_quiz_round_trips_through_the_file(client, admin):
     load(client, admin, rows, qs)
     raw = client.get("/api/admin/tasks/export", headers=admin).content
     wb = load_workbook(io.BytesIO(raw))
-    assert [c.value for c in wb["Задания"][1]][-2:] == ["Таймер, сек", "Требует"]
+    assert [c.value for c in wb["Задания"][1]][-3:] == ["Таймер, сек", "Требует", "Лимит"]
     tasks = {r[0].value: [c.value for c in r] for r in wb["Задания"].iter_rows(min_row=2)}
-    assert tasks["M1"][10:] == ["Квиз", None, 60, "HALL"]
-    assert tasks["HALL"][10:] == ["QR", None, None, None]
+    assert tasks["M1"][10:] == ["Квиз", None, 60, "HALL", None]
+    assert tasks["HALL"][10:] == ["QR", None, None, None, None]
     assert [c.value for c in wb["Вопросы"][1]] == QUESTION_HEAD
     assert [[c.value for c in r] for r in wb["Вопросы"].iter_rows(min_row=2)] == qs
     # Uploading the downloaded file changes nothing

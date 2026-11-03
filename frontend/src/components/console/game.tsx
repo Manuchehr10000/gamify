@@ -121,6 +121,7 @@ export function ResultCard({ award }: { award: Award | null }) {
     awarded: { tone: 'win', icon: 'trophy' },
     already: { tone: 'done', icon: 'check', title: t('award.already') },
     unavailable: { tone: 'neutral', icon: 'alert', title: t('award.unavailable') },
+    limit: { tone: 'neutral', icon: 'alert', title: t('award.limit') },
     notFound: { tone: 'neutral', icon: 'alert', title: t('award.notFound') },
   }
   const { tone, icon, title } = look[result]

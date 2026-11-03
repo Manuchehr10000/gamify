@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, stages
+from app import ledger, places, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.guests import random_code
@@ -93,8 +93,10 @@ def buy(prize_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
         raise HTTPException(409, "not_enough_coins")
     db.add(Redemption(guest_id=guest.id, prize_id=prize.id, code=_new_code(db)))
     ledger.write(db, guest.id, f"buy:{prize.id}", "buy", 0, -prize.price)
-    # «Выполнение» = Маркет: the first purchase completes the task, once
+    # «Выполнение» = Маркет: the first purchase completes the task, once, while it has a place left; the purchase
+    # itself goes through either way
     for t in db.scalars(select(Task).where(Task.active, Task.method == "market")):
-        ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins)
+        if places.take(db, guest.id, t):
+            ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins)
     db.commit()
     return _market(db, guest)

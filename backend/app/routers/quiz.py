@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, stages
+from app import ledger, places, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, Question, QuizAttempt, Task
@@ -162,6 +162,11 @@ def start(task_id: int, guest: Guest = Depends(current_guest), db: DbSession = D
             raise HTTPException(403, "check_in_first")
         if not available(db, t):
             raise HTTPException(409, "unavailable")
+        # The quiz takes its place at «Начать», checked and taken in one locked step, so nobody is cut off mid-timer
+        ledger.lock(db, guest.id)
+        if not places.take(db, guest.id, t):
+            db.rollback()
+            raise HTTPException(409, "limit")
         # Two phones of the same guest pressing «Начать» at once still make one attempt
         db.execute(insert(QuizAttempt).values(guest_id=guest.id, task_id=t.id, started_at=stages.now(), answers={})
                    .on_conflict_do_nothing(index_elements=["guest_id", "task_id"]))

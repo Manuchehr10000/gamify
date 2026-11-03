@@ -16,6 +16,7 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
   const [ticked, setTicked] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const upload = useUpload(task.id)
 
   if (task.done && task.review === 'penalty') return <ReviewNote task={task} />
   // A finished quiz opens its result
@@ -23,11 +24,23 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
     return <Button to={`/app/quiz/${task.id}`} variant="outline" icon="check">{t('quiz.seeResult')}</Button>
   }
   if (task.done) {
+    // Sent and paid, the moderator hasn't decided yet: «На проверке» while its stage runs, «Выполнено» after
     return (
       <p className="gc-done gc-label">
-        <Icon name="check" size={20} />
-        {t('feed.done')}
+        <Icon name={task.state === 'review' ? 'clock' : 'check'} size={20} />
+        {t(task.state === 'review' ? 'feed.review' : 'feed.done')}
       </p>
+    )
+  }
+  const submits = task.method === 'photo' || task.method === 'text' || task.method === 'photo_text'
+  // All its places are taken; it comes back when places free up or the admin raises the limit. A photo or text
+  // already waiting on the phone, or refused, still shows how it went
+  if (task.state === 'full') {
+    return (
+      <>
+        {submits && <UploadStatus upload={upload} />}
+        {!(submits && isWaiting(upload)) && <Callout tone="locked" icon="lock">{t('feed.full')}</Callout>}
+      </>
     )
   }
   if (task.method === 'quiz') {
@@ -44,7 +57,7 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
       </Callout>
     )
   }
-  if (task.method === 'photo' || task.method === 'text' || task.method === 'photo_text') {
+  if (submits) {
     return (
       <>
         <ReviewNote task={task} />

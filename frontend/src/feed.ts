@@ -10,6 +10,9 @@ export type Task = {
   partner_name: string
   window_end: string | null
   done: boolean
+  // The card's label: «Доступно» · «На проверке» (sent, not yet decided; already paid) · «Выполнено» ·
+  // «Временно недоступно» (all its places are taken)
+  state: 'available' | 'review' | 'done' | 'full'
   method: 'qr' | 'link' | 'market' | 'photo' | 'text' | 'photo_text' | 'quiz' | ''
   link: string
   // A quiz's countdown in seconds; null without one
@@ -39,7 +42,18 @@ export type Feed = {
   tasks: Task[]
 }
 
-export type Award = { result: 'awarded' | 'already' | 'unavailable'; task: Task }
+export type Award = { result: 'awarded' | 'already' | 'unavailable' | 'limit'; task: Task }
+
+// The batch of cards moves on only on a page load of /app (opening the app or a reload): the document's first path,
+// and only once per load. Polls, coming back to the screen and returning from a task keep the batch
+const loadedAtFeed = window.location.pathname.replace(/\/$/, '') === '/app'
+let advanced = false
+
+export function feedPath(): { path: string; method: 'GET' | 'POST' } {
+  if (!loadedAtFeed || advanced) return { path: '/api/feed', method: 'GET' }
+  advanced = true
+  return { path: '/api/feed/next', method: 'POST' }
+}
 
 // Forum times are Dushanbe times, whatever zone the phone is set to
 const clock = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dushanbe' })
@@ -70,11 +84,16 @@ export const cache = {
   feed: (): Feed | null => {
     const raw = read(FEED_KEY)
     if (!raw) return null
+    let feed: Feed
     try {
-      return JSON.parse(raw) as Feed
+      feed = JSON.parse(raw) as Feed
     } catch {
       return null
     }
+    // The saved cards are the stage's: once it has ended, an undecided «На проверке» shows «Выполнено»,
+    // worked out from the stage as the server does
+    const ended = feed.stage && Date.now() >= new Date(feed.stage.ends_at).getTime()
+    return ended ? { ...feed, tasks: feed.tasks.map((t) => (t.state === 'review' ? { ...t, state: 'done' } : t)) } : feed
   },
   saveFeed: (feed: Feed) => write(FEED_KEY, JSON.stringify(feed)),
   task: (id: number): Task | null => cache.feed()?.tasks.find((t) => t.id === id) ?? null,

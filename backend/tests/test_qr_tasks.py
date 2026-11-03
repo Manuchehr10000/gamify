@@ -51,8 +51,8 @@ def test_scan_awards_once(client, admin, guest, clock):
     r = scan(client, guest, codes["qr1"]).json()
     assert (r["result"], r["task"]["points"], r["task"]["coins"], r["task"]["done"]) == ("awarded", 15, 15, True)
     assert totals(client, guest) == (base[0] + 15, base[1] + 15)
-    card = next(t for t in client.get("/api/feed", headers=guest).json()["tasks"] if t["text"] == "Найти QR у стенда")
-    assert card["done"] is True
+    card = client.get(f"/api/tasks/{r['task']['id']}", headers=guest).json()
+    assert (card["done"], card["state"]) == (True, "done")
     assert scan(client, guest, codes["qr1"]).json()["result"] == "already"
     assert totals(client, guest) == (base[0] + 15, base[1] + 15)
 

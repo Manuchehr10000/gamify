@@ -246,7 +246,9 @@ def test_first_purchase_completes_the_market_task_once(client, admin, clock):
     buy(client, guest, market(client, guest), "Блокнот")
     after = client.get("/api/feed", headers=guest).json()
     assert (after["points"], after["coins"]) == (before["points"] + 15, before["coins"] - 10 + 15)
-    assert next(t for t in after["tasks"] if t["id"] == card["id"])["done"] is True
+    # Done, it leaves the feed's batch; its page says «Выполнено»
+    assert card["id"] not in {t["id"] for t in after["tasks"]}
+    assert client.get(f"/api/tasks/{card['id']}", headers=guest).json()["state"] == "done"
 
     buy(client, guest, market(client, guest), "Термокружка")
     last = client.get("/api/feed", headers=guest).json()
@@ -315,7 +317,7 @@ def test_download_gives_prizes_and_market_stage_back(client, admin):
     load(client, admin)
     data = client.get("/api/admin/tasks/export", headers=admin).content
     wb = load_workbook(io.BytesIO(data))
-    assert [c.value for c in wb["Этапы"][1]] == STAGE_HEAD + ["Маркет"]
+    assert [c.value for c in wb["Этапы"][1]] == STAGE_HEAD + ["Маркет", "Карточек в ленте"]
     assert [wb["Этапы"].cell(row=n, column=6).value for n in range(2, 6)] == [None, None, "да", None]
     assert [[c.value for c in r] for r in wb["Призы"].iter_rows(min_row=1)] == [PRIZE_HEAD] + PRIZES
     assert wb["Задания"]["K2"].value == "Маркет"

@@ -35,6 +35,7 @@ STAGE_COLUMNS = {
     "ends_at": "Конец",
     "message": "Сообщение при смене этапа",
     "market": "Маркет",
+    "batch_size": "Карточек в ленте",
 }
 TASK_COLUMNS = {
     "code": "ID",
@@ -51,6 +52,7 @@ TASK_COLUMNS = {
     "link": "Ссылка",
     "timer": "Таймер, сек",
     "requires": "Требует",
+    "limit": "Лимит",
 }
 QUESTION_COLUMNS = {
     "task": "ID задания",
@@ -75,6 +77,8 @@ LEVEL_COLUMNS = {
 }
 REQUIRED_STAGE = ("number", "name", "starts_at", "ends_at")
 REQUIRED_TASK = ("code", "stage", "type", "text", "points")
+# A stage's «Карточек в ленте» when the cell is blank
+BATCH_SIZE = 15
 REQUIRED_PRIZE = tuple(PRIZE_COLUMNS)
 REQUIRED_QUESTION = ("task", "number", "text", "option1", "option2", "correct")
 OPTIONS = ("option1", "option2", "option3", "option4")
@@ -116,8 +120,10 @@ PACKAGES = {
 # range, or a text's length from 1
 LIMITS = {
     ("stages", "number"): (1, 50), ("stages", "name"): (1, 100), ("stages", "message"): (0, 500),
+    ("stages", "batch_size"): (5, 50),
     ("tasks", "code"): (1, 32), ("tasks", "text"): (1, 1000), ("tasks", "points"): (0, 10000),
     ("tasks", "coins"): (0, 10000), ("tasks", "link"): (0, 500), ("tasks", "timer_seconds"): (5, 3600),
+    ("tasks", "limit"): (1, 100000),
     ("prizes", "code"): (1, 32), ("prizes", "name"): (1, 200), ("prizes", "price"): (1, 100000),
     ("prizes", "quantity"): (0, 100000),
     ("questions", "number"): (1, 100), ("questions", "text"): (1, 1000), ("questions", "option"): (1, 300),
@@ -408,12 +414,18 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
             market_cell = _text(_cell(row, stage_cols, "market")).lower()
             if market_cell not in YES + NO:
                 raise RowError("bad_market")
+            batch_cell = _cell(row, stage_cols, "batch_size")
+            batch_size = (_int(batch_cell, "bad_batch_size", ("stages", "batch_size")) if _text(batch_cell)
+                          else BATCH_SIZE)
         except RowError as e:
             fail(STAGES_SHEET, n, e)
             continue
         seen_stages.add(number)
         values = {"name": name, "starts_at": starts, "ends_at": ends,
                   "message": message, "market": market_cell in YES, "active": True}
+        # A file without the column (an older one) leaves the number as it is
+        if "batch_size" in stage_cols:
+            values["batch_size"] = batch_size
         stage = stages.get(number)
         if stage is None:
             stage = Stage(number=number, **values)
@@ -490,6 +502,8 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
             timer_cell = _cell(row, task_cols, "timer") if method == "quiz" else None
             timer = _int(timer_cell, "bad_timer", ("tasks", "timer_seconds")) if _text(timer_cell) else None
             requires = _text(_cell(row, task_cols, "requires")) if method == "quiz" else ""
+            limit_cell = _cell(row, task_cols, "limit")
+            limit = _int(limit_cell, "bad_limit", ("tasks", "limit")) if _text(limit_cell) else None
             # A quiz added in the form before its questions is written back with none: as loaded, not a bad row
             empty_quiz = code in tasks and tasks[code].method == "quiz" and not _loaded(db, tasks[code])
             if method == "quiz" and not questions.get(code) and not empty_quiz:
@@ -504,7 +518,9 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
         parsed.append((n, code, {"stage_id": stage.id, "type": type_, "text": text, "points": points, "coins": coins,
                                  "coins_from_rule": from_rule, "window_start": window_start, "window_end": window_end,
                                  "method": method, "link": link, "timer_seconds": timer, "position": position,
-                                 "active": True}, requires, partner_name))
+                                 "active": True,
+                                 # A file without the column (an older one) leaves the limit as it is
+                                 **({"limit": limit} if "limit" in task_cols else {})}, requires, partner_name))
     partners = {p.name: p for p in db.scalars(_locked(Partner))}
     # A quiz gated on a QR row that is missing or failed would open to everyone, or never: it fails instead
     loaded_qr = {code for _, code, values, _, _ in parsed if values["method"] == "qr"}
@@ -699,7 +715,7 @@ def export_xlsx(db: DbSession) -> bytes:
     for s in stages:
         if s.active:
             ws.append([s.number, s.name, _local(s.starts_at), _local(s.ends_at), s.message,
-                       YES[0] if s.market else None])
+                       YES[0] if s.market else None, s.batch_size])
     for col in "CD":
         for cell in ws[col][1:]:
             cell.number_format = EXCEL_DATE
@@ -718,7 +734,7 @@ def export_xlsx(db: DbSession) -> bytes:
                    PACKAGES[partner.package][0] if partner and partner.package else None,
                    _local(t.window_start), _local(t.window_end),
                    METHODS[t.method][0] if t.method else None, t.link or None, t.timer_seconds,
-                   codes.get(t.requires_task_id)])
+                   codes.get(t.requires_task_id), t.limit])
     for col in "IJ":
         for cell in wt[col][1:]:
             cell.number_format = EXCEL_DATE

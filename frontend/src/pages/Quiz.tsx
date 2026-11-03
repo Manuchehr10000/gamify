@@ -47,7 +47,9 @@ export function Quiz() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) setState({ kind: 'error', message: t('quiz.checkInFirst'), locked: true })
       else if (err instanceof ApiError && err.status === 404) setState({ kind: 'error', message: t('quiz.missing') })
-      else if (err instanceof ApiError && err.status === 409) setState({ kind: 'error', message: t('quiz.unavailable') })
+      else if (err instanceof ApiError && err.status === 409) {
+        setState({ kind: 'error', message: t(err.detail === 'limit' ? 'quiz.limit' : 'quiz.unavailable') })
+      }
       else setError(t('common.error'))
     } finally {
       setBusy(false)

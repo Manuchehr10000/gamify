@@ -5,11 +5,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import claims, ledger, photos, settings, stages
+from app import claims, ledger, photos, places, settings, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Claim, Guest, Submission, Task
-from app.routers.feed import SUBMIT_METHODS, TaskOut, _done, _open, _out, _reviews, partners, task_reason
+from app.places import SUBMIT_METHODS
+from app.routers.feed import TaskOut, _done, _open, task_out, task_reason
 
 # Sending a photo or text in two steps, so a phone that drops the network or is closed loses nothing: first a small
 # claim with the phone's submission ID, which the server checks and times; then the files. Points are paid when the
@@ -30,14 +31,13 @@ class ClaimIn(BaseModel):
 
 class ClaimOut(BaseModel):
     # claimed: place held, the photo comes next · awarded: points added · already: done before, nothing added ·
-    # stage_closed: its stage isn't on · time_up: its window has closed
+    # stage_closed: its stage isn't on · time_up: its window has closed · limit: all its places are taken
     result: str
     task: TaskOut
 
 
 def _result(db: DbSession, guest: Guest, t: Task, result: str) -> ClaimOut:
-    done = {task_reason(t.id)} if result in ("awarded", "already") else _done(db, guest)
-    return ClaimOut(result=result, task=_out(t, done, _reviews(db, guest), partners(db)))
+    return ClaimOut(result=result, task=task_out(db, guest, t))
 
 
 def _repeat(db: DbSession, guest: Guest, t: Task, c: Claim) -> ClaimOut:
@@ -102,6 +102,11 @@ def claim(task_id: int, body: ClaimIn, guest: Guest = Depends(current_guest),
         if not claims.expired(held):
             raise HTTPException(409, "claim_open")
         held.state = "lapsed"
+    # The place is checked and taken in one locked step: of two guests after the last place, one gets it. A guest
+    # sent back for a retake still holds theirs, so their claim passes even when the task is full
+    if not places.take(db, guest.id, t):
+        db.rollback()
+        return _result(db, guest, t, "limit")
     c = Claim(id=body.id, guest_id=guest.id, task_id=t.id, text=text, created_at=now, stage_id=d.current.id,
               expires_at=now + timedelta(minutes=settings.number(db, "claim_minutes")), state="open")
     db.add(c)

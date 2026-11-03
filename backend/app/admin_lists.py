@@ -14,7 +14,7 @@ from app import accounts, changes, settings, stages
 from app.models import (ChangeEvent, Level, Partner, Prize, Question, QuizAttempt, ScoreEvent, Session,
                         Stage, Staff, Submission, Task)
 from app.stages import EVENT_TZ
-from app.task_file import LIMITS, METHODS, PACKAGES, TYPES, rule_coins, sold
+from app.task_file import BATCH_SIZE, LIMITS, METHODS, PACKAGES, TYPES, rule_coins, sold
 
 ROLES = ("admin", "moderator", "desk", "stand")
 # The desk and the stands share one account each: its PIN is reset, never a second one added
@@ -181,6 +181,12 @@ def schema(db: DbSession, kind: Kind) -> list[dict]:
 def _stage_check(db: DbSession, s: Stage, creating: bool) -> None:
     if s.ends_at <= s.starts_at:
         raise refuse("end_before_start", field="ends_at")
+
+
+def _stage_after(db: DbSession, s: Stage, changed: dict) -> None:
+    # A blank «Карточек в ленте» is the default, as a blank cell in the file
+    if s.batch_size is None:
+        s.batch_size = BATCH_SIZE
 
 
 def _day(db: DbSession, row: object | None) -> tuple:
@@ -363,9 +369,10 @@ KINDS: dict[str, Kind] = {
         [Field("number", "int", True, *LIMITS["stages", "number"], unique=True),
          Field("name", "text", True, *LIMITS["stages", "name"]),
          Field("starts_at", "datetime", True), Field("ends_at", "datetime", True),
-         Field("message", "text", max=LIMITS["stages", "message"][1]), Field("market", "bool"), Field("active", "bool")],
+         Field("message", "text", max=LIMITS["stages", "message"][1]), Field("market", "bool"),
+         Field("batch_size", "int", False, *LIMITS["stages", "batch_size"]), Field("active", "bool")],
         lambda: [Stage.number],
-        check=_stage_check,
+        check=_stage_check, after=_stage_after,
         keep=_stage_keep,
         state=_day, impact=_stage_impact),
     "tasks": Kind(
@@ -377,7 +384,7 @@ KINDS: dict[str, Kind] = {
          Field("link", "text", max=LIMITS["tasks", "link"][1]), Field("window_start", "datetime"), Field("window_end", "datetime"),
          Field("timer_seconds", "int", False, *LIMITS["tasks", "timer_seconds"]),
          Field("requires_task_id", "ref", ref="tasks", where=lambda: (Task.method == "qr") & Task.active),
-         Field("active", "bool")],
+         Field("limit", "int", False, *LIMITS["tasks", "limit"]), Field("active", "bool")],
         lambda: [Task.position, Task.id],
         check=_task_check, keep=_task_keep, state=_task_state, impact=_task_impact, after=_task_after,
         extra=lambda db, rows: {t.id: {"qr_code": t.qr_code} for t in rows}),

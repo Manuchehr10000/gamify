@@ -1,14 +1,17 @@
+from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth import current_guest
 from app.db import get_db
-from app.models import Guest, Partner, Stage, Submission, Task
-from app import badges, ledger, levels, settings, stages
+from app.models import FeedRotation, Guest, Partner, Stage, Submission, Task
+from app import badges, ledger, levels, places, settings, stages
+from app.places import SUBMIT_METHODS
 from app.stages import EVENT_TZ
 from app.task_file import PACKAGES
 
@@ -39,6 +42,9 @@ class TaskOut(BaseModel):
     partner_name: str
     window_end: datetime | None
     done: bool
+    # The card's label: available «Доступно» · review «На проверке» (sent, the moderator hasn't decided; paid
+    # already) · done «Выполнено» · full «Временно недоступно» (all its places are taken)
+    state: str
     # qr, link, market, photo, text, photo_text, quiz or "" (not doable yet)
     method: str
     link: str
@@ -93,27 +99,68 @@ def partners(db: DbSession) -> dict[int, Partner]:
     return {p.id: p for p in db.scalars(select(Partner))}
 
 
-def _out(t: Task, done: set[str], reviews: dict[int, str] | None = None,
-         by_id: dict[int, Partner] | None = None) -> TaskOut:
-    review = (reviews or {}).get(t.id, "")
-    partner = (by_id or {}).get(t.partner_id)
+@dataclass
+class View:
+    """What one guest's cards are worked out from, read once per request."""
+    done: set[str]
+    # Each task's latest submission status
+    reviews: dict[int, str]
+    by_id: dict[int, Partner]
+    # The stage running now: an undecided submission is «На проверке» only in it, «Выполнено» once it has ended
+    stage_id: int | None
+    # Tasks whose places are all taken by others
+    full: set[int]
+
+    def done_task(self, t: Task) -> bool:
+        return task_reason(t.id) in self.done
+
+    def undecided(self, t: Task) -> bool:
+        return t.method in SUBMIT_METHODS and self.reviews.get(t.id) == "" and self.done_task(t)
+
+    def pinned(self, t: Task) -> bool:
+        """Undecided in the current stage, or sent back for a retake: above the batch, outside its count."""
+        if self.undecided(t):
+            return t.stage_id == self.stage_id
+        return self.reviews.get(t.id) == "retake" and not self.done_task(t)
+
+
+def view(db: DbSession, guest: Guest, tasks: list[Task]) -> View:
+    d = stages.day(db)
+    return View(_done(db, guest), _reviews(db, guest), partners(db), d.current.id if d.current else None,
+                places.full(db, guest.id, tasks))
+
+
+def _state(t: Task, v: View) -> str:
+    if v.done_task(t):
+        return "review" if v.undecided(t) and t.stage_id == v.stage_id else "done"
+    return "full" if t.id in v.full else "available"
+
+
+def _out(t: Task, v: View) -> TaskOut:
+    review = v.reviews.get(t.id, "")
+    partner = v.by_id.get(t.partner_id)
     return TaskOut(id=t.id, type=t.type, text=t.text, points=t.points, coins=t.coins,
-                   partner_name=partner.name if partner else "", done=task_reason(t.id) in done, method=t.method, link=t.link,
+                   partner_name=partner.name if partner else "", done=v.done_task(t), state=_state(t, v),
+                   method=t.method, link=t.link,
                    window_end=t.window_end.astimezone(EVENT_TZ) if t.window_end else None,
                    timer_seconds=t.timer_seconds,
-                   locked=t.requires_task_id is not None and task_reason(t.requires_task_id) not in done,
+                   locked=t.requires_task_id is not None and task_reason(t.requires_task_id) not in v.done,
                    review=review if review in REVIEWS else "")
+
+
+def task_out(db: DbSession, guest: Guest, t: Task) -> TaskOut:
+    return _out(t, view(db, guest, [t]))
 
 
 def _order(t: Task, by_id: dict[int, Partner]) -> tuple:
     # Tasks with a time window first (soonest to close on top), then partners by package, then the rest
     if t.window_end or t.window_start:
-        return (0, t.window_end or t.window_start, t.position)
+        return (0, t.window_end or t.window_start, t.position, t.id)
     partner = by_id.get(t.partner_id)
     if partner:
         rank = PACKAGE_ORDER.index(partner.package) if partner.package else len(PACKAGE_ORDER)
-        return (1, rank, t.position)
-    return (2, 0, t.position)
+        return (1, rank, t.position, t.id)
+    return (2, 0, t.position, t.id)
 
 
 def _open(t: Task, at: datetime) -> bool:
@@ -129,6 +176,54 @@ def totals(db: DbSession, guest: Guest) -> tuple[int, int]:
 
 @router.get("/api/feed")
 def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Feed:
+    """The batch on screen: polls, coming back to the screen and returning from a task keep it."""
+    return _feed(db, guest, advance=False)
+
+
+def _windowed(t: Task) -> bool:
+    return t.window_start is not None or t.window_end is not None
+
+
+@dataclass
+class Batch:
+    tasks: list[Task]
+    # The last rotating card in it: where the next batch starts after; None when it has none
+    last: Task | None
+
+
+def _batch(stage: Stage, tasks: list[Task], v: View, after: Task | None) -> Batch:
+    """The cards one guest sees in the stage: pinned ones (undecided, or sent back for a retake) above, then B cards:
+    open time windows first, then the rotation from the card after `after`, wrapping at the end. Done cards leave
+    the batch (a decided one shows «Выполнено» on its page and on the phone's saved copy); full ones stay with
+    their label, since places can free up."""
+    def order(x: Task) -> tuple:
+        return _order(x, v.by_id)
+
+    pinned = sorted((x for x in tasks if v.pinned(x)), key=order)
+    rest = [x for x in tasks if not v.pinned(x) and not v.done_task(x)]
+    windows = sorted((x for x in rest if _windowed(x)), key=order)[:stage.batch_size]
+    rotating = sorted((x for x in rest if not _windowed(x)), key=order)
+    if after is not None:
+        # By its place in the current order, so a card done, added or switched off since doesn't skip or repeat others
+        mark = order(after)
+        split = next((i for i, x in enumerate(rotating) if order(x) > mark), len(rotating))
+        rotating = rotating[split:] + rotating[:split]
+    shown = rotating[:max(0, stage.batch_size - len(windows))]
+    return Batch(pinned + windows + shown, shown[-1] if shown else None)
+
+
+def _further(card: Task, last: Task | None, after: Task | None, v: View) -> bool:
+    """Whether `card` comes later than `last` in the rotation that starts after `after`."""
+    if last is None:
+        return True
+
+    def place(x: Task) -> tuple:
+        key = _order(x, v.by_id)
+        return (after is not None and key <= _order(after, v.by_id), key)
+    return place(card) > place(last)
+
+
+def _feed(db: DbSession, guest: Guest, advance: bool) -> Feed:
     # The quiz router builds on this one, so it is imported here, not at the top
     from app.routers.quiz import settle
     settle(db, guest.id)
@@ -143,8 +238,37 @@ def feed(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db))
         return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=None, tasks=[])
     t = stages.now()
     tasks = [x for x in db.scalars(select(Task).where(Task.active, Task.stage_id == d.current.id)) if _open(x, t)]
-    done, reviews, by_id = _done(db, guest), _reviews(db, guest), partners(db)
-    return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=stage_out(d.current), tasks=[_out(x, done, reviews, by_id) for x in sorted(tasks, key=lambda x: _order(x, by_id))])
+    v = view(db, guest, tasks)
+    rotation = db.get(FeedRotation, (guest.id, d.current.id))
+    # The first page load in a stage shows the top of the rotation; each later one the cards after the last shown
+    mark = (rotation.last_task_id if advance else rotation.after_task_id) if rotation else None
+    after = db.get(Task, mark) if mark else None
+    batch = _batch(d.current, tasks, v, after)
+    if advance:
+        last = batch.last or after
+        stmt = insert(FeedRotation).values(guest_id=guest.id, stage_id=d.current.id,
+                                           after_task_id=after.id if after else None,
+                                           last_task_id=last.id if last else None)
+        db.execute(stmt.on_conflict_do_update(index_elements=["guest_id", "stage_id"], set_={
+            "after_task_id": stmt.excluded.after_task_id, "last_task_id": stmt.excluded.last_task_id}))
+        db.commit()
+    elif rotation and batch.last is not None and _further(batch.last, db.get(Task, rotation.last_task_id)
+                                                          if rotation.last_task_id else None, after, v):
+        # A card done since the page load let the batch fill from the next one: that card has been shown now, so
+        # the next page load starts after it. Only the last card shown moves; this batch stays as it is
+        db.execute(update(FeedRotation).where(
+            FeedRotation.guest_id == guest.id, FeedRotation.stage_id == d.current.id,
+            FeedRotation.after_task_id.is_not_distinct_from(after.id if after else None),
+        ).values(last_task_id=batch.last.id))
+        db.commit()
+    return Feed(**mine, state=d.state, stage_count=len(d.stages), starts_at=first, stage=stage_out(d.current),
+                tasks=[_out(x, v) for x in batch.tasks])
+
+
+@router.post("/api/feed/next")
+def feed_next(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Feed:
+    """A page load of /app (opening the app or a reload): the next batch of the rotation."""
+    return _feed(db, guest, advance=True)
 
 
 @router.get("/api/tasks/{task_id}")
@@ -152,17 +276,14 @@ def task(task_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
     t = db.get(Task, task_id)
     if t is None or not t.active:
         raise HTTPException(404, "task_not_found")
-    return _out(t, _done(db, guest), _reviews(db, guest), partners(db))
+    return task_out(db, guest, t)
 
 
 class Award(BaseModel):
-    # awarded: points added now · already: done before, nothing added · unavailable: not on at this moment
+    # awarded: points added now · already: done before, nothing added · unavailable: not on at this moment ·
+    # limit: all its places are taken («Лимит исчерпан»), nothing added
     result: str
     task: TaskOut
-
-
-# Tasks done by sending something: a claim, then the photo (app.routers.claims)
-SUBMIT_METHODS = {"photo", "text", "photo_text"}
 
 
 def available(db: DbSession, t: Task) -> bool:
@@ -175,15 +296,19 @@ def _award(db: DbSession, guest: Guest, t: Task) -> Award:
     """Award a QR or link task once per guest, only while it is on: its stage is the current one and its window is
     open."""
     reason = task_reason(t.id)
-    by_id = partners(db)
     if reason in _done(db, guest):
-        return Award(result="already", task=_out(t, {reason}, _reviews(db, guest), by_id))
+        return Award(result="already", task=task_out(db, guest, t))
     if not available(db, t):
-        return Award(result="unavailable", task=_out(t, set(), _reviews(db, guest), by_id))
-    # Two phones of the same guest scanning at once still award once: the ledger checks under the guest's lock
+        return Award(result="unavailable", task=task_out(db, guest, t))
+    # Two phones of the same guest scanning at once still award once: the ledger checks under the guest's lock.
+    # The place is checked and taken under the task's lock, so two guests can't both take the last one
+    ledger.lock(db, guest.id)
+    if not places.take(db, guest.id, t):
+        db.rollback()
+        return Award(result="limit", task=task_out(db, guest, t))
     added = ledger.write(db, guest.id, reason, "task", t.points, t.coins) is not None
     db.commit()
-    return Award(result="awarded" if added else "already", task=_out(t, {reason}, by_id=by_id))
+    return Award(result="awarded" if added else "already", task=task_out(db, guest, t))
 
 
 class Scan(BaseModel):

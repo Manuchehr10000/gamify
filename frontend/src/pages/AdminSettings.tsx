@@ -44,8 +44,8 @@ type Event = {
 
 // The columns each list shows; the form shows every field
 const COLUMNS: Record<Kind, string[]> = {
-  stages: ['number', 'name', 'starts_at', 'ends_at', 'market', 'active'],
-  tasks: ['code', 'stage_id', 'type', 'text', 'points', 'coins', 'method', 'active'],
+  stages: ['number', 'name', 'starts_at', 'ends_at', 'market', 'batch_size', 'active'],
+  tasks: ['code', 'stage_id', 'type', 'text', 'points', 'coins', 'method', 'limit', 'active'],
   prizes: ['code', 'name', 'partner_id', 'price', 'quantity', 'active'],
   questions: ['task_id', 'number', 'text', 'correct'],
   levels: ['name', 'min_points'],
