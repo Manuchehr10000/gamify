@@ -112,7 +112,7 @@ def test_three_of_five_pays_three_fifths_and_hides_the_answers(client, admin, gu
     task = card(client, guest, "Квиз")
     base = totals(client, guest)
     state = play(client, guest, task["id"], right=3)
-    assert state["result"] == {"correct": 3, "total": 5, "points": 30, "coins": 30}
+    assert state["result"] == {"correct": 3, "total": 5, "points": 30, "coins": 30, "speed": None}
     # Only the score: no question comes back with its right option
     assert state["question"] is None
     assert set(state) == {"text", "total", "answered", "question", "seconds_left", "result"}
@@ -156,7 +156,7 @@ def test_timer_end_closes_the_quiz_and_unanswered_count_as_wrong(client, admin, 
         answer(client, guest, task_id, q, 1)
     at("09:31:00")
     state = client.post(f"/api/quiz/{task_id}/finish", headers=guest).json()
-    assert state["result"] == {"correct": 3, "total": 5, "points": 30, "coins": 30}
+    assert state["result"] == {"correct": 3, "total": 5, "points": 30, "coins": 30, "speed": None}
     assert totals(client, guest) == (base[0] + 30, base[1] + 30)
 
 
@@ -203,7 +203,7 @@ def test_finished_quiz_shows_the_result_and_takes_no_more_answers(client, admin,
     play(client, guest, task_id, right=3)
     points = totals(client, guest)
     again = start(client, guest, task_id).json()
-    assert again["result"] == {"correct": 3, "total": 5, "points": 30, "coins": 30}
+    assert again["result"] == {"correct": 3, "total": 5, "points": 30, "coins": 30, "speed": None}
     assert again["question"] is None
     assert answer(client, guest, task_id, 1, 1).json()["result"]["correct"] == 3
     client.post(f"/api/quiz/{task_id}/finish", headers=guest)
@@ -307,10 +307,10 @@ def test_quiz_round_trips_through_the_file(client, admin):
     load(client, admin, rows, qs)
     raw = client.get("/api/admin/tasks/export", headers=admin).content
     wb = load_workbook(io.BytesIO(raw))
-    assert [c.value for c in wb["Задания"][1]][-3:] == ["Таймер, сек", "Требует", "Лимит"]
+    assert [c.value for c in wb["Задания"][1]][-7:-4] == ["Таймер, сек", "Требует", "Лимит"]
     tasks = {r[0].value: [c.value for c in r] for r in wb["Задания"].iter_rows(min_row=2)}
-    assert tasks["M1"][10:] == ["Квиз", None, 60, "HALL", None]
-    assert tasks["HALL"][10:] == ["QR", None, None, None, None]
+    assert tasks["M1"][10:15] == ["Квиз", None, 60, "HALL", None]
+    assert tasks["HALL"][10:15] == ["QR", None, None, None, None]
     assert [c.value for c in wb["Вопросы"][1]] == QUESTION_HEAD
     assert [[c.value for c in r] for r in wb["Вопросы"].iter_rows(min_row=2)] == qs
     # Uploading the downloaded file changes nothing

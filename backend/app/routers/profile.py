@@ -24,7 +24,7 @@ class Entry(BaseModel):
     text: str
     points: int
     coins: int
-    # A moderator's bonus on the task's photo or text; 0 without one
+    # A moderator's bonus on the task's photo or text, or a blitz's speed bonus; 0 without one
     bonus: int = 0
     # A moderator rejected it: its points and coins were taken back
     rejected: bool = False
@@ -74,10 +74,12 @@ def profile(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_d
             history.append(Entry(kind="arrival", text="", points=e.points, coins=e.coins, at=local(e.created_at)))
     for e in events:
         kind, _, ref = e.reason.partition(":")
-        entry = entries.get(f"task:{of_task.get(int(ref))}") if kind in ("bonus", "penalty") else None
+        # A blitz's speed bonus belongs to its quiz, as a moderator's bonus to its submission's task
+        entry = (entries.get(f"task:{of_task.get(int(ref))}") if kind in ("bonus", "penalty")
+                 else entries.get(f"task:{ref}") if kind == "speed" else None)
         if entry is None:
             continue
-        if kind == "bonus":
+        if kind in ("bonus", "speed"):
             entry.bonus += e.points
         else:
             entry.rejected = True

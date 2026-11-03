@@ -165,6 +165,12 @@ class Task(Base):
     position: Mapped[int] = mapped_column(default=0)
     # «Лимит»: how many guests may do it in all (app.places counts them); empty = no limit
     limit: Mapped[int | None]
+    # A quiz's «Блиц»: each right answer earns a speed bonus in points on top of the quiz's own
+    blitz: Mapped[bool] = mapped_column(default=False, server_default="false")
+    # «Бонус за скорость» per question: paid whole within «Без потерь, сек», then falling to 0 at «Время бонуса, сек»
+    speed_bonus: Mapped[int] = mapped_column(default=20, server_default="20")
+    grace_seconds: Mapped[int] = mapped_column(default=3, server_default="3")
+    bonus_seconds: Mapped[int] = mapped_column(default=12, server_default="12")
     # Rows removed from the file are hidden, not deleted: later pieces keep what guests did
     active: Mapped[bool] = mapped_column(default=True)
     # Raised by every save; a form sends the version it read, and a stale one is refused
@@ -302,9 +308,14 @@ class QuizAttempt(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # The stage's multiplier at «Начать»: the finish pays the share at it
     multiplier: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(1), server_default=text("1"))
+    # The stage running at «Начать»: the speed bonus row is stored on it, with the multiplier above
+    stage_id: Mapped[int | None] = mapped_column(ForeignKey("stages.id", ondelete="SET NULL"))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # {"question number": option number chosen}; keyed by number so a re-upload of the questions keeps them
     answers: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # {"question number": {"sent": when the server first sent it, "got": when it received the answer}}: the speed
+    # bonus's answer times, from the server clock only
+    times: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     # Filled when the quiz ends: what the guest sees as «3 из 5»
     correct: Mapped[int | None]
     total: Mapped[int | None]

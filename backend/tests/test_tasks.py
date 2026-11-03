@@ -142,7 +142,8 @@ def test_download_gives_back_what_is_loaded(client, admin):
     empty = load_workbook(io.BytesIO(client.get("/api/admin/tasks/export", headers=admin).content))
     assert empty.sheetnames == ["Этапы", "Задания", "Призы", "Вопросы", "Уровни"]
     assert [c.value for c in empty["Задания"][1]] == TASK_HEAD + ["Выполнение", "Ссылка", "Таймер, сек", "Требует",
-                                                         "Лимит"]
+                                                         "Лимит", "Блиц", "Бонус за скорость",
+                                                         "Без потерь, сек", "Время бонуса, сек"]
     assert empty["Задания"].max_row == 1
 
     rows = catalog(3) + [task("P", 2, "Партнёр", points=15, partner="Coca-Cola", package="Хедлайнер",
@@ -153,7 +154,7 @@ def test_download_gives_back_what_is_loaded(client, admin):
     assert wb["Этапы"]["C2"].value == datetime(2026, 12, 13, 9, 0)
     partner = [c.value for c in wb["Задания"][5]]
     assert partner[:8] == ["P", 2, "Действие", "Партнёр", 15, None, "Coca-Cola", "Хедлайнер"]
-    assert partner[8:] == [datetime(2026, 12, 13, 11, 0), datetime(2026, 12, 13, 11, 5), None, None, None, None, None]
+    assert partner[8:15] == [datetime(2026, 12, 13, 11, 0), datetime(2026, 12, 13, 11, 5), None, None, None, None, None]
     # Uploading the download again changes nothing
     body = upload(client, admin, data).json()
     assert (body["added"], body["changed"], body["hidden"], body["stages_changed"], body["failed"]) == (0, 0, 0, 0, [])

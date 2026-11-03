@@ -12,7 +12,7 @@ from app.models import Guest, ScoreEvent
 
 ACTIONS = {"arrival", "task", "bonus", "retake", "penalty", "buy", "speed", "badge", "withdraw"}
 # Actions that pay once per reason while the award stands: a double scan or a second phone adds nothing
-AWARDS = {"arrival", "task", "badge"}
+AWARDS = {"arrival", "task", "badge", "speed"}
 
 
 def standing() -> ColumnElement[bool]:

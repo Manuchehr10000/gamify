@@ -54,6 +54,10 @@ TASK_COLUMNS = {
     "timer": "Таймер, сек",
     "requires": "Требует",
     "limit": "Лимит",
+    "blitz": "Блиц",
+    "speed_bonus": "Бонус за скорость",
+    "grace_seconds": "Без потерь, сек",
+    "bonus_seconds": "Время бонуса, сек",
 }
 QUESTION_COLUMNS = {
     "task": "ID задания",
@@ -80,6 +84,10 @@ REQUIRED_STAGE = ("number", "name", "starts_at", "ends_at")
 REQUIRED_TASK = ("code", "stage", "type", "text", "points")
 # A stage's «Карточек в ленте» when the cell is blank
 BATCH_SIZE = 15
+# A quiz's blitz numbers when the cells are blank: «Бонус за скорость», «Без потерь, сек», «Время бонуса, сек»
+SPEED_DEFAULTS = {"speed_bonus": 20, "grace_seconds": 3, "bonus_seconds": 12}
+# Locked while the blitz is running
+BLITZ_FIELDS = ("blitz", *SPEED_DEFAULTS)
 REQUIRED_PRIZE = tuple(PRIZE_COLUMNS)
 REQUIRED_QUESTION = ("task", "number", "text", "option1", "option2", "correct")
 OPTIONS = ("option1", "option2", "option3", "option4")
@@ -124,7 +132,8 @@ LIMITS = {
     ("stages", "batch_size"): (5, 50), ("stages", "multiplier"): (1, 5),
     ("tasks", "code"): (1, 32), ("tasks", "text"): (1, 1000), ("tasks", "points"): (0, 10000),
     ("tasks", "coins"): (0, 10000), ("tasks", "link"): (0, 500), ("tasks", "timer_seconds"): (5, 3600),
-    ("tasks", "limit"): (1, 100000),
+    ("tasks", "limit"): (1, 100000), ("tasks", "speed_bonus"): (0, 10000), ("tasks", "grace_seconds"): (0, 3600),
+    ("tasks", "bonus_seconds"): (0, 3600),
     ("prizes", "code"): (1, 32), ("prizes", "name"): (1, 200), ("prizes", "price"): (1, 100000),
     ("prizes", "quantity"): (0, 100000),
     ("questions", "number"): (1, 100), ("questions", "text"): (1, 1000), ("questions", "option"): (1, 300),
@@ -526,6 +535,24 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
             timer_cell = _cell(row, task_cols, "timer") if method == "quiz" else None
             timer = _int(timer_cell, "bad_timer", ("tasks", "timer_seconds")) if _text(timer_cell) else None
             requires = _text(_cell(row, task_cols, "requires")) if method == "quiz" else ""
+            blitz_cell = _text(_cell(row, task_cols, "blitz")).lower()
+            if blitz_cell not in YES + NO:
+                raise RowError("bad_blitz")
+            if blitz_cell in YES and method != "quiz":
+                raise RowError("blitz_quiz_only")
+            # The blitz numbers, read on a quiz only (as its timer); a file without a column leaves that one as it is
+            speed: dict = {"blitz": blitz_cell in YES} if "blitz" in task_cols or method != "quiz" else {}
+            if method == "quiz":
+                for key, default in SPEED_DEFAULTS.items():
+                    cell = _cell(row, task_cols, key)
+                    if key in task_cols:
+                        speed[key] = _int(cell, f"bad_{key}", ("tasks", key)) if _text(cell) else default
+                old = tasks.get(code)
+                kept = {k: getattr(old, k) if old else d for k, d in SPEED_DEFAULTS.items()}
+                # Grace below bonus time, so the bonus falls to 0 and never divides by zero
+                if speed.get("grace_seconds", kept["grace_seconds"]) >= speed.get("bonus_seconds",
+                                                                                  kept["bonus_seconds"]):
+                    raise RowError("bad_speed_window")
             limit_cell = _cell(row, task_cols, "limit")
             limit = _int(limit_cell, "bad_limit", ("tasks", "limit")) if _text(limit_cell) else None
             # A quiz added in the form before its questions is written back with none: as loaded, not a bad row
@@ -542,15 +569,23 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
         parsed.append((n, code, {"stage_id": stage.id, "type": type_, "text": text, "points": points, "coins": coins,
                                  "coins_from_rule": from_rule, "window_start": window_start, "window_end": window_end,
                                  "method": method, "link": link, "timer_seconds": timer, "position": position,
-                                 "active": True,
+                                 "active": True, **speed,
                                  # A file without the column (an older one) leaves the limit as it is
                                  **({"limit": limit} if "limit" in task_cols else {})}, requires, partner_name))
     partners = {p.name: p for p in db.scalars(_locked(Partner))}
     # A quiz gated on a QR row that is missing or failed would open to everyone, or never: it fails instead
     loaded_qr = {code for _, code, values, _, _ in parsed if values["method"] == "qr"}
+    # The quiz router builds on this module, so it is imported here, not at the top
+    from app.routers.quiz import running
     for n, code, values, requires, partner_name in parsed:
         if requires and requires not in loaded_qr:
             fail(TASKS_SHEET, n, "unknown_requires")
+            continue
+        # A running blitz keeps its settings: judged by the stored window and timer, before the row applies
+        old = tasks.get(code)
+        if (old is not None and old.method == "quiz"
+                and any(k in values and getattr(old, k) != values[k] for k in BLITZ_FIELDS) and running(db, old)):
+            fail(TASKS_SHEET, n, "blitz_running")
             continue
         partner = _partner(db, partners, partner_name, notes) if partner_name else None
         if partner is not None:
@@ -763,7 +798,9 @@ def export_xlsx(db: DbSession) -> bytes:
                    PACKAGES[partner.package][0] if partner and partner.package else None,
                    _local(t.window_start), _local(t.window_end),
                    METHODS[t.method][0] if t.method else None, t.link or None, t.timer_seconds,
-                   codes.get(t.requires_task_id), t.limit])
+                   codes.get(t.requires_task_id), t.limit,
+                   *([YES[0] if t.blitz else None, t.speed_bonus, t.grace_seconds, t.bonus_seconds]
+                     if t.method == "quiz" else [None] * 4)])
     for col in "IJ":
         for cell in wt[col][1:]:
             cell.number_format = EXCEL_DATE

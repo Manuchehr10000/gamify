@@ -64,7 +64,7 @@ def test_time_up_gives_3_of_5_with_points_and_coins(client, admin, guest, at):
         answer(client, guest, task_id, q, 1)
     at("09:31:00")
     r = client.post(f"/api/quiz/{task_id}/finish", headers=guest).json()["result"]
-    assert r == {"correct": 3, "total": 5, "points": 30, "coins": 30}
+    assert r == {"correct": 3, "total": 5, "points": 30, "coins": 30, "speed": None}
     assert RU["quiz"]["timeUp"] == "Время вышло"
     assert RU["quiz"]["result"] == "{{correct}} из {{total}} · {{points}}, {{coins}}"
 

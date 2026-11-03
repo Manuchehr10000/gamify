@@ -11,7 +11,8 @@ type QuizState = {
   answered: number
   question: { number: number; text: string; options: { n: number; text: string }[] } | null
   seconds_left: number | null
-  result: { correct: number; total: number; points: number; coins: number } | null
+  // speed: a blitz's bonus in points; null for a quiz that isn't a blitz
+  result: { correct: number; total: number; points: number; coins: number; speed: number | null } | null
 }
 
 type State =
@@ -118,8 +119,8 @@ export function Quiz() {
   )
 }
 
-// «3 из 5 · +30 баллов, +30 монет» over the quiz text, under «Время вышло» when the clock ran out;
-// which answers were right is never shown
+// «3 из 5 · +30 баллов, +30 монет» (and «· +55 за скорость» on a blitz) over the quiz text, under «Время вышло» when
+// the clock ran out; which answers were right is never shown
 function Result({ quiz, timeUp }: { quiz: QuizState; timeUp: boolean }) {
   const { t } = useTranslation()
   const r = quiz.result!
@@ -134,6 +135,7 @@ function Result({ quiz, timeUp }: { quiz: QuizState; timeUp: boolean }) {
           points: t('award.points', { count: r.points }),
           coins: t('award.coins', { count: r.coins }),
         })}
+        {r.speed !== null && t('quiz.speed', { n: r.speed })}
       </p>
       <p className="gc-result-card__text gc-body">{quiz.text}</p>
       <div className="gc-result-card__action">

@@ -402,8 +402,8 @@ def test_limit_and_batch_size_round_trip_through_the_file(client, admin):
     col = stages_sheet[0].index("Карточек в ленте")
     assert {r[col] for r in stages_sheet[1:]} == {20}
     tasks_sheet = list(wb["Задания"].iter_rows(values_only=True))
-    assert tasks_sheet[0][-1] == "Лимит"
-    assert {r[0]: r[-1] for r in tasks_sheet[1:]} == {"qr1": 7, "qr2": None}
+    limit = tasks_sheet[0].index("Лимит")
+    assert {r[0]: r[limit] for r in tasks_sheet[1:]} == {"qr1": 7, "qr2": None}
     # An older file without the columns leaves both as they are
     r = upload(client, admin, xlsx_without_new_columns())
     assert r.status_code == 200 and r.json()["failed"] == []

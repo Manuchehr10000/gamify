@@ -1,10 +1,12 @@
 """Quizzes: one question at a time, options shuffled, an optional countdown kept by the server.
 
 /start opens the quiz or returns where the guest is in it (a reload continues, a finished quiz shows its result);
-the quiz pays once, in proportion to the right answers, when it ends.
+the quiz pays once, in proportion to the right answers, when it ends. A blitz adds a speed bonus in points for each
+right answer, timed by the server from when it first sent the question to when it got the answer.
 """
 import random
 from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -38,6 +40,8 @@ class Result(BaseModel):
     total: int
     points: int
     coins: int
+    # «+N за скорость»: a blitz's speed bonus in points; None for a quiz that isn't a blitz
+    speed: int | None
 
 
 class QuizState(BaseModel):
@@ -80,11 +84,37 @@ def _expired(db: DbSession, t: Task, a: QuizAttempt) -> bool:
 
 def running(db: DbSession, t: Task) -> bool:
     """The blitz is open: the quiz's «Доступно с/до» window is open, or an attempt is still within its timer.
-    Its questions can't change then. An abandoned attempt never sets finished_at, so only the clock counts."""
+    Its questions, «Блиц» and bonus numbers can't change then. An abandoned attempt never sets finished_at, so only the
+    clock counts."""
     if (t.window_start or t.window_end) and _open(t, stages.now()):
         return True
     attempts = db.scalars(select(QuizAttempt).where(QuizAttempt.task_id == t.id, QuizAttempt.finished_at.is_(None)))
     return any(not _expired(db, t, a) for a in attempts)
+
+
+def speed_reason(task_id: int) -> str:
+    return f"speed:{task_id}"
+
+
+def _seconds(sent: str, got: str) -> Decimal:
+    d = datetime.fromisoformat(got) - datetime.fromisoformat(sent)
+    return Decimal(d.days * 86400 + d.seconds) + Decimal(d.microseconds) / 1000000
+
+
+def _speed(t: Task, a: QuizAttempt, questions: list[Question]) -> int:
+    """The blitz's bonus before the stage multiplier: per right answer, whole within «Без потерь, сек», then falling in
+    a straight line to 0 at «Время бонуса, сек»; summed unrounded, then rounded once, halves up."""
+    total = Decimal(0)
+    for q in questions:
+        times = a.times.get(str(q.number), {})
+        if a.answers.get(str(q.number)) != q.correct or "sent" not in times or "got" not in times:
+            continue
+        took = _seconds(times["sent"], times["got"])
+        if took <= t.grace_seconds:
+            total += t.speed_bonus
+        elif took < t.bonus_seconds:
+            total += t.speed_bonus * (t.bonus_seconds - took) / (t.bonus_seconds - t.grace_seconds)
+    return int(total.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def _share(amount: int, correct: int, total: int) -> int:
@@ -103,6 +133,12 @@ def _finish(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -
     # the multiplier from «Начать»
     ledger.write(db, a.guest_id, task_reason(t.id), "task", _share(t.points, a.correct, a.total),
                  _share(t.coins, a.correct, a.total), multiplier=a.multiplier)
+    # The speed bonus is its own row in the same transaction: points only, at the multiplier and stage of «Начать»;
+    # none when it is 0
+    bonus = _speed(t, a, questions) if t.blitz else 0
+    if bonus:
+        ledger.write(db, a.guest_id, speed_reason(t.id), "speed", bonus, 0, multiplier=a.multiplier,
+                     stage_id=a.stage_id)
     db.commit()
 
 
@@ -127,15 +163,30 @@ def _options(a: QuizAttempt, q: Question) -> list[Option]:
     return options
 
 
+def _next(a: QuizAttempt, questions: list[Question]) -> Question | None:
+    return next((q for q in questions if str(q.number) not in a.answers), None)
+
+
+def _sent(db: DbSession, a: QuizAttempt, questions: list[Question]) -> None:
+    """Keep when the server first sends the next question, then commit. Run under the attempt's lock, so of two
+    reloads at once only the first sets it; a reload returns the same question with the moment unchanged."""
+    nxt = _next(a, questions) if a.finished_at is None else None
+    if nxt is not None and "sent" not in a.times.get(str(nxt.number), {}):
+        a.times = {**a.times, str(nxt.number): {"sent": stages.now().isoformat()}}
+    db.commit()
+
+
 def _state(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -> QuizState:
     answered = sum(1 for q in questions if str(q.number) in a.answers)
     if a.finished_at is not None:
         event = ledger.award(db, a.guest_id, task_reason(t.id))
+        speed = ledger.award(db, a.guest_id, speed_reason(t.id))
         result = Result(correct=a.correct or 0, total=a.total or 0,
-                        points=event.points if event else 0, coins=event.coins if event else 0)
+                        points=event.points if event else 0, coins=event.coins if event else 0,
+                        speed=speed.points if speed else (0 if t.blitz else None))
         return QuizState(text=t.text, total=a.total or 0, answered=answered, question=None, seconds_left=None,
                          result=result)
-    nxt = next((q for q in questions if str(q.number) not in a.answers), None)
+    nxt = _next(a, questions)
     deadline = _deadline(t, a)
     left = max(0, int((deadline - stages.now()).total_seconds())) if deadline else None
     return QuizState(text=t.text, total=len(questions), answered=answered,
@@ -169,11 +220,14 @@ def start(task_id: int, guest: Guest = Depends(current_guest), db: DbSession = D
             db.rollback()
             raise HTTPException(409, "limit")
         # Two phones of the same guest pressing «Начать» at once still make one attempt
+        d = stages.day(db)
         db.execute(insert(QuizAttempt).values(guest_id=guest.id, task_id=t.id, started_at=stages.now(), answers={},
-                                              multiplier=stages.multiplier(db))
+                                              multiplier=stages.multiplier(db),
+                                              stage_id=d.current.id if d.current else None)
                    .on_conflict_do_nothing(index_elements=["guest_id", "task_id"]))
         db.commit()
     a, questions = _open_attempt(db, guest, t)
+    _sent(db, a, questions)
     return _state(db, t, a, questions)
 
 
@@ -189,18 +243,22 @@ def answer(task_id: int, body: AnswerIn, guest: Guest = Depends(current_guest),
     a, questions = _open_attempt(db, guest, t)
     # After the end (time up or finished) an answer is ignored; a retry of one already taken changes nothing
     if a.finished_at is not None or str(body.question) in a.answers:
+        _sent(db, a, questions)
         return _state(db, t, a, questions)
-    nxt = next((q for q in questions if str(q.number) not in a.answers), None)
+    nxt = _next(a, questions)
     if nxt is None or nxt.number != body.question:
         raise HTTPException(400, "wrong_question")
     if body.option not in {o.n for o in _options(a, nxt)}:
         raise HTTPException(400, "bad_option")
     a.answers = {**a.answers, str(body.question): body.option}
+    # When the server got it: the phone's clock plays no part in the answer time
+    key = str(body.question)
+    a.times = {**a.times, key: {**a.times.get(key, {}), "got": stages.now().isoformat()}}
     # Saved and finished under the same lock, so a /finish sent at the same moment sees this answer
     if all(str(q.number) in a.answers for q in questions):
         _finish(db, t, a, questions)
     else:
-        db.commit()
+        _sent(db, a, questions)
     return _state(db, t, a, questions)
 
 

@@ -8,14 +8,15 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import ColumnElement, delete, exists, func, select, text
+from sqlalchemy import ColumnElement, delete, exists, func, inspect, select, text
 from sqlalchemy.orm import Session as DbSession
 
 from app import accounts, changes, settings, stages
 from app.models import (ChangeEvent, Level, Partner, Prize, Question, QuizAttempt, ScoreEvent, Session,
                         Stage, Staff, Submission, Task)
 from app.stages import EVENT_TZ
-from app.task_file import BATCH_SIZE, LIMITS, METHODS, PACKAGES, TYPES, rule_coins, sold, stage_multiplier
+from app.task_file import (BATCH_SIZE, BLITZ_FIELDS, LIMITS, METHODS, PACKAGES, SPEED_DEFAULTS, TYPES, rule_coins, sold,
+                           stage_multiplier)
 
 ROLES = ("admin", "moderator", "desk", "stand")
 # The desk and the stands share one account each: its PIN is reset, never a second one added
@@ -231,6 +232,10 @@ def _task_check(db: DbSession, t: Task, creating: bool) -> None:
             raise refuse("bad_link", field="link")
     if t.method != "quiz" and (t.timer_seconds is not None or t.requires_task_id is not None):
         raise refuse("quiz_only", field="timer_seconds" if t.timer_seconds is not None else "requires_task_id")
+    if t.method != "quiz" and t.blitz:
+        raise refuse("quiz_only", field="blitz")
+    if t.grace_seconds >= t.bonus_seconds:
+        raise refuse("bad_speed_window", field="grace_seconds")
     if t.requires_task_id is not None and t.requires_task_id == t.id:
         raise refuse("bad_value", field="requires_task_id")
     # A quiz gated on a switched-off QR task could never open, and the file couldn't write its «Требует» back
@@ -241,6 +246,12 @@ def _task_check(db: DbSession, t: Task, creating: bool) -> None:
 def _task_after(db: DbSession, t: Task, changed: dict) -> None:
     if t.method != "link":
         t.link = ""
+    # Blank blitz numbers are the defaults, as blank cells in the file
+    for name, default in SPEED_DEFAULTS.items():
+        if getattr(t, name) is None:
+            setattr(t, name, default)
+    if t.blitz is None:
+        t.blitz = False
     # A blank coins field follows the rule, like a blank coins cell in the file
     if "coins" in changed or t.coins is None:
         t.coins_from_rule = changed.get("coins") is None
@@ -249,6 +260,29 @@ def _task_after(db: DbSession, t: Task, changed: dict) -> None:
     if t.method == "qr" and not t.qr_code:
         from app.task_file import _new_qr
         t.qr_code = _new_qr(db)
+
+
+# What running() reads off the task: the blitz is judged by these as stored, not as the save would leave them
+RUNS_ON = ("method", "stage_id", "window_start", "window_end", "timer_seconds", "active")
+
+
+def _task_lock(db: DbSession, t: Task) -> None:
+    """A running blitz keeps its «Блиц» and bonus numbers; its other fields follow their own rules."""
+    from app.routers.quiz import running
+    state = inspect(t)
+    if not state.persistent or not any(state.attrs[name].history.has_changes() for name in BLITZ_FIELDS):
+        return
+    new = {name: getattr(t, name) for name in RUNS_ON}
+    for name in RUNS_ON:
+        if state.attrs[name].history.deleted:
+            setattr(t, name, state.attrs[name].history.deleted[0])
+    try:
+        blocked = t.method == "quiz" and running(db, t)
+    finally:
+        for name, value in new.items():
+            setattr(t, name, value)
+    if blocked:
+        raise refuse("quiz_running", status=409)
 
 
 def _task_keep(db: DbSession, t: Task) -> str | None:
@@ -396,9 +430,12 @@ KINDS: dict[str, Kind] = {
          Field("link", "text", max=LIMITS["tasks", "link"][1]), Field("window_start", "datetime"), Field("window_end", "datetime"),
          Field("timer_seconds", "int", False, *LIMITS["tasks", "timer_seconds"]),
          Field("requires_task_id", "ref", ref="tasks", where=lambda: (Task.method == "qr") & Task.active),
-         Field("limit", "int", False, *LIMITS["tasks", "limit"]), Field("active", "bool")],
+         Field("limit", "int", False, *LIMITS["tasks", "limit"]),
+         Field("blitz", "bool", effect="locked"),
+         *(Field(name, "int", False, *LIMITS["tasks", name], effect="locked") for name in SPEED_DEFAULTS),
+         Field("active", "bool")],
         lambda: [Task.position, Task.id],
-        check=_task_check, keep=_task_keep, state=_task_state, impact=_task_impact, after=_task_after,
+        check=_task_check, keep=_task_keep, lock=_task_lock, state=_task_state, impact=_task_impact, after=_task_after,
         extra=lambda db, rows: {t.id: {"qr_code": t.qr_code} for t in rows}),
     "prizes": Kind(
         Prize,

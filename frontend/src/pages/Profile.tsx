@@ -12,7 +12,7 @@ type Entry = {
   text: string
   points: number
   coins: number
-  // A moderator's bonus; 0 without one
+  // A moderator's bonus, or a blitz's speed bonus; 0 without one
   bonus: number
   // A moderator rejected it and took its points and coins back
   rejected: boolean

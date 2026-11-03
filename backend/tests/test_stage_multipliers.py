@@ -222,7 +222,7 @@ def test_a_quiz_pays_at_the_multiplier_from_start(client, admin, guest, at):
         q = state["question"]["number"]
         state = answer(client, guest, task_id, q, 1 if q <= 3 else 2).json()
     # 3 of 5: the share is 30, × 2 from «Начать»; coins are the plain share
-    assert state["result"] == {"correct": 3, "total": 5, "points": 60, "coins": 30}
+    assert state["result"] == {"correct": 3, "total": 5, "points": 60, "coins": 30, "speed": None}
     with SessionLocal() as db:
         assert db.scalar(select(QuizAttempt.multiplier)) == 2
 
