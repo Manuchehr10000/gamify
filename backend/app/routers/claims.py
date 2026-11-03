@@ -58,8 +58,10 @@ def _repeat(db: DbSession, guest: Guest, t: Task, c: Claim) -> ClaimOut:
 
 def _pay(db: DbSession, guest: Guest, t: Task, c: Claim, photo: bytes | None = None,
          thumb: bytes | None = None) -> ClaimOut:
-    """Pay the task once, for the claim's stage even if it has ended since, and keep what the guest sent."""
-    added = ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins, stage_id=c.stage_id) is not None
+    """Pay the task once, for the claim's stage and at its multiplier even if either has changed since, and keep what
+    the guest sent."""
+    added = ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins, multiplier=c.multiplier,
+                         stage_id=c.stage_id) is not None
     if added:
         db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, thumb=thumb, text=c.text, upload=c.id))
     c.state = "done"
@@ -108,7 +110,8 @@ def claim(task_id: int, body: ClaimIn, guest: Guest = Depends(current_guest),
         db.rollback()
         return _result(db, guest, t, "limit")
     c = Claim(id=body.id, guest_id=guest.id, task_id=t.id, text=text, created_at=now, stage_id=d.current.id,
-              expires_at=now + timedelta(minutes=settings.number(db, "claim_minutes")), state="open")
+              multiplier=d.current.multiplier, expires_at=now + timedelta(minutes=settings.number(db, "claim_minutes")),
+              state="open")
     db.add(c)
     # A text-only task has no files step: it counts now
     if t.method not in PHOTO_METHODS:

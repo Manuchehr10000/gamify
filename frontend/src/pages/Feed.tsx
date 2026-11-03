@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { LevelUp, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
+import { LevelUp, MultiplierCorner, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
 import { BADGE_GLYPHS, type IconName } from '../components/console/glyphs'
 import { Callout, Loading, MessageCard, NavRow, PageHeader, Screen, StatusChip } from '../components/console/ui'
-import { cache, feedPath, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
+import { cache, feedPath, hhmm, multiplierMark, type Feed as FeedData, type Stage, type Task } from '../feed'
 import { forgetUpload, isWaiting, onSent, useUpload } from '../uploads'
 import { useConfigVersion } from '../version'
 
@@ -118,13 +118,14 @@ function Body({ feed }: { feed: FeedData }) {
     const text = feed.starts_at ? t('feed.before', { time: hhmm(feed.starts_at) }) : t('feed.soon')
     return <MessageCard icon="clock" title={text} />
   }
+  const stage = feed.stage
   return (
     <>
-      <StageBar stage={feed.stage} count={feed.stage_count} />
+      <StageBar stage={stage} count={feed.stage_count} />
       {feed.tasks.length === 0 && <MessageCard title={t('feed.empty')} />}
       <ul className="flex flex-col gap-3">
         {feed.tasks.map((task) => (
-          <li key={task.id}><TaskCard task={task} /></li>
+          <li key={task.id}><TaskCard task={task} stage={stage} /></li>
         ))}
       </ul>
     </>
@@ -137,7 +138,7 @@ const minutesLeft = (iso: string) => Math.max(1, Math.ceil((new Date(iso).getTim
 // What the server answers when a send can't count
 const REFUSALS = new Set(['stage_closed', 'time_up', 'claim_lapsed', 'limit'])
 
-function TaskCard({ task: fromFeed }: { task: Task }) {
+function TaskCard({ task: fromFeed, stage }: { task: Task; stage: Stage }) {
   const { t } = useTranslation()
   const upload = useUpload(fromFeed.id)
   // A photo or text that just went through counts at once, before the next feed load
@@ -149,8 +150,10 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
     ? task.method === 'quiz' ? t('feed.closesIn', { count: minutesLeft(task.window_end) }) : t('feed.closesAt', { time: hhmm(task.window_end) })
     : undefined
   const edge = task.review === 'penalty' ? 'gc-task-card--rejected' : task.state === 'done' ? 'gc-task-card--done' : ''
+  const boosted = multiplierMark(stage) ? 'gc-task-card--boosted' : ''
   return (
-    <Link to={`/app/tasks/${task.id}`} className={`gc-task-card ${edge}`}>
+    <Link to={`/app/tasks/${task.id}`} className={`gc-task-card ${edge} ${boosted}`}>
+      <MultiplierCorner stage={stage} />
       <TaskTypeTag task={task} deadline={deadline} />
       <p className="gc-task-card__text gc-body">{task.text}</p>
       {!sending && <ReviewNote task={task} />}

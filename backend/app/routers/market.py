@@ -97,6 +97,7 @@ def buy(prize_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
     # itself goes through either way
     for t in db.scalars(select(Task).where(Task.active, Task.method == "market")):
         if places.take(db, guest.id, t):
-            ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins)
+            # At the multiplier of the stage running at the purchase
+            ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins, multiplier=stages.multiplier(db))
     db.commit()
     return _market(db, guest)

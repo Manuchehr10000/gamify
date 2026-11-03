@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
-import { hhmm, type Award, type Feed, type Stage, type Task } from '../../feed'
+import { hhmm, multiplierMark, type Award, type Feed, type Stage, type Task } from '../../feed'
 import { splitNumber, typeIcon, type IconName } from './glyphs'
 import { Amount, Button, Callout, Icon, Stripe } from './ui'
 
@@ -28,6 +28,7 @@ export function Wallet({ feed }: { feed: Feed }) {
 export function StageBar({ stage, count }: { stage: Stage; count: number }) {
   const { t } = useTranslation()
   const [before, time, after] = splitNumber(t('feed.until', { time: hhmm(stage.ends_at) }))
+  const mark = multiplierMark(stage)
   return (
     <div className="gc-stage-bar">
       <div className="gc-stage-bar__track" role="img" aria-label={t('feed.stageOf', { n: stage.number, count })}>
@@ -39,13 +40,24 @@ export function StageBar({ stage, count }: { stage: Stage; count: number }) {
         ))}
       </div>
       <div className="gc-stage-bar__row">
-        <p className="gc-stage-bar__name gc-display-m">{stage.name}</p>
+        <p className="gc-stage-bar__name gc-display-m">
+          {stage.name}
+          {mark && <span className="gc-multiplier gc-label gc-num" aria-label={t('feed.multiplier', { mark })}>{mark}</span>}
+        </p>
         <p className="gc-stage-bar__until gc-label">
           {before}<span className="gc-stage-bar__time gc-score-m gc-num">{time}</span>{after}
         </p>
       </div>
     </div>
   )
+}
+
+// The «×2» in a task card's corner while the stage multiplies points; the card keeps the base points
+export function MultiplierCorner({ stage }: { stage: Stage }) {
+  const { t } = useTranslation()
+  const mark = multiplierMark(stage)
+  if (!mark) return null
+  return <span className="gc-task-card__multiplier gc-multiplier gc-label gc-num" aria-label={t('feed.multiplier', { mark })}>{mark}</span>
 }
 
 // The meta row above a task: its type, the partner and a closing time
@@ -95,13 +107,14 @@ export function ReviewNote({ task }: { task: Task }) {
 
 export function StageBanner({ stage, onClose }: { stage: Stage; onClose: () => void }) {
   const { t } = useTranslation()
+  const mark = multiplierMark(stage)
   return (
     <div className="gc-stage-banner" role="status">
       <Stripe />
       <div className="gc-stage-banner__row">
         <span className="gc-stage-banner__num gc-crt gc-glow gc-score-m gc-num" aria-hidden>{stage.number}</span>
         <div className="gc-stage-banner__body">
-          <p className="gc-stage-banner__title gc-body-l">{t('feed.newStage', { name: stage.name })}</p>
+          <p className="gc-stage-banner__title gc-body-l">{t(mark ? 'feed.newStageMultiplier' : 'feed.newStage', { name: stage.name, mark })}</p>
           {stage.message && <p className="gc-stage-banner__message gc-body-s">{stage.message}</p>}
         </div>
         <button type="button" onClick={onClose} aria-label={t('feed.close')} className="gc-stage-banner__close">

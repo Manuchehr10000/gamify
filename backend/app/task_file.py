@@ -36,6 +36,7 @@ STAGE_COLUMNS = {
     "message": "Сообщение при смене этапа",
     "market": "Маркет",
     "batch_size": "Карточек в ленте",
+    "multiplier": "Множитель",
 }
 TASK_COLUMNS = {
     "code": "ID",
@@ -120,7 +121,7 @@ PACKAGES = {
 # range, or a text's length from 1
 LIMITS = {
     ("stages", "number"): (1, 50), ("stages", "name"): (1, 100), ("stages", "message"): (0, 500),
-    ("stages", "batch_size"): (5, 50),
+    ("stages", "batch_size"): (5, 50), ("stages", "multiplier"): (1, 5),
     ("tasks", "code"): (1, 32), ("tasks", "text"): (1, 1000), ("tasks", "points"): (0, 10000),
     ("tasks", "coins"): (0, 10000), ("tasks", "link"): (0, 500), ("tasks", "timer_seconds"): (5, 3600),
     ("tasks", "limit"): (1, 100000),
@@ -130,6 +131,8 @@ LIMITS = {
     ("levels", "name"): (1, 100), ("levels", "min_points"): (0, 100000),
     ("partners", "name"): (1, 100),
 }
+# A stage's «Множитель» moves in halves: 1, 1.5, 2 … 5
+MULTIPLIER_STEP = Decimal("0.5")
 DATE_FORMATS = ("%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S")
 EXCEL_DATE = "DD.MM.YYYY HH:MM"
 
@@ -195,6 +198,22 @@ def _int(v, reason: str, limit: tuple[str, str]) -> int:
     if not n.is_integer() or not lo <= n <= hi:
         raise RowError(reason, min=lo, max=hi)
     return int(n)
+
+
+def stage_multiplier(v) -> Decimal | None:
+    """A stage's «Множитель» from the file or the form: 1 to 5 in steps of 0.5, 1,5 and 1.5 both read; blank = 1.
+    None when it isn't one."""
+    s = _text(v).replace(",", ".")
+    if not s:
+        return Decimal(1)
+    try:
+        m = Decimal(s)
+    except ArithmeticError:
+        return None
+    lo, hi = LIMITS["stages", "multiplier"]
+    if not m.is_finite() or not lo <= m <= hi or m % MULTIPLIER_STEP:
+        return None
+    return m
 
 
 def _long(text: str, limit: tuple[str, str], column: str) -> str:
@@ -417,6 +436,9 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
             batch_cell = _cell(row, stage_cols, "batch_size")
             batch_size = (_int(batch_cell, "bad_batch_size", ("stages", "batch_size")) if _text(batch_cell)
                           else BATCH_SIZE)
+            points_multiplier = stage_multiplier(_cell(row, stage_cols, "multiplier"))
+            if points_multiplier is None:
+                raise RowError("bad_multiplier")
         except RowError as e:
             fail(STAGES_SHEET, n, e)
             continue
@@ -426,6 +448,8 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
         # A file without the column (an older one) leaves the number as it is
         if "batch_size" in stage_cols:
             values["batch_size"] = batch_size
+        if "multiplier" in stage_cols:
+            values["multiplier"] = points_multiplier
         stage = stages.get(number)
         if stage is None:
             stage = Stage(number=number, **values)
@@ -703,6 +727,11 @@ def _local(dt: datetime | None) -> datetime | None:
     return dt.astimezone(EVENT_TZ).replace(tzinfo=None) if dt else None
 
 
+def _number(d: Decimal) -> int | float:
+    """1, 1.5: a number cell, without trailing zeros."""
+    return int(d) if d == d.to_integral_value() else float(d)
+
+
 def export_xlsx(db: DbSession) -> bytes:
     """All five sheets with what is loaded now; with nothing loaded, an empty template with the right columns
     (and the levels, which start as TAG's five)."""
@@ -715,7 +744,7 @@ def export_xlsx(db: DbSession) -> bytes:
     for s in stages:
         if s.active:
             ws.append([s.number, s.name, _local(s.starts_at), _local(s.ends_at), s.message,
-                       YES[0] if s.market else None, s.batch_size])
+                       YES[0] if s.market else None, s.batch_size, _number(s.multiplier)])
     for col in "CD":
         for cell in ws[col][1:]:
             cell.number_format = EXCEL_DATE

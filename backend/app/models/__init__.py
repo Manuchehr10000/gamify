@@ -111,6 +111,8 @@ class Stage(Base):
     active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
     # «Карточек в ленте»: how many cards a guest's feed shows at once in this stage (open time windows included)
     batch_size: Mapped[int] = mapped_column(default=15, server_default=text("15"))
+    # «Множитель»: 1 to 5 in steps of 0.5. Task awards pay base points × it; coins stay as they are
+    multiplier: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(1), server_default=text("1"))
     # Raised by every save; a form sends the version it read, and a stale one is refused
     version: Mapped[int] = mapped_column(default=1, server_default="1")
     __mapper_args__ = {"version_id_col": version}
@@ -246,6 +248,8 @@ class Claim(Base):
     # The server's time of the claim: it sets the stage, and later the stock (piece 15) and multiplier (piece 16)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     stage_id: Mapped[int | None] = mapped_column(ForeignKey("stages.id", ondelete="SET NULL"))
+    # The stage's multiplier at the claim: the award pays at it even if the admin changes it before the files arrive
+    multiplier: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(1), server_default="1")
     # Past this the claim lapses and frees its place; files that come later are refused
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # open (waiting for files) · done · lapsed
@@ -296,6 +300,8 @@ class QuizAttempt(Base):
     task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id"))
     # Set from the server clock at «Начать»: a reload doesn't restart the countdown
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # The stage's multiplier at «Начать»: the finish pays the share at it
+    multiplier: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal(1), server_default=text("1"))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # {"question number": option number chosen}; keyed by number so a re-upload of the questions keeps them
     answers: Mapped[dict] = mapped_column(JSONB, default=dict)

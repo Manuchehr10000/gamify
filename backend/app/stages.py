@@ -1,6 +1,7 @@
 """Which stage of the day is on now. The schedule lives in the stages table (uploaded by the admin)."""
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
@@ -37,6 +38,12 @@ def day(db: DbSession) -> Day:
     # Between two stages (a gap in the schedule) the earlier one stays on
     current = [s for s in stages if s.starts_at <= t][-1]
     return Day("running", stages, current)
+
+
+def multiplier(db: DbSession) -> Decimal:
+    """The running stage's points multiplier; 1 outside the day's schedule."""
+    d = day(db)
+    return d.current.multiplier if d.current else Decimal(1)
 
 
 def market_opens_at(db: DbSession) -> datetime | None:

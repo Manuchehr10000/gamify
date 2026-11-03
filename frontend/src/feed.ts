@@ -1,6 +1,7 @@
 import type { Badge } from './badges'
 
-export type Stage = { number: number; name: string; starts_at: string; ends_at: string; message: string }
+// multiplier: the stage's points multiplier (1 to 5 in steps of 0.5); a feed saved before it came has none
+export type Stage = { number: number; name: string; starts_at: string; ends_at: string; message: string; multiplier?: number }
 export type Task = {
   id: number
   type: string
@@ -58,6 +59,12 @@ export function feedPath(): { path: string; method: 'GET' | 'POST' } {
 // Forum times are Dushanbe times, whatever zone the phone is set to
 const clock = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Dushanbe' })
 export const hhmm = (iso: string) => clock.format(new Date(iso))
+
+// «×2», «×1,5» (Russian decimal comma) when the stage multiplies points; null at ×1
+export function multiplierMark(stage: Stage): string | null {
+  const m = stage.multiplier ?? 1
+  return m === 1 ? null : `×${m.toLocaleString('ru-RU')}`
+}
 
 // The last feed stays on the phone so a dropped network still shows something.
 // Storage can be blocked (private mode): then there is simply no copy.

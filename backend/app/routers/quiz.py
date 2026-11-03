@@ -99,9 +99,10 @@ def _finish(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -
     a.correct = sum(1 for q in questions if a.answers.get(str(q.number)) == q.correct)
     a.total = len(questions)
     a.finished_at = stages.now()
-    # A zero score still marks the task done in the feed
+    # A zero score still marks the task done in the feed. The points' share, rounded up, is then multiplied once at
+    # the multiplier from «Начать»
     ledger.write(db, a.guest_id, task_reason(t.id), "task", _share(t.points, a.correct, a.total),
-                 _share(t.coins, a.correct, a.total))
+                 _share(t.coins, a.correct, a.total), multiplier=a.multiplier)
     db.commit()
 
 
@@ -168,7 +169,8 @@ def start(task_id: int, guest: Guest = Depends(current_guest), db: DbSession = D
             db.rollback()
             raise HTTPException(409, "limit")
         # Two phones of the same guest pressing «Начать» at once still make one attempt
-        db.execute(insert(QuizAttempt).values(guest_id=guest.id, task_id=t.id, started_at=stages.now(), answers={})
+        db.execute(insert(QuizAttempt).values(guest_id=guest.id, task_id=t.id, started_at=stages.now(), answers={},
+                                              multiplier=stages.multiplier(db))
                    .on_conflict_do_nothing(index_elements=["guest_id", "task_id"]))
         db.commit()
     a, questions = _open_attempt(db, guest, t)

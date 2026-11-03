@@ -31,6 +31,8 @@ class StageOut(BaseModel):
     starts_at: datetime
     ends_at: datetime
     message: str
+    # Points multiplier: the cards and the day bar show «×2» when it isn't 1
+    multiplier: float
 
 
 class TaskOut(BaseModel):
@@ -77,7 +79,8 @@ class Feed(BaseModel):
 
 def stage_out(s: Stage) -> StageOut:
     return StageOut(number=s.number, name=s.name, starts_at=s.starts_at.astimezone(EVENT_TZ),
-                    ends_at=s.ends_at.astimezone(EVENT_TZ), message=s.message)
+                    ends_at=s.ends_at.astimezone(EVENT_TZ), message=s.message,
+                    multiplier=float(s.multiplier))
 
 
 def _done(db: DbSession, guest: Guest) -> set[str]:
@@ -306,7 +309,9 @@ def _award(db: DbSession, guest: Guest, t: Task) -> Award:
     if not places.take(db, guest.id, t):
         db.rollback()
         return Award(result="limit", task=task_out(db, guest, t))
-    added = ledger.write(db, guest.id, reason, "task", t.points, t.coins) is not None
+    # Points × the running stage's multiplier (available() made it this task's stage); coins as they are
+    added = ledger.write(db, guest.id, reason, "task", t.points, t.coins,
+                         multiplier=stages.multiplier(db)) is not None
     db.commit()
     return Award(result="awarded" if added else "already", task=task_out(db, guest, t))
 

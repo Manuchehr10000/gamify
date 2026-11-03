@@ -317,7 +317,7 @@ def test_download_gives_prizes_and_market_stage_back(client, admin):
     load(client, admin)
     data = client.get("/api/admin/tasks/export", headers=admin).content
     wb = load_workbook(io.BytesIO(data))
-    assert [c.value for c in wb["Этапы"][1]] == STAGE_HEAD + ["Маркет", "Карточек в ленте"]
+    assert [c.value for c in wb["Этапы"][1]] == STAGE_HEAD + ["Маркет", "Карточек в ленте", "Множитель"]
     assert [wb["Этапы"].cell(row=n, column=6).value for n in range(2, 6)] == [None, None, "да", None]
     assert [[c.value for c in r] for r in wb["Призы"].iter_rows(min_row=1)] == [PRIZE_HEAD] + PRIZES
     assert wb["Задания"]["K2"].value == "Маркет"

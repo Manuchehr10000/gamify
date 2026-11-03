@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, delete, exists, func, select, text
@@ -14,7 +15,7 @@ from app import accounts, changes, settings, stages
 from app.models import (ChangeEvent, Level, Partner, Prize, Question, QuizAttempt, ScoreEvent, Session,
                         Stage, Staff, Submission, Task)
 from app.stages import EVENT_TZ
-from app.task_file import BATCH_SIZE, LIMITS, METHODS, PACKAGES, TYPES, rule_coins, sold
+from app.task_file import BATCH_SIZE, LIMITS, METHODS, PACKAGES, TYPES, rule_coins, sold, stage_multiplier
 
 ROLES = ("admin", "moderator", "desk", "stand")
 # The desk and the stands share one account each: its PIN is reset, never a second one added
@@ -26,7 +27,7 @@ ADMINS_LOCK = 7013
 @dataclass(frozen=True)
 class Field:
     name: str
-    # int · text · bool · datetime · choice · ref · secret
+    # int · text · bool · datetime · choice · ref · secret · multiplier (1 to 5 in steps of 0.5)
     type: str
     required: bool = False
     # int: the range; text and secret: the length
@@ -94,6 +95,11 @@ def _value(db: DbSession, f: Field, raw: object) -> object:
         if not n.is_integer() or not f.min <= n <= f.max:
             raise refuse("out_of_range", field=f.name, min=f.min, max=f.max)
         return int(n)
+    if f.type == "multiplier":
+        m = stage_multiplier(raw) if isinstance(raw, (int, float, str)) and not isinstance(raw, bool) else None
+        if m is None:
+            raise refuse("bad_multiplier", field=f.name)
+        return m
     if not isinstance(raw, (str, int)):
         raise refuse("bad_value", field=f.name)
     if f.type == "ref":
@@ -149,6 +155,8 @@ def parse(db: DbSession, kind: Kind, raw: dict, row: object | None) -> dict:
 def shown_value(f: Field, value: object) -> object:
     if isinstance(value, datetime):
         return value.astimezone(EVENT_TZ).strftime("%Y-%m-%dT%H:%M")
+    if isinstance(value, Decimal):
+        return float(value)
     return value
 
 
@@ -187,6 +195,9 @@ def _stage_after(db: DbSession, s: Stage, changed: dict) -> None:
     # A blank «Карточек в ленте» is the default, as a blank cell in the file
     if s.batch_size is None:
         s.batch_size = BATCH_SIZE
+    # A blank «Множитель» is 1, as a blank cell in the file
+    if s.multiplier is None:
+        s.multiplier = Decimal(1)
 
 
 def _day(db: DbSession, row: object | None) -> tuple:
@@ -370,7 +381,8 @@ KINDS: dict[str, Kind] = {
          Field("name", "text", True, *LIMITS["stages", "name"]),
          Field("starts_at", "datetime", True), Field("ends_at", "datetime", True),
          Field("message", "text", max=LIMITS["stages", "message"][1]), Field("market", "bool"),
-         Field("batch_size", "int", False, *LIMITS["stages", "batch_size"]), Field("active", "bool")],
+         Field("batch_size", "int", False, *LIMITS["stages", "batch_size"]),
+         Field("multiplier", "multiplier", False, *LIMITS["stages", "multiplier"]), Field("active", "bool")],
         lambda: [Stage.number],
         check=_stage_check, after=_stage_after,
         keep=_stage_keep,

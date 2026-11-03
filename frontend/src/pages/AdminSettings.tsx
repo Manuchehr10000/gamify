@@ -18,7 +18,8 @@ const TABS: Tab[] = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partne
 type Value = string | number | boolean | null
 type Field = {
   name: string
-  type: 'int' | 'text' | 'bool' | 'datetime' | 'choice' | 'ref' | 'secret'
+  // multiplier: 1 to 5 in steps of 0.5 (a stage's «Множитель»)
+  type: 'int' | 'text' | 'bool' | 'datetime' | 'choice' | 'ref' | 'secret' | 'multiplier'
   required: boolean
   min: number | null
   max: number | null
@@ -44,7 +45,7 @@ type Event = {
 
 // The columns each list shows; the form shows every field
 const COLUMNS: Record<Kind, string[]> = {
-  stages: ['number', 'name', 'starts_at', 'ends_at', 'market', 'batch_size', 'active'],
+  stages: ['number', 'name', 'starts_at', 'ends_at', 'market', 'batch_size', 'multiplier', 'active'],
   tasks: ['code', 'stage_id', 'type', 'text', 'points', 'coins', 'method', 'limit', 'active'],
   prizes: ['code', 'name', 'partner_id', 'price', 'quantity', 'active'],
   questions: ['task_id', 'number', 'text', 'correct'],
@@ -214,6 +215,7 @@ function shown(t: TFunction, f: Field | undefined, v: Value): ReactNode {
   if (f.type === 'datetime') return when.format(new Date(`${v}:00+05:00`))
   if (f.type === 'ref') return f.options?.find((o) => o.id === v)?.label ?? String(v)
   if (f.type === 'choice') return choiceLabel(t, f.name, String(v))
+  if (f.type === 'multiplier') return `×${Number(v).toLocaleString('ru-RU')}`
   return String(v)
 }
 
@@ -230,6 +232,13 @@ function check(f: Field, v: Value): Detail | null {
     const n = Number(v)
     if (!Number.isInteger(n) || (f.min !== null && n < f.min) || (f.max !== null && n > f.max)) {
       return { code: 'out_of_range', field: f.name, min: f.min ?? undefined, max: f.max ?? undefined }
+    }
+  }
+  if (f.type === 'multiplier') {
+    // 1,5 and 1.5 both read, as in the Excel file
+    const n = Number(String(v).replace(',', '.'))
+    if (!Number.isFinite(n) || n < (f.min ?? 1) || n > (f.max ?? 5) || !Number.isInteger(n * 2)) {
+      return { code: 'bad_multiplier', field: f.name }
     }
   }
   if ((f.type === 'text' || f.type === 'secret') && f.max !== null) {
@@ -281,7 +290,9 @@ function RowForm({ kind, token, fields, row, onDone, onCancel, loggedOut }: TabP
     const body: Record<string, Value> = {}
     for (const f of sent) {
       const v = values[f.name]
-      body[f.name] = v === '' ? null : f.type === 'int' || f.type === 'ref' ? Number(v) : v
+      body[f.name] = v === '' ? null
+        : f.type === 'int' || f.type === 'ref' ? Number(v)
+        : f.type === 'multiplier' ? Number(String(v).replace(',', '.')) : v
     }
     setBusy(true)
     try {
@@ -361,6 +372,9 @@ function FieldInput({ field: f, kind, value, disabled, onChange }:
         onChange={(e) => onChange(e.target.value)}
       />
     )
+  }
+  if (f.type === 'multiplier') {
+    return <Input type="text" inputMode="decimal" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} />
   }
   return (
     <Input

@@ -399,7 +399,8 @@ def test_limit_and_batch_size_round_trip_through_the_file(client, admin):
     load(client, admin, [task("qr1", "QR у стенда", limit=7), task("qr2", "Без лимита")], batch=20)
     wb = load_workbook(io.BytesIO(client.get("/api/admin/tasks/export", headers=admin).content))
     stages_sheet = list(wb["Этапы"].iter_rows(values_only=True))
-    assert stages_sheet[0][-1] == "Карточек в ленте" and {r[-1] for r in stages_sheet[1:]} == {20}
+    col = stages_sheet[0].index("Карточек в ленте")
+    assert {r[col] for r in stages_sheet[1:]} == {20}
     tasks_sheet = list(wb["Задания"].iter_rows(values_only=True))
     assert tasks_sheet[0][-1] == "Лимит"
     assert {r[0]: r[-1] for r in tasks_sheet[1:]} == {"qr1": 7, "qr2": None}
