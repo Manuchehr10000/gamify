@@ -1,10 +1,8 @@
-import { ChevronLeft, Lock } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { BadgeIcons } from '../components/BadgeIcon'
-import { Card, Screen } from '../components/ui'
+import { LeaderboardRow } from '../components/console/rewards'
+import { Callout, Loading, MessageCard, PageHeader, Screen } from '../components/console/ui'
 import type { Rating as RatingData } from '../rating'
 import { useConfigVersion } from '../version'
 
@@ -33,13 +31,11 @@ export function Rating() {
   // An admin's change (the ranking size, a level) shows within 10 seconds
   useConfigVersion(load)
 
-  if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
+  if (state.kind === 'loading') return <Screen><Loading /></Screen>
   if (state.kind !== 'ready') {
     return (
       <Screen>
-        <Card className="text-center text-lg font-medium">
-          {t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')}
-        </Card>
+        <MessageCard icon="alert" title={t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')} />
       </Screen>
     )
   }
@@ -48,44 +44,24 @@ export function Rating() {
   const inTop = rating.top.some((r) => r.me)
   return (
     <Screen>
-      <div className="flex items-center gap-2">
-        <Link to="/app" aria-label={t('feed.toFeed')} className="-ml-2 p-2"><ChevronLeft className="size-6" aria-hidden /></Link>
-        <h1 className="text-xl font-semibold">{t('rating.title')}</h1>
-      </div>
-      {rating.frozen && (
-        <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800">
-          <Lock className="size-4 shrink-0" aria-hidden />
-          {t('rating.frozen')}
-        </p>
-      )}
+      <PageHeader title={t('rating.title')} back={{ to: '/app', label: t('feed.toFeed') }} />
+      {rating.frozen && <Callout tone="locked">{t('rating.frozen')}</Callout>}
       {rating.top.length === 0 ? (
-        <p className="py-8 text-center text-slate-500">{t('rating.empty')}</p>
+        <MessageCard icon="trophy" title={t('rating.empty')} />
       ) : (
-        <ol className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <ol className="gc-list-group">
           {rating.top.map((r) => (
-            <li
-              key={r.place}
-              className={`flex items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-0 ${r.me ? 'bg-emerald-50 font-semibold text-emerald-900' : ''}`}
-            >
-              <span className="w-8 text-right tabular-nums text-slate-500">{r.place}</span>
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate">{r.name}</span>
-                  <BadgeIcons badges={r.badges} className="text-sm text-amber-600" />
-                </span>
-                {r.level && <span className="truncate text-xs font-normal text-slate-500">{r.level}</span>}
-              </span>
-              <span className="tabular-nums">{t('feed.points', { count: r.points })}</span>
-            </li>
+            <li key={r.place}><LeaderboardRow {...r} /></li>
           ))}
         </ol>
       )}
+      {/* Outside the top: my place and points only (the API sends no name, level or badges for it) */}
       {!inTop && (
-        <Card className="text-center font-medium">
+        <p className={`gc-my-place gc-body ${rating.me ? '' : 'gc-my-place--unranked'}`}>
           {rating.me
             ? t('rating.me', { place: rating.me.place, points: t('feed.points', { count: rating.me.points }) })
             : t('rating.notRanked')}
-        </Card>
+        </p>
       )}
     </Screen>
   )

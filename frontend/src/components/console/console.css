@@ -360,6 +360,7 @@ html[data-theme="console"] body {
 .gc-result-card--done .gc-result-card__title { color: var(--success-ink); }
 .gc-result-card__amounts { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 100%; padding: var(--space-4); }
 .gc-result-card__text { margin: 0; max-width: 36ch; color: var(--ink-muted); white-space: pre-line; overflow-wrap: anywhere; }
+.gc-result-card__score { margin: 0; max-width: 100%; padding: var(--space-3) var(--space-4); color: var(--coin-ink); overflow-wrap: anywhere; }
 .gc-result-card__action { display: flex; justify-content: center; width: 100%; margin-top: var(--space-2); }
 
 /* Photo frame: the picked photo, never stretched or cropped */
@@ -368,6 +369,141 @@ html[data-theme="console"] body {
 
 /* The task screen's done line */
 .gc-done { display: flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--target); margin: 0; color: var(--success-ink); }
+
+/* Read by screen readers only: the word that goes with a colour or an icon */
+.gc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* A coin balance below zero, or coins spent */
+.gc-amount--negative { color: var(--danger-ink); }
+
+/* Page header with the coin balance right of the title */
+.gc-page-header__row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-4); min-width: 0; }
+.gc-page-header__row .gc-page-header__title { flex: 1 1 12em; }
+.gc-page-header__aside { flex: 0 0 auto; display: flex; align-items: center; }
+
+/* Section heading above a block of a screen */
+.gc-section-heading { margin: var(--space-2) 0 0; min-width: 0; color: var(--ink); overflow-wrap: break-word; }
+
+/* List group: one panel of rows split by hairlines */
+.gc-list-group { list-style: none; margin: 0; padding: 0; min-width: 0; background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised); overflow: hidden; }
+.gc-list-group > li { display: flex; flex-direction: column; justify-content: center; min-height: var(--target); min-width: 0; }
+.gc-list-group > li > * { min-width: 0; }
+.gc-list-group > li + li { border-top: 1px solid var(--line); }
+
+/* Quiz: the countdown on a screen panel, then the question with lettered answer switches */
+.gc-countdown-timer { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; }
+.gc-countdown-timer__head { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--ink-muted); }
+.gc-countdown-timer__screen { display: flex; flex-direction: column; align-items: center; padding: var(--space-4); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); }
+.gc-countdown-timer__time { color: var(--primary-ink); letter-spacing: 0.04em; }
+.gc-countdown-timer--low .gc-countdown-timer__head,
+.gc-countdown-timer--low .gc-countdown-timer__time { color: var(--danger-ink); }
+.gc-countdown-timer--low .gc-countdown-timer__time { animation: gc-countdown-timer-blink 1s steps(1) infinite; }
+@keyframes gc-countdown-timer-blink { 50% { opacity: 0.55; } }
+
+.gc-quiz-question { display: flex; flex-direction: column; gap: var(--space-4); width: 100%; padding: var(--space-4); background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised); }
+.gc-quiz-question__progress { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--ink-muted); }
+.gc-quiz-question__text { margin: 0; white-space: pre-line; color: var(--ink); overflow-wrap: anywhere; }
+.gc-quiz-question__options { display: flex; flex-direction: column; gap: var(--space-3); }
+.gc-quiz-question__option {
+  display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--target);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2); text-align: left; cursor: pointer;
+  background: var(--surface-raised); color: var(--ink);
+  border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised);
+  -webkit-appearance: none; appearance: none;
+  transition: transform 60ms steps(1), box-shadow 60ms steps(1), background-color 60ms steps(1);
+}
+.gc-quiz-question__letter { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; background: var(--surface-sunken); color: var(--primary-ink); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); }
+.gc-quiz-question__option-text { min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
+.gc-quiz-question__option:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: var(--shadow-pressed); }
+@media (hover: hover) { .gc-quiz-question__option:hover:not(:disabled) { background: var(--surface-sunken); } }
+.gc-quiz-question__option--selected { background: var(--primary); color: var(--on-primary); border-color: var(--shadow-ink); transform: translate(3px, 3px); box-shadow: var(--shadow-pressed); }
+.gc-quiz-question__option--selected .gc-quiz-question__letter { background: var(--primary-pressed); color: var(--on-primary); border-color: var(--shadow-ink); }
+/* Locked answers: a flat sunken switch with muted ink (no opacity, so the text keeps 4.5:1) */
+.gc-quiz-question__option:disabled:not(.gc-quiz-question__option--selected) { cursor: not-allowed; background: var(--surface); color: var(--ink-muted); box-shadow: none; }
+.gc-quiz-question__option--selected:disabled { cursor: progress; }
+
+/* Prize card: partner, stock, name, price and the action its purchase state decides */
+.gc-prize-card { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); background: var(--surface); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised); color: var(--ink); min-width: 0; }
+.gc-prize-card--waiting { border-color: var(--success); outline: var(--border-w) solid var(--success); outline-offset: 0; }
+.gc-prize-card__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.gc-prize-card__partner { display: inline-flex; align-items: center; gap: var(--space-1); max-width: 100%; padding: 2px var(--space-2); background: var(--coin); color: var(--on-coin); border: var(--border-w) solid var(--shadow-ink); border-radius: var(--radius-1); font-weight: 600; }
+.gc-prize-card__partner-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-prize-card__stock { color: var(--ink-muted); }
+.gc-prize-card__name { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.gc-prize-card__price { display: flex; }
+.gc-prize-card__received { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-weight: 600; color: var(--success-ink); }
+.gc-prize-card__pickup { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-4); background: var(--surface-raised); border: var(--border-w) solid var(--success); text-align: center; }
+.gc-prize-card__pickup-text { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; font-weight: 600; color: var(--success-ink); text-align: left; overflow-wrap: anywhere; }
+.gc-prize-card__pickup-icon { display: flex; flex-shrink: 0; padding-top: 2px; }
+/* The QR keeps a light quiet zone so scanners read it on the dark ground */
+.gc-prize-card__qr { display: flex; justify-content: center; width: 100%; max-width: 220px; background: var(--ink); }
+.gc-prize-card__qr > svg { display: block; width: 100%; height: auto; }
+.gc-prize-card__code { margin: 0; font-family: var(--font-mono); font-size: 24px; line-height: 1.2; font-weight: 400; letter-spacing: 0.2em; color: var(--ink); overflow-wrap: anywhere; }
+.gc-prize-card__action { display: flex; flex-direction: column; }
+.gc-prize-card__error { display: flex; align-items: center; gap: var(--space-2); margin: 0; color: var(--danger-ink); }
+
+.gc-prize-list { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.gc-market-balance { display: inline-flex; padding: var(--space-1) var(--space-3); }
+
+/* Inline confirm: the question, then cancel and confirm side by side */
+.gc-inline-confirm { display: grid; gap: var(--space-3); }
+.gc-inline-confirm__question { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.gc-inline-confirm__actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.gc-inline-confirm__actions .gc-button { padding: 0 var(--space-2); }
+
+/* Leaderboard row: place, name with badges and level, points; my own row has the «Вы» tag */
+.gc-leaderboard-row { display: flex; align-items: center; gap: var(--space-3); min-height: var(--bar); padding: var(--space-2) var(--space-4); color: var(--ink); min-width: 0; }
+.gc-leaderboard-row__place { flex-shrink: 0; width: 3ch; text-align: right; color: var(--ink-muted); }
+.gc-leaderboard-row--top .gc-leaderboard-row__place { color: var(--coin-ink); font-weight: 700; }
+.gc-leaderboard-row__who { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.gc-leaderboard-row__line { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.gc-leaderboard-row__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-leaderboard-row__level { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-leaderboard-row__points { flex-shrink: 0; display: flex; }
+.gc-leaderboard-row--me { background: var(--surface-raised); box-shadow: inset 4px 0 0 var(--primary); }
+.gc-leaderboard-row--me .gc-leaderboard-row__name { font-weight: 700; }
+.gc-leaderboard-row__me { flex-shrink: 0; padding: 0 var(--space-1); background: var(--primary); color: var(--on-primary); border: var(--border-w) solid var(--shadow-ink); border-radius: var(--radius-1); font-weight: 700; }
+/* My place under the list when I'm outside it: place and points only */
+.gc-my-place { display: flex; align-items: center; justify-content: center; min-height: var(--bar); margin: 0; padding: var(--space-3) var(--space-4); text-align: center; background: var(--surface-raised); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: inset 4px 0 0 var(--primary), var(--shadow-raised); color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+.gc-my-place--unranked { background: var(--surface); box-shadow: var(--shadow-raised); color: var(--ink-muted); }
+
+/* Badge icons beside a name */
+.gc-badge-icons { display: inline-flex; flex-shrink: 0; align-items: center; gap: var(--space-1); color: var(--coin-ink); vertical-align: middle; }
+
+/* Badge tile: held in coin with a check, locked dashed with the lock and its condition */
+.gc-badge-grid { display: grid; grid-template-columns: 1fr; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+@media (min-width: 640px) { .gc-badge-grid { grid-template-columns: 1fr 1fr; } }
+.gc-badge-tile { display: flex; align-items: center; gap: var(--space-3); min-height: var(--bar); padding: var(--space-3) var(--space-4); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); background: var(--surface); color: var(--ink); min-width: 0; }
+.gc-badge-tile__disc { display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--radius-0); }
+.gc-badge-tile__body { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.gc-badge-tile__name { font-weight: 600; overflow-wrap: anywhere; }
+.gc-badge-tile__cond { display: flex; align-items: flex-start; gap: var(--space-1); color: var(--ink-muted); overflow-wrap: anywhere; }
+.gc-badge-tile__lock { display: flex; flex-shrink: 0; padding-top: 1px; }
+.gc-badge-tile__mark { display: flex; flex-shrink: 0; color: var(--coin-ink); }
+.gc-badge-tile--held { border-color: var(--coin); box-shadow: var(--shadow-raised); background: var(--surface-raised); }
+.gc-badge-tile--held .gc-badge-tile__disc { background: var(--coin); color: var(--on-coin); border: var(--border-w) solid var(--shadow-ink); }
+.gc-badge-tile--locked { border-style: dashed; }
+.gc-badge-tile--locked .gc-badge-tile__disc { background: var(--surface-sunken); color: var(--ink-muted); border: var(--border-w) solid var(--line); }
+.gc-badge-tile--locked .gc-badge-tile__name { color: var(--ink-muted); }
+
+/* History row: what happened and what it earned or cost */
+.gc-history-row { display: flex; flex-direction: column; justify-content: center; gap: var(--space-1); min-height: var(--target); padding: var(--space-3) var(--space-4); color: var(--ink); min-width: 0; }
+.gc-history-row__title { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.gc-history-row__line { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--space-3); row-gap: var(--space-1); margin: 0; }
+.gc-history-row__spent { color: var(--ink-muted); }
+.gc-history-row__bonus { color: var(--xp-ink); font-weight: 600; }
+/* Rejected: struck through, not dimmed, so the amounts keep their contrast; the chip says why */
+.gc-history-row--rejected .gc-history-row__title { color: var(--ink-muted); text-decoration: line-through; }
+.gc-history-row--rejected .gc-history-row__line > :not(.gc-status-chip) { text-decoration: line-through; }
+
+/* Profile: level, how far the next one is, points and coins */
+.gc-profile-head { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); text-align: center; }
+.gc-profile-head__level { margin: 0; color: var(--xp-ink); overflow-wrap: anywhere; }
+.gc-profile-head__hint { margin: 0; color: var(--ink-muted); }
+.gc-profile-head__totals { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; column-gap: var(--space-6); row-gap: var(--space-1); max-width: 100%; padding: var(--space-2) var(--space-4); }
+
+/* Empty list text under a section heading */
+.gc-empty { margin: 0; padding: var(--space-6) 0; text-align: center; color: var(--ink-muted); }
 
 /* With reduced motion nothing glows, flickers or slides */
 @media (prefers-reduced-motion: reduce) {

@@ -1,11 +1,9 @@
-import { Check, ChevronLeft, Coins, Lock } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { PartnerBadge } from '../components/PartnerBadge'
-import { Button, Card, Screen } from '../components/ui'
+import { InlineConfirm } from '../components/console/rewards'
+import { Amount, Button, Callout, Icon, Loading, MessageCard, PageHeader, Screen } from '../components/console/ui'
 import { hhmm } from '../feed'
 
 type Prize = {
@@ -60,13 +58,11 @@ export function Market() {
     }
   }, [load])
 
-  if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
+  if (state.kind === 'loading') return <Screen><Loading /></Screen>
   if (state.kind !== 'ready') {
     return (
       <Screen>
-        <Card className="text-center text-lg font-medium">
-          {t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')}
-        </Card>
+        <MessageCard icon="alert" title={t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')} />
       </Screen>
     )
   }
@@ -76,25 +72,18 @@ export function Market() {
   const prizes = [...market.prizes].sort((a, b) => Number(waiting(b)) - Number(waiting(a)))
   return (
     <Screen>
-      <Link to="/app" className="flex items-center gap-1 text-sm font-medium text-slate-600">
-        <ChevronLeft className="size-4" aria-hidden />
-        {t('feed.toFeed')}
-      </Link>
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t('market.title')}</h1>
-        <span className="flex items-center gap-1.5 text-lg font-semibold text-amber-700">
-          <Coins className="size-5" aria-hidden />
-          {t('feed.coins', { count: market.coins })}
-        </span>
-      </div>
+      <PageHeader
+        title={t('market.title')}
+        back={{ to: '/app', label: t('feed.toFeed') }}
+        aside={<span className="gc-crt gc-market-balance"><Amount kind="coins" count={market.coins} /></span>}
+      />
       {!market.open && (
-        <p className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-3 font-medium text-slate-700">
-          <Lock className="size-4 shrink-0" aria-hidden />
+        <Callout tone="locked">
           {market.opens_at ? t('market.opensAt', { time: hhmm(market.opens_at) }) : t('market.opensSoon')}
-        </p>
+        </Callout>
       )}
-      {prizes.length === 0 && <p className="py-8 text-center text-slate-500">{t('market.empty')}</p>}
-      <ul className="flex flex-col gap-3">
+      {prizes.length === 0 && <MessageCard icon="bag" title={t('market.empty')} />}
+      <ul className="gc-prize-list">
         {prizes.map((prize) => (
           <li key={prize.id}>
             <PrizeCard prize={prize} market={market} onChange={(m) => setState({ kind: 'ready', market: m })} onFail={fail} />
@@ -136,53 +125,58 @@ function PrizeCard({ prize, market, onChange, onFail }:
   }
 
   const short = prize.price - market.coins
+  const canBuy = !prize.code && prize.left > 0 && market.open && short <= 0
   return (
-    <Card className={`flex flex-col gap-3 ${waiting(prize) ? 'ring-2 ring-emerald-500' : ''}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <PartnerBadge name={prize.partner} />
-        {!prize.code && <span className="text-sm text-slate-500">{t('market.left', { count: prize.left })}</span>}
+    <article className={`gc-prize-card ${waiting(prize) ? 'gc-prize-card--waiting' : ''}`}>
+      <div className="gc-prize-card__meta">
+        <span className="gc-prize-card__partner gc-caption">
+          <Icon name="star" size={12} />
+          <span className="gc-prize-card__partner-name">{prize.partner}</span>
+        </span>
+        {!prize.code && <span className="gc-prize-card__stock gc-body-s">{t('market.left', { count: prize.left })}</span>}
       </div>
-      <p className="text-lg font-medium">{prize.name}</p>
-      <span className="flex items-center gap-1 text-sm font-medium text-amber-700">
-        <Coins className="size-4" aria-hidden />
-        {t('feed.coins', { count: prize.price })}
-      </span>
+      <p className="gc-prize-card__name gc-body-l">{prize.name}</p>
+      <div className="gc-prize-card__price"><Amount kind="coins" count={prize.price} /></div>
       {prize.code && prize.issued_at && (
-        <p className="flex items-center gap-1 font-medium text-emerald-700">
-          <Check className="size-5" aria-hidden />
-          {t('market.received')}
+        <p className="gc-prize-card__received gc-body">
+          <Icon name="check" size={20} />
+          <span>{t('market.received')}</span>
         </p>
       )}
       {prize.code && !prize.issued_at && (
-        <div className="flex flex-col items-center gap-3 rounded-xl bg-emerald-50 p-4 text-center">
-          <p className="font-medium text-emerald-900">{t('market.goToStand', { partner: prize.partner })}</p>
-          <QRCodeSVG value={`${window.location.origin}/stand/${prize.code}`} size={220} marginSize={2} className="h-auto w-full max-w-[220px]" />
-          <p className="font-mono text-2xl font-semibold tracking-widest">{t('market.code', { code: prize.code.toUpperCase() })}</p>
-        </div>
-      )}
-      {!prize.code && prize.left === 0 && <Button disabled>{t('market.soldOut')}</Button>}
-      {!prize.code && prize.left > 0 && !market.open && (
-        <Button disabled>
-          <Lock className="mr-2 size-4" aria-hidden />
-          {t('market.exchange')}
-        </Button>
-      )}
-      {!prize.code && prize.left > 0 && market.open && short > 0 && <Button disabled>{t('market.short', { count: short })}</Button>}
-      {!prize.code && prize.left > 0 && market.open && short <= 0 && !confirming && (
-        <Button onClick={() => setConfirming(true)}>{t('market.exchange')}</Button>
-      )}
-      {!prize.code && prize.left > 0 && market.open && short <= 0 && confirming && (
-        <div className="flex flex-col gap-3">
-          <p className="text-slate-700">
-            {t('market.confirm', { price: t('feed.coins', { count: prize.price }), name: prize.name })}
+        <div className="gc-prize-card__pickup">
+          <p className="gc-prize-card__pickup-text gc-body">
+            <span className="gc-prize-card__pickup-icon"><Icon name="qr" size={20} /></span>
+            <span>{t('market.goToStand', { partner: prize.partner })}</span>
           </p>
-          <div className="grid grid-cols-2 gap-3">
-            <Button variant="outline" disabled={busy} onClick={() => setConfirming(false)}>{t('market.cancel')}</Button>
-            <Button disabled={busy} onClick={buy}>{t('market.yes')}</Button>
+          <div className="gc-prize-card__qr">
+            <QRCodeSVG value={`${window.location.origin}/stand/${prize.code}`} size={220} marginSize={2} />
           </div>
+          <p className="gc-prize-card__code">{t('market.code', { code: prize.code.toUpperCase() })}</p>
         </div>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
-    </Card>
+      {!prize.code && (
+        <div className="gc-prize-card__action">
+          {prize.left === 0 && <Button variant="outline" disabled>{t('market.soldOut')}</Button>}
+          {prize.left > 0 && !market.open && <Button disabled icon="lock">{t('market.exchange')}</Button>}
+          {prize.left > 0 && market.open && short > 0 && <Button disabled>{t('market.short', { count: short })}</Button>}
+          {canBuy && !confirming && <Button onClick={() => setConfirming(true)}>{t('market.exchange')}</Button>}
+          {canBuy && confirming && (
+            <InlineConfirm
+              question={t('market.confirm', { price: t('feed.coins', { count: prize.price }), name: prize.name })}
+              busy={busy}
+              onConfirm={buy}
+              onCancel={() => setConfirming(false)}
+            />
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="gc-prize-card__error gc-body-s" role="alert">
+          <Icon name="alert" size={16} />
+          <span>{error}</span>
+        </p>
+      )}
+    </article>
   )
 }

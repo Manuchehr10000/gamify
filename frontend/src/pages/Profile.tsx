@@ -1,10 +1,9 @@
-import { ChevronLeft, Coins } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { BADGE_ICONS, BADGES, type Badge } from '../badges'
-import { Card, Screen } from '../components/ui'
+import { BADGES, type Badge } from '../badges'
+import { BadgeTile, SectionHeading } from '../components/console/rewards'
+import { Amount, Card, Loading, MessageCard, PageHeader, Screen, StatusChip } from '../components/console/ui'
 import { useConfigVersion } from '../version'
 
 type Entry = {
@@ -55,13 +54,11 @@ export function Profile() {
   // An admin's change (the levels) shows within 10 seconds
   useConfigVersion(load)
 
-  if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
+  if (state.kind === 'loading') return <Screen><Loading /></Screen>
   if (state.kind !== 'ready') {
     return (
       <Screen>
-        <Card className="text-center text-lg font-medium">
-          {t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')}
-        </Card>
+        <MessageCard icon="alert" title={t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')} />
       </Screen>
     )
   }
@@ -69,56 +66,28 @@ export function Profile() {
   const { profile } = state
   return (
     <Screen>
-      <div className="flex items-center gap-2">
-        <Link to="/app" aria-label={t('feed.toFeed')} className="-ml-2 p-2"><ChevronLeft className="size-6" aria-hidden /></Link>
-        <h1 className="text-xl font-semibold">{t('profile.title')}</h1>
-      </div>
-      <Card className="flex flex-col items-center gap-2 text-center">
-        {profile.level && <p className="text-2xl font-bold">{profile.level}</p>}
-        {profile.to_next !== null && <p className="text-sm text-slate-500">{t('feed.toNext', { count: profile.to_next })}</p>}
-        <p className="mt-2 flex items-center gap-6 text-lg font-semibold">
-          <span className="text-emerald-700">{t('feed.points', { count: profile.points })}</span>
-          <span className={`flex items-center gap-1.5 ${profile.coins < 0 ? 'text-red-700' : 'text-amber-700'}`}>
-            <Coins className="size-5" aria-hidden />
-            {t('feed.coins', { count: profile.coins })}
-          </span>
+      <PageHeader title={t('profile.title')} back={{ to: '/app', label: t('feed.toFeed') }} />
+      <Card className="gc-profile-head">
+        {profile.level && <p className="gc-profile-head__level gc-display-m">{profile.level}</p>}
+        {profile.to_next !== null && <p className="gc-profile-head__hint gc-body-s">{t('feed.toNext', { count: profile.to_next })}</p>}
+        <p className="gc-profile-head__totals gc-crt">
+          <Amount kind="points" count={profile.points} />
+          <Amount kind="coins" count={profile.coins} alarm />
         </p>
       </Card>
-      <h2 className="font-semibold">{t('badges.title')}</h2>
-      <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {BADGES.map((b) => {
-          const Icon = BADGE_ICONS[b]
-          const held = profile.badges.includes(b)
-          return (
-            <li
-              key={b}
-              className={`flex items-center gap-3 rounded-2xl px-4 py-3 ring-1 ${held ? 'bg-amber-50 ring-amber-200' : 'bg-slate-50 ring-slate-200'}`}
-            >
-              <span
-                className={`flex size-10 shrink-0 items-center justify-center rounded-full ${held ? 'bg-amber-300 text-emerald-900' : 'bg-slate-200 text-slate-400'}`}
-              >
-                <Icon className="size-5" aria-hidden />
-              </span>
-              <span className="flex min-w-0 flex-col">
-                <span className={`font-medium ${held ? 'text-slate-900' : 'text-slate-500'}`}>{t(`badges.${b}.name`)}</span>
-                {!held && <span className="text-sm text-slate-500">{t(`badges.${b}.condition`)}</span>}
-              </span>
-            </li>
-          )
-        })}
+      <SectionHeading>{t('badges.title')}</SectionHeading>
+      <ul className="gc-badge-grid">
+        {BADGES.map((b) => (
+          <li key={b}><BadgeTile badge={b} held={profile.badges.includes(b)} /></li>
+        ))}
       </ul>
-      <h2 className="font-semibold">{t('profile.history')}</h2>
+      <SectionHeading>{t('profile.history')}</SectionHeading>
       {profile.history.length === 0 ? (
-        <p className="py-8 text-center text-slate-500">{t('profile.empty')}</p>
+        <p className="gc-empty gc-body">{t('profile.empty')}</p>
       ) : (
-        <ul className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-200">
+        <ul className="gc-list-group">
           {profile.history.map((e, i) => (
-            <li key={i} className="flex flex-col gap-1 border-b border-slate-100 px-4 py-3 last:border-0">
-              <p className={e.rejected ? 'text-slate-500 line-through' : ''}>
-                {e.kind === 'arrival' ? t('profile.arrival') : e.text}
-              </p>
-              <EntryLine entry={e} />
-            </li>
+            <li key={i}><HistoryRow entry={e} /></li>
           ))}
         </ul>
       )}
@@ -126,30 +95,26 @@ export function Profile() {
   )
 }
 
-function EntryLine({ entry: e }: { entry: Entry }) {
+// What happened and what it earned or cost; a purchase reads «Покупка в маркете» and «−30 монет» (the API sends
+// the coins spent below zero). No time: the history shows none
+function HistoryRow({ entry: e }: { entry: Entry }) {
   const { t } = useTranslation()
-  if (e.kind === 'buy') {
-    return (
-      <p className="flex flex-wrap items-center gap-3 text-sm">
-        <span className="text-slate-500">{t('profile.spent')}</span>
-        <span className="flex items-center gap-1 font-medium text-amber-700">
-          <Coins className="size-4" aria-hidden />
-          {t('feed.coins', { count: e.coins })}
-        </span>
-      </p>
-    )
-  }
   return (
-    <p className="flex flex-wrap items-center gap-3 text-sm font-medium">
-      <span className="text-emerald-700">{t('award.points', { count: e.points })}</span>
-      {e.coins !== 0 && (
-        <span className="flex items-center gap-1 text-amber-700">
-          <Coins className="size-4" aria-hidden />
-          {t('award.coins', { count: e.coins })}
-        </span>
+    <div className={`gc-history-row ${e.rejected ? 'gc-history-row--rejected' : ''}`}>
+      <p className="gc-history-row__title gc-body">{e.kind === 'arrival' ? t('profile.arrival') : e.text}</p>
+      {e.kind === 'buy' ? (
+        <p className="gc-history-row__line">
+          <span className="gc-history-row__spent gc-body-s">{t('profile.spent')}</span>
+          <Amount kind="coins" count={e.coins} size="s" />
+        </p>
+      ) : (
+        <p className="gc-history-row__line">
+          <Amount kind="points" count={e.points} size="s" signed />
+          {e.coins !== 0 && <Amount kind="coins" count={e.coins} size="s" signed />}
+          {e.bonus > 0 && <span className="gc-history-row__bonus gc-body-s">{t('profile.bonus', { count: e.bonus })}</span>}
+          {e.rejected && <StatusChip tone="danger" icon="x">{t('profile.rejected')}</StatusChip>}
+        </p>
       )}
-      {e.bonus > 0 && <span className="text-emerald-700">{t('profile.bonus', { count: e.bonus })}</span>}
-      {e.rejected && <span className="text-red-700">{t('profile.rejected')}</span>}
-    </p>
+    </div>
   )
 }

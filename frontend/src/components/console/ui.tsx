@@ -84,7 +84,8 @@ export function Stripe({ className = '' }: { className?: string }) {
   return <div className={`gc-stripe ${className}`} aria-hidden><i /><i /><i /></div>
 }
 
-export function PageHeader({ title, back }: { title: string; back?: { to: string; label: string } }) {
+// aside: a small element right of the title, such as the market's coin balance
+export function PageHeader({ title, back, aside }: { title: string; back?: { to: string; label: string }; aside?: ReactNode }) {
   return (
     <header className="gc-page-header">
       {back && (
@@ -93,7 +94,14 @@ export function PageHeader({ title, back }: { title: string; back?: { to: string
           <span>{back.label}</span>
         </Link>
       )}
-      <h1 className="gc-page-header__title gc-display-l">{title}</h1>
+      {aside ? (
+        <div className="gc-page-header__row">
+          <h1 className="gc-page-header__title gc-display-l">{title}</h1>
+          <div className="gc-page-header__aside">{aside}</div>
+        </div>
+      ) : (
+        <h1 className="gc-page-header__title gc-display-l">{title}</h1>
+      )}
       <Stripe className="gc-page-header__stripe" />
     </header>
   )
@@ -187,17 +195,22 @@ const NUM_CLASS = { s: 'gc-score-s', m: 'gc-score-m', l: 'gc-score-l', xl: 'gc-s
 const WORD_CLASS = { s: 'gc-body-s', m: 'gc-label', l: 'gc-body-l', xl: 'gc-body-l' }
 const STAR_SIZE = { s: 16, m: 20, l: 32, xl: 48 }
 
-// Points (star, blue) or coins (coin, gold): the number in the pixel face, the word from the language file
-export function Amount({ kind, count, size = 'm', signed = false }: {
+// Points (star, blue) or coins (coin, gold): the number in the pixel face, the word from the language file.
+// Below zero (coins spent, or a balance a rejection took under zero) it reads with one true minus: «−30 монет»;
+// alarm turns a negative amount red (the profile's balance)
+export function Amount({ kind, count, size = 'm', signed = false, alarm = false }: {
   kind: 'points' | 'coins'
   count: number
   size?: 's' | 'm' | 'l' | 'xl'
   signed?: boolean
+  alarm?: boolean
 }) {
   const { t } = useTranslation()
-  const [before, num, after] = splitNumber(t(`${signed ? 'award' : 'feed'}.${kind}`, { count }))
+  const negative = count < 0
+  const text = negative ? `\u2212${t(`feed.${kind}`, { count: -count })}` : t(`${signed ? 'award' : 'feed'}.${kind}`, { count })
+  const [before, num, after] = splitNumber(text)
   return (
-    <span className={`gc-amount gc-amount--${kind === 'coins' ? 'coin' : 'points'} gc-amount--${size}`}>
+    <span className={`gc-amount gc-amount--${kind === 'coins' ? 'coin' : 'points'} gc-amount--${size} ${negative && alarm ? 'gc-amount--negative' : ''}`}>
       {kind === 'coins' ? <span className="gc-amount__coin" aria-hidden /> : <Icon name="star" size={STAR_SIZE[size]} />}
       <span className="gc-amount__text">
         {before && <span className={`gc-amount__words ${WORD_CLASS[size]}`}>{before}</span>}

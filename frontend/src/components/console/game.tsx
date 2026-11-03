@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { hhmm, type Award, type Feed, type Stage, type Task } from '../../feed'
@@ -141,9 +142,15 @@ export function ResultCard({ award }: { award: Award | null }) {
   )
 }
 
-// The full-screen moment: shown once per level reached and once per badge earned
+// The full-screen moment: shown once per level reached and once per badge earned; «Отлично» or Escape closes it
 export function LevelUp({ title, icon, onClose }: { title: string; icon?: IconName; onClose: () => void }) {
   const { t } = useTranslation()
+  useEffect(() => {
+    // a held key repeats: only a fresh press closes, so queued moments are not skipped unseen
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !e.repeat && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
   return (
     <div
       role="dialog"

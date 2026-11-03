@@ -1,9 +1,9 @@
-import { ChevronLeft, Coins, Lock, Timer } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { Card, Screen } from '../components/ui'
+import { Button, Callout, Icon, Loading, MessageCard, PageHeader, Screen } from '../components/console/ui'
+import { CountdownTimer, QuizQuestion } from '../components/console/rewards'
 
 type QuizState = {
   text: string
@@ -19,8 +19,6 @@ type State =
   | { kind: 'error'; message: string; locked?: boolean }
   | { kind: 'ready'; quiz: QuizState }
 
-const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-
 export function Quiz() {
   const { t } = useTranslation()
   const id = Number(useParams().id)
@@ -31,8 +29,11 @@ export function Quiz() {
   const deadline = useRef<number | null>(null)
   const [left, setLeft] = useState<number | null>(null)
   const [timeUp, setTimeUp] = useState(false)
+  // The answer just sent stays pressed until the next question comes back
+  const [selected, setSelected] = useState<number | null>(null)
 
   const show = useCallback((quiz: QuizState) => {
+    setSelected(null)
     deadline.current = quiz.seconds_left === null ? null : Date.now() + quiz.seconds_left * 1000
     setLeft(quiz.seconds_left)
     setState({ kind: 'ready', quiz })
@@ -50,6 +51,7 @@ export function Quiz() {
       else setError(t('common.error'))
     } finally {
       setBusy(false)
+      setSelected(null)
     }
   }, [id, show, t])
 
@@ -82,58 +84,48 @@ export function Quiz() {
 
   return (
     <Screen>
-      <Link to="/app" className="flex items-center gap-1 text-sm font-medium text-slate-600">
-        <ChevronLeft className="size-4" aria-hidden />
-        {t('feed.toFeed')}
-      </Link>
-      {state.kind === 'loading' && <p className="text-center text-slate-500">{t('common.loading')}</p>}
+      <PageHeader title={t('types.quiz')} back={{ to: '/app', label: t('feed.toFeed') }} />
+      {state.kind === 'loading' && <Loading />}
       {state.kind === 'error' && (
-        <Card className="flex flex-col items-center gap-3 text-center text-lg font-medium">
-          {state.locked && <Lock className="size-8 text-amber-600" aria-hidden />}
-          {state.message}
-        </Card>
+        <MessageCard
+          icon={state.locked ? 'lock' : 'alert'}
+          title={state.message}
+          action={<Button variant="outline" to="/app">{t('feed.toFeed')}</Button>}
+        />
       )}
       {state.kind === 'ready' && state.quiz.result && <Result quiz={state.quiz} timeUp={timeUp} />}
       {state.kind === 'ready' && !state.quiz.result && state.quiz.question && (
-        <Card className="flex flex-col gap-4">
-          <div className="flex items-center justify-between text-sm text-slate-600">
-            <span>{t('quiz.progress', { n: state.quiz.answered + 1, total: state.quiz.total })}</span>
-            {left !== null && (
-              <span className={`flex items-center gap-1 font-semibold tabular-nums ${left <= 10 ? 'text-red-600' : 'text-slate-800'}`}>
-                <Timer className="size-4" aria-hidden />
-                {t('quiz.secondsLeft', { time: mmss(left) })}
-              </span>
-            )}
-          </div>
-          <p className="whitespace-pre-line text-lg font-medium leading-relaxed">{state.quiz.question.text}</p>
-          <div className="flex flex-col gap-3">
-            {state.quiz.question.options.map((o) => (
-              <button
-                key={o.n}
-                disabled={busy || timeUp}
-                className="min-h-12 rounded-xl border border-slate-300 bg-white px-5 py-3 text-left text-base font-medium text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
-                onClick={() => call('answer', { question: state.quiz.question!.number, option: o.n })}
-              >
-                {o.text}
-              </button>
-            ))}
-          </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
-        </Card>
+        <>
+          {left !== null && <CountdownTimer seconds={left} />}
+          <QuizQuestion
+            number={state.quiz.answered + 1}
+            total={state.quiz.total}
+            text={state.quiz.question.text}
+            options={state.quiz.question.options}
+            selected={selected}
+            disabled={busy || timeUp}
+            onSelect={(n) => {
+              setSelected(n)
+              void call('answer', { question: state.quiz.question!.number, option: n })
+            }}
+          />
+          {error && <Callout tone="danger">{error}</Callout>}
+        </>
       )}
     </Screen>
   )
 }
 
-// «3 из 5 · +30 баллов, +30 монет»; which answers were right is never shown
+// «3 из 5 · +30 баллов, +30 монет» over the quiz text, under «Время вышло» when the clock ran out;
+// which answers were right is never shown
 function Result({ quiz, timeUp }: { quiz: QuizState; timeUp: boolean }) {
   const { t } = useTranslation()
   const r = quiz.result!
   return (
-    <Card className="flex flex-col items-center gap-4 py-10 text-center">
-      {timeUp && <p className="text-base font-medium text-slate-600">{t('quiz.timeUp')}</p>}
-      <p className="flex items-center gap-2 text-2xl font-bold text-emerald-700">
-        <Coins className="size-6 text-amber-600" aria-hidden />
+    <div className="gc-result-card gc-result-card--win" role="status">
+      <span className="gc-result-card__icon gc-crt"><Icon name={timeUp ? 'clock' : 'trophy'} size={48} /></span>
+      {timeUp && <p className="gc-result-card__title gc-display-m">{t('quiz.timeUp')}</p>}
+      <p className="gc-result-card__score gc-score-m gc-num gc-crt gc-glow">
         {t('quiz.result', {
           correct: r.correct,
           total: r.total,
@@ -141,8 +133,10 @@ function Result({ quiz, timeUp }: { quiz: QuizState; timeUp: boolean }) {
           coins: t('award.coins', { count: r.coins }),
         })}
       </p>
-      <p className="text-base text-slate-600">{quiz.text}</p>
-      <Link to="/app" className="mt-2 w-full rounded-xl bg-emerald-600 py-3 font-medium text-white">{t('feed.toFeed')}</Link>
-    </Card>
+      <p className="gc-result-card__text gc-body">{quiz.text}</p>
+      <div className="gc-result-card__action">
+        <Button to="/app">{t('feed.toFeed')}</Button>
+      </div>
+    </div>
   )
 }
