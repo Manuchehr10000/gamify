@@ -1,5 +1,5 @@
 # Contract: Admin settings for every function
-Status: building
+Status: on-dev
 Base: 6aca578c62
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081d5ad39ed108f20c3e9
