@@ -1,5 +1,5 @@
 # Contract: Push notifications
-Status: building
+Status: on-dev
 Base: c81472f106
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be608187b366c8f21438b09e
