@@ -25,7 +25,8 @@ class Day:
 
 
 def day(db: DbSession) -> Day:
-    stages = list(db.scalars(select(Stage).order_by(Stage.number)))
+    # A stage the admin switched off is left out of the day
+    stages = list(db.scalars(select(Stage).where(Stage.active).order_by(Stage.number)))
     if not stages:
         return Day("none", stages)
     t = now()
@@ -40,11 +41,12 @@ def day(db: DbSession) -> Day:
 
 def market_opens_at(db: DbSession) -> datetime | None:
     """The start of the first stage marked «Маркет»; None when no stage is marked."""
-    return db.scalar(select(Stage.starts_at).where(Stage.market).order_by(Stage.number).limit(1))
+    return db.scalar(select(Stage.starts_at).where(Stage.market, Stage.active).order_by(Stage.number).limit(1))
 
 
 def advance(db: DbSession) -> bool:
-    """Start the next stage now. False when there is no next stage (schedule empty, last stage on, or over)."""
+    """Start the next stage now. False when there is no next stage (schedule empty, last stage on, or over).
+    The caller commits."""
     d = day(db)
     t = now()
     if d.state == "before":
@@ -57,5 +59,5 @@ def advance(db: DbSession) -> bool:
         d.stages[i + 1].starts_at = t
     else:
         return False
-    db.commit()
+    db.flush()
     return True

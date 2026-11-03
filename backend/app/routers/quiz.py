@@ -16,7 +16,7 @@ from app import ledger, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, Question, QuizAttempt, Task
-from app.routers.feed import _done, available, task_reason
+from app.routers.feed import _done, _open, available, task_reason
 
 router = APIRouter(prefix="/api/quiz")
 
@@ -76,6 +76,15 @@ def _expired(db: DbSession, t: Task, a: QuizAttempt) -> bool:
     """Time is up: the countdown ran out, or (without a timer) the quiz is no longer on."""
     deadline = _deadline(t, a)
     return stages.now() >= deadline if deadline else not available(db, t)
+
+
+def running(db: DbSession, t: Task) -> bool:
+    """The blitz is open: the quiz's «Доступно с/до» window is open, or an attempt is still within its timer.
+    Its questions can't change then. An abandoned attempt never sets finished_at, so only the clock counts."""
+    if (t.window_start or t.window_end) and _open(t, stages.now()):
+        return True
+    attempts = db.scalars(select(QuizAttempt).where(QuizAttempt.task_id == t.id, QuizAttempt.finished_at.is_(None)))
+    return any(not _expired(db, t, a) for a in attempts)
 
 
 def _share(amount: int, correct: int, total: int) -> int:

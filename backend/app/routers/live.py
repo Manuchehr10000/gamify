@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, exists, func, or_, select, union
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, stages
+from app import ledger, settings, stages
 from app.auth import require_role
 from app.db import get_db
 from app.models import Guest, Partner, Prize, Redemption, ScoreEvent, Session, Stage, Submission, Task
@@ -16,9 +16,6 @@ from app.task_file import PACKAGES
 
 # The organizer's live numbers during the forum, and the partners' report after it
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_role("admin"))])
-
-ACTIVE_WINDOW = timedelta(minutes=15)
-
 
 def completions():
     """(guest_id, task_id) for every task a guest has done. A task sent back for a retake has its award reversed;
@@ -67,7 +64,7 @@ class Live(BaseModel):
 def live(db: DbSession = Depends(get_db)) -> Live:
     logged_in = db.scalar(select(func.count(func.distinct(Session.guest_id))).where(Session.role == "guest"))
     # Active: did a task, sent a submission or bought something lately. Arriving (+10) is part of logging in
-    since = stages.now() - ACTIVE_WINDOW
+    since = stages.now() - timedelta(minutes=settings.number(db, "active_window_minutes"))
     recent = union(
         select(ScoreEvent.guest_id).where(ScoreEvent.reason.like("task:%"), ScoreEvent.created_at >= since),
         select(Submission.guest_id).where(Submission.created_at >= since),
@@ -95,7 +92,7 @@ def live(db: DbSession = Depends(get_db)) -> Live:
         active=active,
         by_type=[Count(name=t, completions=n) for t, n in by_type],
         by_stage=[StageCount(number=s.number, name=s.name, completions=stage_counts.get(s.id, 0))
-                  for s in db.scalars(select(Stage).order_by(Stage.number))],
+                  for s in db.scalars(select(Stage).where(Stage.active).order_by(Stage.number))],
         partners=[PartnerCount(partner=p, completions=n, guests=g) for p, n, g in partners],
         waiting=waiting,
         oldest_seconds=max(0, int((stages.now() - oldest).total_seconds())) if oldest else None,

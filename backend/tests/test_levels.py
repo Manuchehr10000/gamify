@@ -200,7 +200,7 @@ def test_new_thresholds_from_the_file_apply_without_a_deploy(client, admin, gues
     assert export_levels(client, admin) == [["Название", "Баллов от"]] + new
 
 
-def test_a_bad_levels_sheet_fails_with_the_reason_and_the_old_levels_stay(client, admin, guest, clock):
+def test_a_bad_levels_sheet_refuses_the_file_and_the_old_levels_stay(client, admin, guest, clock):
     clock("09:30")
     top_up(client, guest, 140)
     no_zero = [["Участник", 50], ["Актив", 150]]
@@ -211,9 +211,9 @@ def test_a_bad_levels_sheet_fails_with_the_reason_and_the_old_levels_stay(client
         r = upload(client, admin, levels_file(levels))
         assert r.status_code == 200, r.text
         assert (r.json()["levels_changed"], r.json()["failed"]) == (False, failed)
-        # The tasks on the other sheets still load
+        # Refused whole: the tasks on the other sheets don't load either
         tasks = load_workbook(io.BytesIO(client.get("/api/admin/tasks/export", headers=admin).content))["Задания"]
-        assert tasks.max_row == 1 + 42
+        assert tasks.max_row == 1
         assert export_levels(client, admin)[1:] == TAG
         f = feed(client, guest)
         assert (f["level"], f["to_next"]) == ("Участник", 10)

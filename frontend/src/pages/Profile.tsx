@@ -1,10 +1,11 @@
 import { ChevronLeft, Coins } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { BADGE_ICONS, BADGES, type Badge } from '../badges'
 import { Card, Screen } from '../components/ui'
+import { useConfigVersion } from '../version'
 
 type Entry = {
   // task (done, with what it earned) · buy (a market purchase) · arrival (points for coming)
@@ -35,7 +36,7 @@ export function Profile() {
   const { t } = useTranslation()
   const [state, setState] = useState<State>(() => (tokens.get('guest') ? { kind: 'loading' } : { kind: 'loggedOut' }))
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const token = tokens.get('guest')
     if (!token) return
     api<ProfileData>('/api/profile', { token })
@@ -45,10 +46,14 @@ export function Profile() {
           tokens.clear('guest')
           setState({ kind: 'loggedOut' })
         } else {
-          setState({ kind: 'error' })
+          setState((s) => (s.kind === 'ready' ? s : { kind: 'error' }))
         }
       })
   }, [])
+
+  useEffect(load, [load])
+  // An admin's change (the levels) shows within 10 seconds
+  useConfigVersion(load)
 
   if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
   if (state.kind !== 'ready') {

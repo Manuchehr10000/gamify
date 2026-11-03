@@ -1,4 +1,5 @@
 """The ranking by points: live from score_events, or the places the admin froze before the ceremony."""
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy import Select, func, select, text, update
@@ -55,8 +56,9 @@ class NothingToFreeze(Exception):
 FREEZE_LOCK = 7007
 
 
-def freeze(db: DbSession) -> None:
-    """Keep every ranked guest's place and points as they are now. Freezing again keeps the first freeze."""
+def freeze(db: DbSession, done: Callable[[], None]) -> None:
+    """Keep every ranked guest's place and points as they are now. Freezing again keeps the first freeze.
+    done runs in the freeze's transaction when it freezes (the change log)."""
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": FREEZE_LOCK})
     if frozen(db):
         db.commit()
@@ -67,10 +69,13 @@ def freeze(db: DbSession) -> None:
         db.rollback()
         raise NothingToFreeze
     db.execute(update(Guest), places)
+    done()
     db.commit()
 
 
-def unfreeze(db: DbSession) -> None:
+def unfreeze(db: DbSession, done: Callable[[], None]) -> None:
     db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": FREEZE_LOCK})
-    db.execute(update(Guest).where(Guest.frozen_place.is_not(None)).values(frozen_place=None, frozen_points=None))
+    if db.execute(update(Guest).where(Guest.frozen_place.is_not(None))
+                  .values(frozen_place=None, frozen_points=None)).rowcount:
+        done()
     db.commit()

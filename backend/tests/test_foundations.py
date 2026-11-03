@@ -200,12 +200,12 @@ def test_a_new_partner_name_in_the_tasks_file_adds_a_partner(client, admin):
         assert db.scalar(select(func.count()).select_from(Partner)) == 1
 
 
-def test_two_packages_for_one_partner_fail_the_row(client, admin):
+def test_two_packages_for_one_partner_refuse_the_file(client, admin):
     r = load(client, admin, [row("a", 1, "Первое", partner="Альфа", package="Хедлайнер"),
                              row("b", 1, "Второе", partner="Альфа", package="MF Партнёр")])
     assert r["failed"] == [{"sheet": "Задания", "row": 3, "reason": "package_conflict"}]
     with SessionLocal() as db:
-        assert db.scalar(select(Partner.package)) == "headliner"
+        assert db.scalar(select(func.count()).select_from(Partner)) == 0
 
 
 def test_prizes_match_or_add_partners_by_name_without_a_package(client, admin):

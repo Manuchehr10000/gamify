@@ -17,13 +17,14 @@ def export(client, headers) -> list[dict]:
     return list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig")), delimiter=";"))
 
 
-def test_import_reports_added_and_failed_rows(client):
+def test_import_with_bad_rows_is_refused_whole_naming_each(client):
     h = staff_headers(client, "admin")
     text = LIST + ";Сидоров;Пётр;;\nR-4;Кузнецов;;;\nR-1;Иванов;Иван;;\n"
     r = upload(client, h, text)
     assert r.status_code == 200
     body = r.json()
-    assert body["added"] == 2
+    assert body["added"] == 0
+    assert export(client, h) == []
     assert body["failed"] == [
         {"row": 4, "reason": "no_reg_id"},
         {"row": 5, "reason": "no_first_name"},

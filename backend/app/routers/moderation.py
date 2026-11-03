@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import accounts, badges, ledger, levels, rating, stages
+from app import accounts, badges, ledger, levels, rating, settings, stages
 from app.auth import current_moderator, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent, Submission, Task
@@ -56,18 +56,15 @@ class Queue(BaseModel):
     items: list[Item]
 
 
-TOP = 20
-
-
 @router.get("/api/moderation/queue")
 def queue(top20: bool = False, name: str = Depends(current_moderator), db: DbSession = Depends(get_db)) -> Queue:
     where = [Submission.status == ""]
     if top20:
-        # The current top 20 of the ranking, for the check before the ceremony
-        top = rating.ranking().limit(TOP).subquery()
+        # The current top of the ranking (20 unless the admin set another number), for the check before the ceremony
+        top = rating.ranking().limit(settings.number(db, "moderation_top")).subquery()
         where.append(Submission.guest_id.in_(select(top.c.guest_id)))
     waiting, oldest = db.execute(select(func.count(), func.min(Submission.created_at)).where(*where)).one()
-    # The points sending it earned, the base of «Бонус +50%», even if the task file was uploaded again since
+    # The points sending it earned, the base of the moderator's bonus, even if the task file was uploaded again since
     award = ((ScoreEvent.guest_id == Submission.guest_id)
              & (ScoreEvent.reason == "task:" + cast(Submission.task_id, String)) & ledger.standing())
     rows = db.execute(
@@ -124,7 +121,9 @@ def decide(submission_id: int, body: DecisionIn, name: str = Depends(current_mod
     award = ledger.award(db, s.guest_id, task_reason(s.task_id))
     points = award.points if award else 0
     if body.action == "bonus":
-        ledger.write(db, s.guest_id, f"bonus:{s.id}", "bonus", math.ceil(points / 2), 0)
+        # A share of the points, rounded up: +50% unless the admin set another one
+        share = settings.get(db, "moderator_bonus_percent")
+        ledger.write(db, s.guest_id, f"bonus:{s.id}", "bonus", math.ceil(points * share / 100), 0)
     elif body.action == "retake" and award:
         # A reversal row takes the award back and reopens the task: the guest's next submission is awarded afresh
         ledger.take_back(db, award, f"retake:{s.id}", "retake", reverse=True)

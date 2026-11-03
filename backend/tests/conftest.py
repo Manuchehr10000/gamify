@@ -15,7 +15,7 @@ from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-from app import accounts  # noqa: E402
+from app import accounts, settings  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 
@@ -26,16 +26,30 @@ def schema():
     # What the app's start does (TestClient without `with` skips it)
     with SessionLocal() as db:
         accounts.seed_if_empty(db)
+        SECRETS.update(db.execute(text("SELECT name, secret_hash FROM staff")).all())
+
+
+# The seeded accounts' hashes, put back after a test that resets a PIN
+SECRETS: dict[str, str] = {}
+# The staff accounts the app's start seeds from the values above; tests that add or switch off accounts are undone
+SEEDED = ("Администратор", "Стойка регистрации", "Стенды партнёров", "Модератор 1", "Модератор 2", "Модератор 3")
 
 
 @pytest.fixture(autouse=True)
 def clean():
     with engine.begin() as c:
         # staff stays: the app's start seeded it once from the values above
-        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, partners, redemptions, submissions, questions, quiz_attempts, levels, badge_awards, job_runs RESTART IDENTITY CASCADE"))
+        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, partners, redemptions, submissions, questions, quiz_attempts, levels, badge_awards, job_runs, change_events, settings RESTART IDENTITY CASCADE"))
+        c.execute(text("DELETE FROM staff WHERE name <> ALL(:names)"), {"names": list(SEEDED)})
+        c.execute(text("UPDATE staff SET active = true"))
+        for name, secret_hash in SECRETS.items():
+            c.execute(text("UPDATE staff SET secret_hash = :h WHERE name = :n"), {"h": secret_hash, "n": name})
         # The levels the migration starts with: TAG's five
         c.execute(text("INSERT INTO levels (name, min_points) VALUES ('Новичок форума', 0), ('Участник', 50), "
                        "('Актив', 150), ('Эксперт форума', 300), ('Легенда MF', 500)"))
+    # The settings' defaults, as the app's start fills them
+    with SessionLocal() as db:
+        settings.ensure(db)
 
 
 @pytest.fixture

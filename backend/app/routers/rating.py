@@ -2,17 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DbSession
 
-from app import badges, levels, rating
+from app import badges, changes, levels, rating, settings
 from app.auth import current_guest, require_role
 from app.db import get_db
-from app.models import Guest
+from app.models import Guest, Staff
 from app.routers.quiz import settle
 
 router = APIRouter()
-
-TOP = 20
-HALL_TOP = 10
-
 
 class Place(BaseModel):
     place: int
@@ -47,14 +43,15 @@ def guest_rating(guest: Guest = Depends(current_guest), db: DbSession = Depends(
     settle(db)
     frozen, rows = rating.rows(db)
     lv = levels.load(db)
-    held = badges.earned(db, [r.guest.id for r in rows[:TOP]])
+    top = settings.number(db, "rating_top")
+    held = badges.earned(db, [r.guest.id for r in rows[:top]])
     mine = next((r for r in rows if r.guest.id == guest.id), None)
     return Rating(
         frozen=frozen,
         top=[GuestPlace(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
                         points=r.points, level=levels.name(lv, r.points), badges=held[r.guest.id],
                         me=r.guest.id == guest.id)
-             for r in rows[:TOP]],
+             for r in rows[:top]],
         me=Mine(place=mine.place, points=mine.points) if mine else None,
     )
 
@@ -70,10 +67,11 @@ def hall(db: DbSession = Depends(get_db)) -> Hall:
     settle(db)
     frozen, rows = rating.rows(db)
     lv = levels.load(db)
-    held = badges.earned(db, [r.guest.id for r in rows[:HALL_TOP]])
+    top = settings.number(db, "hall_top")
+    held = badges.earned(db, [r.guest.id for r in rows[:top]])
     return Hall(frozen=frozen, top=[Place(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
                                           points=r.points, level=levels.name(lv, r.points), badges=held[r.guest.id])
-                                    for r in rows[:HALL_TOP]])
+                                    for r in rows[:top]])
 
 
 class FreezeIn(BaseModel):
@@ -96,17 +94,21 @@ class Frozen(BaseModel):
 
 
 @router.post("/api/admin/rating/freeze", dependencies=[Depends(require_role("admin"))])
-def freeze(body: FreezeIn, db: DbSession = Depends(get_db)) -> Frozen:
+def freeze(body: FreezeIn, admin: Staff = Depends(require_role("admin")), db: DbSession = Depends(get_db)) -> Frozen:
+    def logged() -> None:
+        changes.record(db, admin, "rating", None, "Рейтинг", "frozen", not body.frozen, body.frozen)
+        settings.bump(db)
+
     # Freezing again keeps the first freeze and gives its list back, so the admin page can reprint it
     if body.frozen:
         settle(db)
         try:
-            rating.freeze(db)
+            rating.freeze(db, logged)
         except rating.NothingToFreeze:
             raise HTTPException(409, "nobody_ranked") from None
     elif body.frozen is False:
-        rating.unfreeze(db)
+        rating.unfreeze(db, logged)
     frozen, rows = rating.rows(db)
     return Frozen(frozen=frozen, top=[
         HostPlace(place=r.place, first_name=r.guest.first_name, last_name=r.guest.last_name,
-                  company=r.guest.company, points=r.points) for r in rows[:HALL_TOP]] if frozen else [])
+                  company=r.guest.company, points=r.points) for r in rows[:settings.number(db, "hall_top")]] if frozen else [])

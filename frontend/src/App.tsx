@@ -1,6 +1,7 @@
 import { Route, Routes } from 'react-router-dom'
 import { AdminGuests } from './pages/AdminGuests'
 import { AdminLive } from './pages/AdminLive'
+import { AdminSettings } from './pages/AdminSettings'
 import { AdminTasks } from './pages/AdminTasks'
 import { AdminTasksQr } from './pages/AdminTasksQr'
 import { Desk } from './pages/Desk'
@@ -30,6 +31,7 @@ export default function App() {
       <Route path="/admin/tasks" element={<AdminTasks />} />
       <Route path="/admin/tasks/qr" element={<AdminTasksQr />} />
       <Route path="/admin/live" element={<AdminLive />} />
+      <Route path="/admin/settings" element={<AdminSettings />} />
       <Route path="/q/:code" element={<Scan />} />
       <Route path="/market" element={<Market />} />
       <Route path="/stand/:code" element={<Stand />} />

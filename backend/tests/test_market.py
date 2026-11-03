@@ -272,9 +272,10 @@ def test_reupload_keeps_purchases_and_updates_left(client, admin, stand, clock):
     other = make_guest(client, "R-2", "Мария", coins=100)
     assert "Футболка" not in [p["name"] for p in market(client, other)["prizes"]]
 
-    # A quantity below what is sold shows none left, and the sales stand
-    load(client, admin, prizes=[["P1", "Термокружка", "Coca-Cola", 30, 0]])
-    assert prize(market(client, guest), "Термокружка")["left"] == 0
+    # A quantity below what is sold is refused, and the sales stand
+    body = load(client, admin, prizes=[["P1", "Термокружка", "Coca-Cola", 30, 0]])
+    assert body["failed"] == [{"sheet": "Призы", "row": 2, "reason": "below_sold"}]
+    assert prize(market(client, guest), "Термокружка")["left"] == 1
     assert prize(market(client, guest), "Термокружка")["code"] == code
 
 
@@ -291,7 +292,7 @@ def test_prize_rows_that_fail(client, admin):
             ["P3", "Приз", "A", "дорого", 1], ["P4", "Приз", "A", 10, -1], ["P5", "Приз", "A", 10, 1],
             ["P5", "Приз", "A", 10, 1]]
     body = load(client, admin, prizes=rows)
-    assert body["prizes_added"] == 1
+    assert body["prizes_added"] == 0
     assert [(f["sheet"], f["row"], f["reason"]) for f in body["failed"]] == [
         ("Призы", 2, "no_id"), ("Призы", 3, "no_name"), ("Призы", 4, "no_partner"), ("Призы", 5, "bad_price"),
         ("Призы", 6, "bad_quantity"), ("Призы", 8, "duplicate_id")]

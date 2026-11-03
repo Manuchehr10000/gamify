@@ -1,7 +1,8 @@
 """The admin's Excel file: sheet «Этапы» (the day's schedule), sheet «Задания» (the task catalog),
 sheet «Вопросы» (the quizzes' questions), sheet «Призы» (the market's prizes) and sheet «Уровни» (the levels by points).
 
-Upload reads both sheets; download writes them back the same way, so the file can be edited and uploaded again.
+Upload reads the sheets; download writes them back the same way, so the file can be edited and uploaded again.
+An upload applies whole or not at all, after a preview of what it adds, changes and hides.
 """
 import io
 import math
@@ -10,12 +11,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from decimal import Decimal
+
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
+from app import changes, settings
 from app.guests import random_code
-from app.models import Level, Partner, Prize, Question, Stage, Task
+from app.models import Level, Partner, Prize, Question, Redemption, Stage, Task
 from app.stages import EVENT_TZ
 
 STAGES_SHEET = "Этапы"
@@ -108,13 +112,26 @@ PACKAGES = {
     "mf_partner": ["MF Партнёр", "MF Partner"],
     "supporters": ["Нас поддерживают", "Supporters"],
 }
+# The limits the form and the file share, so a value one accepts the other accepts too: (kind, field) → a number's
+# range, or a text's length from 1
+LIMITS = {
+    ("stages", "number"): (1, 50), ("stages", "name"): (1, 100), ("stages", "message"): (0, 500),
+    ("tasks", "code"): (1, 32), ("tasks", "text"): (1, 1000), ("tasks", "points"): (0, 10000),
+    ("tasks", "coins"): (0, 10000), ("tasks", "link"): (0, 500), ("tasks", "timer_seconds"): (5, 3600),
+    ("prizes", "code"): (1, 32), ("prizes", "name"): (1, 200), ("prizes", "price"): (1, 100000),
+    ("prizes", "quantity"): (0, 100000),
+    ("questions", "number"): (1, 100), ("questions", "text"): (1, 1000), ("questions", "option"): (1, 300),
+    ("levels", "name"): (1, 100), ("levels", "min_points"): (0, 100000),
+    ("partners", "name"): (1, 100),
+}
 DATE_FORMATS = ("%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S")
 EXCEL_DATE = "DD.MM.YYYY HH:MM"
 
 
-def rule_coins(points: int, partner: bool) -> int:
-    """Coins when the cell is blank: 1:1 with points; ×1.5 rounded up for partner tasks (TAG's rules, 3.1–3.2)."""
-    return math.ceil(points * 1.5) if partner else points
+def rule_coins(points: int, partner: bool, multiplier: Decimal) -> int:
+    """Coins when the cell is blank: 1:1 with points; for partner tasks × the admin's multiplier (×1.5 in TAG's
+    rules, 3.1–3.2), rounded up."""
+    return math.ceil(points * multiplier) if partner else points
 
 
 @dataclass
@@ -127,14 +144,21 @@ class ImportResult:
     prizes_added: int = 0
     prizes_changed: int = 0
     prizes_hidden: int = 0
-    # The «Уровни» sheet replaced the levels (it failed whole, or matched what was loaded, otherwise)
+    # The «Уровни» sheet replaced the levels (it matched what was loaded, otherwise)
     levels_changed: bool = False
+    # Any bad row refuses the whole file: nothing applies, and every bad row is named
     failed: list[dict] = field(default_factory=list)
+    # The preview's rows: {sheet, code, name, change: added · changed · hidden}
+    items: list[dict] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
 
 
 class RowError(Exception):
-    pass
+    """A bad row's reason, with the range or length it broke (min, max, column) for the message."""
+
+    def __init__(self, reason: str, **detail):
+        super().__init__(reason)
+        self.detail = detail
 
 
 def _lookup(names: dict[str, list[str]], raw: str) -> str | None:
@@ -154,15 +178,25 @@ def _text(v) -> str:
     return str(v).strip()
 
 
-def _int(v, reason: str) -> int:
+def _int(v, reason: str, limit: tuple[str, str]) -> int:
+    """A whole number within the form's range for (kind, field); the reason names the range."""
+    lo, hi = LIMITS[limit]
     s = _text(v).replace(",", ".")
     try:
         n = float(s)
     except ValueError:
-        raise RowError(reason) from None
-    if not n.is_integer() or n < 0:
-        raise RowError(reason)
+        raise RowError(reason, min=lo, max=hi) from None
+    if not n.is_integer() or not lo <= n <= hi:
+        raise RowError(reason, min=lo, max=hi)
     return int(n)
+
+
+def _long(text: str, limit: tuple[str, str], column: str) -> str:
+    """A text no longer than the form allows for (kind, field)."""
+    hi = LIMITS[limit][1]
+    if len(text) > hi:
+        raise RowError("too_long", column=column, max=hi)
+    return text
 
 
 def _time(v, reason: str) -> datetime:
@@ -207,7 +241,7 @@ class QuestionRow:
 
 
 def _questions(cols: dict[str, int], rows: list[tuple[int, list]],
-               fail: Callable[[str, int, str], None]) -> dict[str, list[QuestionRow]]:
+               fail: Callable[[str, int, "str | RowError"], None]) -> dict[str, list[QuestionRow]]:
     """The «Вопросы» sheet grouped by task ID; a bad row fails on its own and the others load."""
     by_task: dict[str, list[QuestionRow]] = {}
     for n, row in rows:
@@ -215,48 +249,88 @@ def _questions(cols: dict[str, int], rows: list[tuple[int, list]],
             code = _text(_cell(row, cols, "task"))
             if not code:
                 raise RowError("no_task_id")
-            number = _int(_cell(row, cols, "number"), "bad_question_number")
-            if number < 1:
-                raise RowError("bad_question_number")
+            number = _int(_cell(row, cols, "number"), "bad_question_number", ("questions", "number"))
             if any(q.number == number for q in by_task.get(code, [])):
                 raise RowError("duplicate_question")
-            text = _text(_cell(row, cols, "text"))
+            text = _long(_text(_cell(row, cols, "text")), ("questions", "text"), QUESTION_COLUMNS["text"])
             if not text:
                 raise RowError("no_question")
-            cells = [_text(_cell(row, cols, k)) for k in OPTIONS]
+            cells = [_long(_text(_cell(row, cols, k)), ("questions", "option"), QUESTION_COLUMNS[k]) for k in OPTIONS]
             options = [c for c in cells if c]
             # 2–4 options, filled from «Вариант 1» on, so «Правильный» points at the column the admin sees
             if len(options) < 2 or cells[:len(options)] != options:
                 raise RowError("bad_options")
-            correct = _int(_cell(row, cols, "correct"), "bad_correct")
+            correct = _int(_cell(row, cols, "correct"), "bad_correct", ("questions", "number"))
             if not 1 <= correct <= len(options):
                 raise RowError("bad_correct")
         except RowError as e:
-            fail(QUESTIONS_SHEET, n, str(e))
+            fail(QUESTIONS_SHEET, n, e)
             continue
         by_task.setdefault(code, []).append(QuestionRow(n, number, text, options, correct))
     return by_task
 
 
-def _save_questions(db: DbSession, task: Task, rows: list[QuestionRow]) -> bool:
-    """Replace a quiz's questions with the file's; True when they differ from what was loaded."""
-    old = list(db.scalars(select(Question).where(Question.task_id == task.id).order_by(Question.number)))
-    new = sorted(rows, key=lambda q: q.number)
+def _loaded(db: DbSession, task: Task) -> list[Question]:
+    return list(db.scalars(select(Question).where(Question.task_id == task.id).order_by(Question.number)))
+
+
+def _questions_differ(old: list[Question], rows: list[QuestionRow]) -> bool:
     as_rows = [(q.number, q.text, [o for o in (q.option1, q.option2, q.option3, q.option4) if o], q.correct)
                for q in old]
-    if as_rows == [(q.number, q.text, q.options, q.correct) for q in new]:
-        return False
+    return as_rows != [(q.number, q.text, q.options, q.correct) for q in sorted(rows, key=lambda q: q.number)]
+
+
+def _save_questions(db: DbSession, task: Task, old: list[Question], rows: list[QuestionRow]) -> None:
+    """Replace a quiz's questions with the file's."""
     for q in old:
         db.delete(q)
     db.flush()
-    for q in new:
+    for q in sorted(rows, key=lambda q: q.number):
         opts = q.options + [None] * (4 - len(q.options))
         db.add(Question(task_id=task.id, number=q.number, text=q.text, option1=opts[0], option2=opts[1],
                         option3=opts[2], option4=opts[3], correct=q.correct))
-    return True
 
 
-def _partner(db: DbSession, partners: dict[str, Partner], name: str) -> Partner:
+# (kind, item, field, old, new) for the change log, or None while previewing
+Recorder = Callable[[str, int | None, str, str, object, object], None]
+
+
+class _Notes:
+    """What an upload changes, row by row: the preview's list, and the log rows written once it applies."""
+
+    def __init__(self, result: ImportResult):
+        self.result = result
+        self.log: list[tuple[str, object, str, object, object]] = []
+
+    def item(self, sheet: str, code: str, name: str, change: str) -> None:
+        self.result.items.append({"sheet": sheet, "code": code, "name": name, "change": change})
+
+    def added(self, kind: str, row: object, values: dict) -> None:
+        """A new row, and its values, so the log holds what was added."""
+        self.log.append((kind, row, changes.CREATED, None, None))
+        for k, v in values.items():
+            if k not in ("position", "coins_from_rule") and v is not None and v != "":
+                self.log.append((kind, row, k, None, v))
+
+    def set(self, kind: str, row: object, values: dict, skip: tuple[str, ...] = ("position",)) -> bool:
+        """Put the values on the row; True when one that counts changed (moving a row doesn't count)."""
+        changed = False
+        for k, v in values.items():
+            old = getattr(row, k)
+            if old != v and k not in skip:
+                self.log.append((kind, row, k, old, v))
+                changed = True
+            setattr(row, k, v)
+        return changed
+
+    def write(self, db: DbSession, record: Recorder) -> None:
+        db.flush()
+        for kind, row, name, old, new in self.log:
+            record(kind, row.id if hasattr(row, "id") else None, changes.label(db, row) if hasattr(row, "id")
+                   else str(row), name, changes.shown(db, name, old), changes.shown(db, name, new))
+
+
+def _partner(db: DbSession, partners: dict[str, Partner], name: str, notes: _Notes) -> Partner:
     """The partner with this name; a new name adds one (with no package until «Задания» gives it)."""
     partner = partners.get(name)
     if partner is None:
@@ -264,10 +338,18 @@ def _partner(db: DbSession, partners: dict[str, Partner], name: str) -> Partner:
         db.add(partner)
         db.flush()
         partners[name] = partner
+        notes.added("partners", partner, {"name": name})
     return partner
 
 
-def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
+def _locked(model: type):
+    """The rows an upload may change, locked: a form save of one at the same moment waits, then is refused as stale."""
+    return select(model).order_by(model.id).with_for_update().execution_options(populate_existing=True)
+
+
+def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder | None = None) -> ImportResult:
+    """Read the file and diff it with what is loaded. It applies whole or not at all: any bad row refuses the file,
+    naming each bad row, and nothing changes. With apply=False (the preview) nothing changes either way."""
     result = ImportResult()
     try:
         wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
@@ -299,21 +381,24 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
     if result.missing:
         return result
 
-    def fail(sheet: str, row: int, reason: str) -> None:
-        result.failed.append({"sheet": sheet, "row": row, "reason": reason})
+    def fail(sheet: str, row: int, reason: str | RowError) -> None:
+        detail = reason.detail if isinstance(reason, RowError) else {}
+        result.failed.append({"sheet": sheet, "row": row, "reason": str(reason), **detail})
 
-    stages = {s.number: s for s in db.scalars(select(Stage))}
+    notes = _Notes(result)
+    multiplier = settings.get(db, "partner_coin_multiplier")
+    # Switched-off stages too: a row for one switches it back on, as a hidden task's row brings the task back
+    stages = {s.number: s for s in db.scalars(_locked(Stage))}
     seen_stages: set[int] = set()
     for n, row in stage_rows:
         try:
-            number = _int(_cell(row, stage_cols, "number"), "bad_stage_number")
-            if number < 1:
-                raise RowError("bad_stage_number")
+            number = _int(_cell(row, stage_cols, "number"), "bad_stage_number", ("stages", "number"))
             if number in seen_stages:
                 raise RowError("duplicate_stage")
-            name = _text(_cell(row, stage_cols, "name"))
+            name = _long(_text(_cell(row, stage_cols, "name")), ("stages", "name"), STAGE_COLUMNS["name"])
             if not name:
                 raise RowError("no_name")
+            message = _long(_text(_cell(row, stage_cols, "message")), ("stages", "message"), STAGE_COLUMNS["message"])
             starts = _time(_cell(row, stage_cols, "starts_at"), "bad_start")
             ends = _time(_cell(row, stage_cols, "ends_at"), "bad_end")
             if ends <= starts:
@@ -322,25 +407,26 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             if market_cell not in YES + NO:
                 raise RowError("bad_market")
         except RowError as e:
-            fail(STAGES_SHEET, n, str(e))
+            fail(STAGES_SHEET, n, e)
             continue
         seen_stages.add(number)
         values = {"name": name, "starts_at": starts, "ends_at": ends,
-                  "message": _text(_cell(row, stage_cols, "message")), "market": market_cell in YES}
+                  "message": message, "market": market_cell in YES, "active": True}
         stage = stages.get(number)
         if stage is None:
             stage = Stage(number=number, **values)
             db.add(stage)
             stages[number] = stage
             result.stages_added += 1
-        elif any(getattr(stage, k) != v for k, v in values.items()):
-            for k, v in values.items():
-                setattr(stage, k, v)
+            notes.added("stages", stage, {"number": number, **values})
+            notes.item(STAGES_SHEET, str(number), name, "added")
+        elif notes.set("stages", stage, values):
             result.stages_changed += 1
+            notes.item(STAGES_SHEET, str(number), name, "changed")
     db.flush()
 
     questions = _questions(question_cols, question_rows, fail)
-    tasks = {t.code: t for t in db.scalars(select(Task))}
+    tasks = {t.code: t for t in db.scalars(_locked(Task))}
     seen: set[str] = set()
     methods = {_text(_cell(r, task_cols, "code")): _lookup(METHODS, _text(_cell(r, task_cols, "method")))
                for _, r in task_rows}
@@ -349,11 +435,11 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
     # Each partner's package as the first row naming it gives it; a row giving another one fails
     packages: dict[str, str] = {}
     ids: set[str] = set()
-    # Quiz rows loaded in this upload: their «Требует» and whether they already count as added or changed
-    quizzes: dict[str, tuple[str, bool]] = {}
+    # Quiz rows loaded in this upload: their «Требует», whether they already count as added or changed, and the row
+    quizzes: dict[str, tuple[str, bool, int]] = {}
     for position, (n, row) in enumerate(task_rows):
         try:
-            code = _text(_cell(row, task_cols, "code"))
+            code = _long(_text(_cell(row, task_cols, "code")), ("tasks", "code"), TASK_COLUMNS["code"])
             if not code:
                 raise RowError("no_id")
             if code in ids:
@@ -365,13 +451,14 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             type_ = _lookup(TYPES, _text(_cell(row, task_cols, "type")))
             if type_ is None:
                 raise RowError("unknown_type")
-            text = _text(_cell(row, task_cols, "text"))
+            text = _long(_text(_cell(row, task_cols, "text")), ("tasks", "text"), TASK_COLUMNS["text"])
             if not text:
                 raise RowError("no_text")
             if not _text(_cell(row, task_cols, "points")):
                 raise RowError("no_points")
-            points = _int(_cell(row, task_cols, "points"), "bad_points")
-            partner_name = _text(_cell(row, task_cols, "partner_name"))
+            points = _int(_cell(row, task_cols, "points"), "bad_points", ("tasks", "points"))
+            partner_name = _long(_text(_cell(row, task_cols, "partner_name")), ("partners", "name"),
+                                 TASK_COLUMNS["partner_name"])
             package_cell = _text(_cell(row, task_cols, "partner_package"))
             package = _lookup(PACKAGES, package_cell) if package_cell else ""
             if package is None:
@@ -380,7 +467,8 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
                 raise RowError("no_partner_name")
             coins_cell = _cell(row, task_cols, "coins")
             from_rule = not _text(coins_cell)
-            coins = rule_coins(points, bool(partner_name)) if from_rule else _int(coins_cell, "bad_coins")
+            coins = (rule_coins(points, bool(partner_name), multiplier) if from_rule
+                     else _int(coins_cell, "bad_coins", ("tasks", "coins")))
             w_start = _cell(row, task_cols, "window_start")
             w_end = _cell(row, task_cols, "window_end")
             window_start = _time(w_start, "bad_window") if _text(w_start) else None
@@ -391,40 +479,41 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             method = _lookup(METHODS, method_cell) if method_cell else ""
             if method is None:
                 raise RowError("unknown_method")
-            link = _text(_cell(row, task_cols, "link")) if method == "link" else ""
+            link = (_long(_text(_cell(row, task_cols, "link")), ("tasks", "link"), TASK_COLUMNS["link"])
+                    if method == "link" else "")
             if method == "link" and not link:
                 raise RowError("no_link")
             if link and not re.match(r"https?://\S+$", link):
                 raise RowError("bad_link")
             timer_cell = _cell(row, task_cols, "timer") if method == "quiz" else None
-            timer = _int(timer_cell, "bad_timer") if _text(timer_cell) else None
-            if timer == 0:
-                raise RowError("bad_timer")
+            timer = _int(timer_cell, "bad_timer", ("tasks", "timer_seconds")) if _text(timer_cell) else None
             requires = _text(_cell(row, task_cols, "requires")) if method == "quiz" else ""
-            if method == "quiz" and not questions.get(code):
+            # A quiz added in the form before its questions is written back with none: as loaded, not a bad row
+            empty_quiz = code in tasks and tasks[code].method == "quiz" and not _loaded(db, tasks[code])
+            if method == "quiz" and not questions.get(code) and not empty_quiz:
                 raise RowError("no_questions")
             # A blank package cell gives none; two different ones for one partner can't both hold
             if package and packages.setdefault(partner_name, package) != package:
                 raise RowError("package_conflict")
         except RowError as e:
-            fail(TASKS_SHEET, n, str(e))
+            fail(TASKS_SHEET, n, e)
             continue
         ids.add(code)
         parsed.append((n, code, {"stage_id": stage.id, "type": type_, "text": text, "points": points, "coins": coins,
                                  "coins_from_rule": from_rule, "window_start": window_start, "window_end": window_end,
                                  "method": method, "link": link, "timer_seconds": timer, "position": position,
                                  "active": True}, requires, partner_name))
-    partners = {p.name: p for p in db.scalars(select(Partner))}
+    partners = {p.name: p for p in db.scalars(_locked(Partner))}
     # A quiz gated on a QR row that is missing or failed would open to everyone, or never: it fails instead
     loaded_qr = {code for _, code, values, _, _ in parsed if values["method"] == "qr"}
     for n, code, values, requires, partner_name in parsed:
         if requires and requires not in loaded_qr:
             fail(TASKS_SHEET, n, "unknown_requires")
             continue
-        partner = _partner(db, partners, partner_name) if partner_name else None
+        partner = _partner(db, partners, partner_name, notes) if partner_name else None
         if partner is not None:
             # The «Задания» sheet sets the package: the one its rows give, or none
-            partner.package = packages.get(partner_name, "")
+            notes.set("partners", partner, {"package": packages.get(partner_name, "")})
         values["partner_id"] = partner.id if partner else None
         seen.add(code)
         method = values["method"]
@@ -435,44 +524,65 @@ def import_xlsx(db: DbSession, raw: bytes) -> ImportResult:
             db.add(task)
             tasks[code] = task
             result.added += 1
+            notes.added("tasks", task, {"code": code, **values})
+            notes.item(TASKS_SHEET, code, values["text"], "added")
         else:
             # Moving a row doesn't count as a change; editing it, or bringing a hidden one back, does
-            counted = any(getattr(task, k) != v for k, v in values.items() if k != "position")
+            counted = notes.set("tasks", task, values)
             if counted:
                 result.changed += 1
-            for k, v in values.items():
-                setattr(task, k, v)
+                notes.item(TASKS_SHEET, code, values["text"], "changed")
         if method == "quiz":
-            quizzes[code] = (requires, counted)
+            quizzes[code] = (requires, counted, n)
         if method == "qr" and not task.qr_code:
             task.qr_code = _new_qr(db)
-    _link_quizzes(db, tasks, quizzes, questions, methods, result, fail)
+    _link_quizzes(db, tasks, quizzes, questions, methods, notes, fail)
     for code, task in tasks.items():
         if code not in seen and task.active:
-            task.active = False
+            notes.set("tasks", task, {"active": False})
             result.hidden += 1
+            notes.item(TASKS_SHEET, code, task.text, "hidden")
     if prize_sheet:
-        _import_prizes(db, prize_cols, prize_rows, partners, result, fail)
+        _import_prizes(db, prize_cols, prize_rows, partners, notes, fail)
     if level_sheet:
-        _import_levels(db, level_cols, level_rows, result, fail)
+        _import_levels(db, level_cols, level_rows, notes, fail)
+    if result.failed:
+        # Refused whole: nothing of it applies, and the counts say so
+        db.rollback()
+        return ImportResult(failed=result.failed)
+    if not apply:
+        db.rollback()
+        return result
+    if record is not None:
+        notes.write(db, record)
     db.commit()
     return result
 
 
-def _link_quizzes(db: DbSession, tasks: dict[str, Task], quizzes: dict[str, tuple[str, bool]],
-                  questions: dict[str, list[QuestionRow]], methods: dict[str, str | None], result: ImportResult,
-                  fail: Callable[[str, int, str], None]) -> None:
+def _link_quizzes(db: DbSession, tasks: dict[str, Task], quizzes: dict[str, tuple[str, bool, int]],
+                  questions: dict[str, list[QuestionRow]], methods: dict[str, str | None], notes: _Notes,
+                  fail: Callable[[str, int, "str | RowError"], None]) -> None:
     """After all task rows: point each quiz at its «Требует» QR task, save its questions,
-    and fail the questions of an ID that isn't a quiz in the file (a quiz row that failed has its own reason)."""
+    and fail the questions of an ID that isn't a quiz in the file (a quiz row that failed has its own reason).
+    A quiz whose blitz is open keeps its questions: changing them fails the quiz's row."""
+    # The quiz router builds on this module, so it is imported here, not at the top
+    from app.routers.quiz import running
     db.flush()
-    for code, (requires, counted) in quizzes.items():
+    for code, (requires, counted, n) in quizzes.items():
         task = tasks[code]
         requires_id = tasks[requires].id if requires else None
-        changed = task.requires_task_id != requires_id
-        task.requires_task_id = requires_id
-        changed = _save_questions(db, task, questions[code]) or changed
+        changed = notes.set("tasks", task, {"requires_task_id": requires_id})
+        old = _loaded(db, task)
+        if _questions_differ(old, questions.get(code, [])):
+            if old and running(db, task):
+                fail(TASKS_SHEET, n, "quiz_running")
+                continue
+            notes.log.append(("tasks", task, "questions", len(old), len(questions[code])))
+            _save_questions(db, task, old, questions[code])
+            changed = True
         if changed and not counted:
-            result.changed += 1
+            notes.result.changed += 1
+            notes.item(TASKS_SHEET, code, task.text, "changed")
     for code, rows in questions.items():
         if methods.get(code) != "quiz":
             for q in rows:
@@ -480,78 +590,86 @@ def _link_quizzes(db: DbSession, tasks: dict[str, Task], quizzes: dict[str, tupl
 
 
 def _import_prizes(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], partners: dict[str, Partner],
-                   result: ImportResult, fail: Callable[[str, int, str], None]) -> None:
-    prizes = {p.code: p for p in db.scalars(select(Prize))}
+                   notes: _Notes, fail: Callable[[str, int, "str | RowError"], None]) -> None:
+    result = notes.result
+    prizes = {p.code: p for p in db.scalars(_locked(Prize))}
     seen: set[str] = set()
     for position, (n, row) in enumerate(rows):
         try:
-            code = _text(_cell(row, cols, "code"))
+            code = _long(_text(_cell(row, cols, "code")), ("prizes", "code"), PRIZE_COLUMNS["code"])
             if not code:
                 raise RowError("no_id")
             if code in seen:
                 raise RowError("duplicate_id")
-            name = _text(_cell(row, cols, "name"))
+            name = _long(_text(_cell(row, cols, "name")), ("prizes", "name"), PRIZE_COLUMNS["name"])
             if not name:
                 raise RowError("no_name")
-            partner = _text(_cell(row, cols, "partner"))
+            partner = _long(_text(_cell(row, cols, "partner")), ("partners", "name"), PRIZE_COLUMNS["partner"])
             if not partner:
                 raise RowError("no_partner")
-            price = _int(_cell(row, cols, "price"), "bad_price")
-            if price < 1:
-                raise RowError("bad_price")
-            quantity = _int(_cell(row, cols, "quantity"), "bad_quantity")
+            price = _int(_cell(row, cols, "price"), "bad_price", ("prizes", "price"))
+            quantity = _int(_cell(row, cols, "quantity"), "bad_quantity", ("prizes", "quantity"))
+            prize = prizes.get(code)
+            # Bought prizes stay bought: the quantity can't go below them
+            if prize is not None and quantity < sold(db, prize.id):
+                raise RowError("below_sold")
         except RowError as e:
-            fail(PRIZES_SHEET, n, str(e))
+            fail(PRIZES_SHEET, n, e)
             continue
         seen.add(code)
         # Matched by name, or added with no package: only «Задания» gives packages
-        values = {"name": name, "partner_id": _partner(db, partners, partner).id, "price": price,
+        values = {"name": name, "partner_id": _partner(db, partners, partner, notes).id, "price": price,
                   "quantity": quantity, "position": position, "active": True}
-        prize = prizes.get(code)
         if prize is None:
-            db.add(Prize(code=code, **values))
+            prize = Prize(code=code, **values)
+            db.add(prize)
             result.prizes_added += 1
-        else:
-            if any(getattr(prize, k) != v for k, v in values.items() if k != "position"):
-                result.prizes_changed += 1
-            for k, v in values.items():
-                setattr(prize, k, v)
+            notes.added("prizes", prize, {"code": code, **values})
+            notes.item(PRIZES_SHEET, code, name, "added")
+        elif notes.set("prizes", prize, values):
+            result.prizes_changed += 1
+            notes.item(PRIZES_SHEET, code, name, "changed")
     for code, prize in prizes.items():
         if code not in seen and prize.active:
-            prize.active = False
+            notes.set("prizes", prize, {"active": False})
             result.prizes_hidden += 1
+            notes.item(PRIZES_SHEET, code, prize.name, "hidden")
 
 
-def _import_levels(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], result: ImportResult,
-                   fail: Callable[[str, int, str], None]) -> None:
-    """The levels go in whole or not at all: a bad sheet fails with the reason and the old levels stay."""
+def sold(db: DbSession, prize_id: int) -> int:
+    return db.scalar(select(func.count()).where(Redemption.prize_id == prize_id))
+
+
+def _import_levels(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], notes: _Notes,
+                   fail: Callable[[str, int, "str | RowError"], None]) -> None:
+    """The levels are replaced as a whole by the sheet's."""
     levels: list[tuple[str, int]] = []
-    failed = False
     for n, row in rows:
         try:
-            name = _text(_cell(row, cols, "name"))
+            name = _long(_text(_cell(row, cols, "name")), ("levels", "name"), LEVEL_COLUMNS["name"])
             if not name:
                 raise RowError("no_name")
-            points = _int(_cell(row, cols, "min_points"), "bad_level_points")
+            points = _int(_cell(row, cols, "min_points"), "bad_level_points", ("levels", "min_points"))
             if n == rows[0][0] and points != 0:
                 raise RowError("no_zero_level")
             if levels and points <= levels[-1][1]:
                 raise RowError("levels_out_of_order")
         except RowError as e:
-            fail(LEVELS_SHEET, n, str(e))
-            failed = True
+            fail(LEVELS_SHEET, n, e)
             continue
         levels.append((name, points))
     if not rows:
         # A header with no levels under it: there is no 0 level
         fail(LEVELS_SHEET, 2, "no_zero_level")
-        failed = True
     old = [(lv.name, lv.min_points) for lv in db.scalars(select(Level).order_by(Level.min_points))]
-    if failed or levels == old:
+    if notes.result.failed or levels == old:
         return
     db.execute(delete(Level))
     db.add_all(Level(name=name, min_points=points) for name, points in levels)
-    result.levels_changed = True
+    notes.result.levels_changed = True
+    notes.item(LEVELS_SHEET, "", "", "changed")
+    shown = "; ".join(f"{name} {points}" for name, points in old)
+    notes.log.append(("levels", LEVELS_SHEET, "levels", shown, "; ".join(f"{name} {points}" for name, points in levels)))
 
 
 def _new_qr(db: DbSession) -> str:
@@ -575,8 +693,11 @@ def export_xlsx(db: DbSession) -> bytes:
     ws.title = STAGES_SHEET
     ws.append(list(STAGE_COLUMNS.values()))
     stages = list(db.scalars(select(Stage).order_by(Stage.number)))
+    # A switched-off stage stays out of the file; uploading it back leaves it off
     for s in stages:
-        ws.append([s.number, s.name, _local(s.starts_at), _local(s.ends_at), s.message, YES[0] if s.market else None])
+        if s.active:
+            ws.append([s.number, s.name, _local(s.starts_at), _local(s.ends_at), s.message,
+                       YES[0] if s.market else None])
     for col in "CD":
         for cell in ws[col][1:]:
             cell.number_format = EXCEL_DATE

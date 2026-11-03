@@ -44,7 +44,8 @@ def _staff(db: DbSession, authorization: str | None, roles: tuple[str, ...]) -> 
     """The staff account acting, checked on the server against the roles the endpoint allows."""
     s = _session(db, authorization)
     account = db.get(Staff, s.staff_id) if s and s.staff_id is not None else None
-    if account is None or account.role not in roles:
+    # A switched-off account's sessions were ended; this also refuses one still in a phone's storage
+    if account is None or not account.active or account.role not in roles:
         raise HTTPException(401, "not_logged_in")
     return account
 

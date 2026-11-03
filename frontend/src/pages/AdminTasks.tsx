@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Lock, Printer } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { confirmed } from '../admin'
 import { api, ApiError, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
 import { Button, Card, Screen } from '../components/ui'
@@ -19,7 +20,11 @@ type Result = {
   prizes_changed: number
   prizes_hidden: number
   levels_changed: boolean
-  failed: { sheet: string; row: number; reason: string }[]
+  // Any bad row refuses the whole file
+  // A range or length the row broke comes with it (min, max, column), for the message
+  failed: { sheet: string; row: number; reason: string; min?: number; max?: number; column?: string }[]
+  // The preview: what the file adds, changes and hides
+  items: { sheet: string; code: string; name: string; change: 'added' | 'changed' | 'hidden' }[]
 }
 
 export function AdminTasks() {
@@ -27,6 +32,7 @@ export function AdminTasks() {
   const [token, setToken] = useState(tokens.get('admin'))
   const [schedule, setSchedule] = useState<Schedule | null>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<Result | null>(null)
   const [result, setResult] = useState<Result | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -53,16 +59,41 @@ export function AdminTasks() {
     if (token) api<Schedule>('/api/admin/stages', { token }).then(setSchedule).catch(fail)
   }, [token, fail])
 
-  async function upload(e: FormEvent) {
+  // First the preview: nothing changes until the admin presses «Применить», which sends the same file again
+  async function send(path: string) {
+    if (!file) return null
+    const form = new FormData()
+    form.append('file', file)
+    return api<Result>(path, { token, form })
+  }
+
+  async function check(e: FormEvent) {
     e.preventDefault()
-    if (!file) return
     setBusy(true)
     setError('')
     setResult(null)
-    const form = new FormData()
-    form.append('file', file)
+    setPreview(null)
     try {
-      setResult(await api<Result>('/api/admin/tasks/import', { token, form }))
+      setPreview(await send('/api/admin/tasks/import/preview'))
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function apply() {
+    setBusy(true)
+    setError('')
+    try {
+      const applied = await send('/api/admin/tasks/import')
+      // Something changed since the preview and a row no longer fits: the file is refused whole, as shown
+      if (applied?.failed.length) {
+        setPreview(applied)
+        return
+      }
+      setResult(applied)
+      setPreview(null)
       setSchedule(await api<Schedule>('/api/admin/stages', { token }))
     } catch (err) {
       fail(err)
@@ -72,11 +103,13 @@ export function AdminTasks() {
   }
 
   async function nextStage() {
-    if (!window.confirm(t('tasksAdmin.confirmNext'))) return
     setBusy(true)
     setError('')
     try {
-      setSchedule(await api<Schedule>('/api/admin/stages/advance', { token, method: 'POST' }))
+      // The server says which stage ends and which starts; nothing changes until the admin agrees
+      const next = await confirmed(t, (yes) =>
+        api<Schedule>(`/api/admin/stages/advance${yes ? '?confirm=true' : ''}`, { token, method: 'POST' }))
+      if (next) setSchedule(next)
     } catch (err) {
       fail(err)
     } finally {
@@ -111,7 +144,7 @@ export function AdminTasks() {
           <Button variant="outline" disabled={busy || !canAdvance} onClick={nextStage}>{t('tasksAdmin.next')}</Button>
         </Card>
         <Card>
-          <form onSubmit={upload} className="flex flex-col gap-4">
+          <form onSubmit={check} className="flex flex-col gap-4">
             <p className="text-sm text-slate-600">{t('tasksAdmin.uploadHint')}</p>
             <label className="flex cursor-pointer items-center gap-3 text-sm">
               <span className="rounded-lg bg-slate-100 px-3 py-2 font-medium hover:bg-slate-200">{t('admin.chooseFile')}</span>
@@ -127,8 +160,10 @@ export function AdminTasks() {
           </form>
         </Card>
         {error && <p className="text-sm text-red-600">{error}</p>}
+        {preview && <Preview preview={preview} busy={busy} onApply={apply} onCancel={() => setPreview(null)} />}
         {result && (
           <Card className="flex flex-col gap-1">
+            <p className="font-medium text-emerald-700">{t('tasksAdmin.applied')}</p>
             <p className="font-medium">{t('tasksAdmin.added', { count: result.added })}</p>
             <p className="text-slate-600">{t('tasksAdmin.changed', { count: result.changed })}</p>
             <p className="text-slate-600">{t('tasksAdmin.hidden', { count: result.hidden })}</p>
@@ -145,18 +180,6 @@ export function AdminTasks() {
               </p>
             )}
             {result.levels_changed && <p className="text-slate-600">{t('tasksAdmin.levels')}</p>}
-            {result.failed.length > 0 && (
-              <>
-                <p className="mt-2 font-medium text-red-700">{t('admin.failedTitle')}</p>
-                <ul className="text-sm text-red-700">
-                  {result.failed.map((f) => (
-                    <li key={`${f.sheet}-${f.row}`}>
-                      {t('tasksAdmin.row', { sheet: f.sheet, row: f.row, reason: t(`tasksAdmin.reasons.${f.reason}`) })}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
           </Card>
         )}
         <Button variant="outline" onClick={() => download('/api/admin/tasks/export', token, 'tasks.xlsx').catch(fail)}>
@@ -166,6 +189,47 @@ export function AdminTasks() {
       </div>
       <RatingFreeze token={token} fail={fail} />
     </Screen>
+  )
+}
+
+function Preview({ preview, busy, onApply, onCancel }:
+  { preview: Result; busy: boolean; onApply: () => void; onCancel: () => void }) {
+  const { t } = useTranslation()
+  if (preview.failed.length > 0) {
+    return (
+      <Card className="flex flex-col gap-2">
+        <p className="font-medium text-red-700">{t('tasksAdmin.refused')}</p>
+        <ul className="text-sm text-red-700">
+          {preview.failed.map((f) => (
+            <li key={`${f.sheet}-${f.row}-${f.reason}`}>
+              {t('tasksAdmin.row', { sheet: f.sheet, row: f.row, reason: t(`tasksAdmin.reasons.${f.reason}`, { min: f.min, max: f.max, column: f.column }) })}
+            </li>
+          ))}
+        </ul>
+      </Card>
+    )
+  }
+  return (
+    <Card className="flex flex-col gap-3">
+      <p className="font-medium">{t('tasksAdmin.preview.title')}</p>
+      {preview.items.length === 0
+        ? <p className="text-sm text-slate-600">{t('tasksAdmin.preview.none')}</p>
+        : (
+          <ul className="max-h-80 overflow-y-auto text-sm">
+            {preview.items.map((i) => (
+              <li key={`${i.sheet}-${i.code}-${i.change}`} className={i.change === 'hidden' ? 'text-amber-700' : 'text-slate-700'}>
+                {i.sheet === 'Уровни'
+                  ? t('tasksAdmin.preview.levels')
+                  : t('tasksAdmin.preview.item', { sheet: i.sheet, code: i.code, name: i.name, change: t(`tasksAdmin.preview.change.${i.change}`) })}
+              </li>
+            ))}
+          </ul>
+        )}
+      <div className="flex gap-3">
+        <Button disabled={busy || preview.items.length === 0} onClick={onApply}>{t('tasksAdmin.preview.apply')}</Button>
+        <Button variant="outline" disabled={busy} onClick={onCancel}>{t('tasksAdmin.preview.cancel')}</Button>
+      </div>
+    </Card>
   )
 }
 

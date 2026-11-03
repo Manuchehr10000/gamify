@@ -1,11 +1,12 @@
 import { ChevronLeft, Lock } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { BadgeIcons } from '../components/BadgeIcon'
 import { Card, Screen } from '../components/ui'
 import type { Rating as RatingData } from '../rating'
+import { useConfigVersion } from '../version'
 
 type State = { kind: 'loading' } | { kind: 'loggedOut' } | { kind: 'error' } | { kind: 'ready'; rating: RatingData }
 
@@ -13,7 +14,7 @@ export function Rating() {
   const { t } = useTranslation()
   const [state, setState] = useState<State>(() => (tokens.get('guest') ? { kind: 'loading' } : { kind: 'loggedOut' }))
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const token = tokens.get('guest')
     if (!token) return
     api<RatingData>('/api/rating', { token })
@@ -23,10 +24,14 @@ export function Rating() {
           tokens.clear('guest')
           setState({ kind: 'loggedOut' })
         } else {
-          setState({ kind: 'error' })
+          setState((s) => (s.kind === 'ready' ? s : { kind: 'error' }))
         }
       })
   }, [])
+
+  useEffect(load, [load])
+  // An admin's change (the ranking size, a level) shows within 10 seconds
+  useConfigVersion(load)
 
   if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
   if (state.kind !== 'ready') {

@@ -11,6 +11,7 @@ import { TaskIcon } from '../components/TaskIcon'
 import { Card, Screen } from '../components/ui'
 import { cache, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
 import { forgetUpload, onSent, useUpload } from '../uploads'
+import { useConfigVersion } from '../version'
 
 // The stage can change at any moment (by the clock or the admin's button): ask again well inside a minute
 const POLL_MS = 30_000
@@ -77,6 +78,9 @@ export function Feed() {
       window.removeEventListener('online', load)
     }
   }, [load])
+
+  // An admin's change (points, a task switched off, the stage) shows within 10 seconds
+  useConfigVersion(load)
 
   useEffect(() => {
     if (!banner) return

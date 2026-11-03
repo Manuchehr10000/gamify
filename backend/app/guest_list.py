@@ -1,6 +1,8 @@
-"""TAG's guest list as CSV: read an upload (UTF-8 or Excel's Windows-1251), write it back with links."""
+"""TAG's guest list as CSV: read an upload (UTF-8 or Excel's Windows-1251), write it back with links.
+An upload applies whole or not at all, after a preview of whom it adds and changes."""
 import csv
 import io
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -27,9 +29,15 @@ NOT_RANKED = {"нет", "no", "н", "0", "false"}
 @dataclass
 class ImportResult:
     added: int = 0
+    # Guests already in the list; changed counts those whose details differ
     updated: int = 0
+    changed: int = 0
+    # Any bad row refuses the whole file: nothing applies, and every bad row is named
     failed: list[dict] = field(default_factory=list)
     missing_columns: list[str] = field(default_factory=list)
+    # The preview's rows: {reg_id, name, change: added · changed}. Guests missing from the file are never hidden:
+    # they may already have points
+    items: list[dict] = field(default_factory=list)
 
 
 def _decode(raw: bytes) -> str:
@@ -59,7 +67,10 @@ def _columns(header: list[str]) -> dict[str, int]:
     return found
 
 
-def import_csv(db: DbSession, raw: bytes) -> ImportResult:
+def import_csv(db: DbSession, raw: bytes, apply: bool = True,
+               record: Callable[[ImportResult], None] | None = None) -> ImportResult:
+    """Applies whole or not at all; with apply=False (the preview) nothing changes either way. record writes the
+    change log in the same transaction, when the upload changes something."""
     result = ImportResult()
     rows = list(_reader(_decode(raw)))
     if not rows:
@@ -102,8 +113,12 @@ def import_csv(db: DbSession, raw: bytes) -> ImportResult:
         if "in_rating" in cols:
             values["in_rating"] = cell(row, "in_rating").lower() not in NOT_RANKED
         guest = existing.get(reg_id)
+        name = f"{first} {last}".strip()
         if guest:
             # Re-upload: details may change, the link never does
+            if any(getattr(guest, k) != v for k, v in values.items()):
+                result.changed += 1
+                result.items.append({"reg_id": reg_id, "name": name, "change": "changed"})
             for k, v in values.items():
                 setattr(guest, k, v)
             result.updated += 1
@@ -111,6 +126,15 @@ def import_csv(db: DbSession, raw: bytes) -> ImportResult:
             db.add(Guest(reg_id=reg_id, code=new_code(db), **values))
             db.flush()
             result.added += 1
+            result.items.append({"reg_id": reg_id, "name": name, "change": "added"})
+    if result.failed:
+        db.rollback()
+        return ImportResult(failed=result.failed)
+    if not apply:
+        db.rollback()
+        return result
+    if record is not None and (result.added or result.changed):
+        record(result)
     db.commit()
     return result
 

@@ -272,9 +272,9 @@ def test_quiz_needs_the_hall_check_in_first(client, admin, guest, at):
     (quiz("Q2", "Таймер", timer="минута"), questions("Q2", 1), [("Задания", 3, "bad_timer")]),
     (quiz("Q2", "Требует", requires="NOPE"), questions("Q2", 1), [("Задания", 3, "unknown_requires")]),
 ])
-def test_bad_quiz_rows_fail_and_the_others_load(client, admin, task_row, question_rows, failed):
+def test_bad_quiz_rows_refuse_the_file(client, admin, task_row, question_rows, failed):
     body = load(client, admin, [quiz("Q1", "Хороший квиз"), task_row], questions("Q1", 5) + question_rows)
-    assert body["added"] == 1
+    assert body["added"] == 0
     assert sorted((f["sheet"], f["row"], f["reason"]) for f in body["failed"]) == sorted(failed)
 
 
@@ -292,7 +292,8 @@ def test_quiz_fails_when_its_hall_qr_row_breaks_on_reupload(client, admin):
     bad_qr[2] = "Неизвестный тип"
     body = load(client, admin, [quiz("M1", "Мастер-класс", requires="HALL"), bad_qr], questions("M1", 2))
     assert sorted((f["row"], f["reason"]) for f in body["failed"]) == [(2, "unknown_requires"), (3, "unknown_type")]
-    assert body["hidden"] == 2
+    # Refused whole: both stay as they were
+    assert body["hidden"] == 0
 
 
 def test_question_for_a_task_that_is_not_a_quiz_fails(client, admin):

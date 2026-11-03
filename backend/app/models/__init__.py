@@ -63,6 +63,11 @@ class Staff(Base):
     # bcrypt of the PIN or password; the secret alone identifies the account, so each one is unique
     secret_hash: Mapped[str] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Switched off by an admin: can't log in, and its sessions were ended
+    active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class ScoreEvent(Base):
@@ -102,6 +107,11 @@ class Stage(Base):
     message: Mapped[str] = mapped_column(Text, default="")
     # The market opens when the first stage marked «Маркет» starts
     market: Mapped[bool] = mapped_column(default=False)
+    # Switched off in the admin's form: left out of the day's schedule. A stage with tasks is never deleted
+    active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class Partner(Base):
@@ -112,8 +122,12 @@ class Partner(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True)
     # general, headliner, mf_partner, supporters, or "" (none given): set by the «Задания» sheet
     package: Mapped[str] = mapped_column(String(16), default="")
-    logo: Mapped[str | None] = mapped_column(Text)
+    # PNG or JPEG bytes, up to 1 MB; deferred so listing partners never loads them
+    logo: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class Task(Base):
@@ -147,6 +161,9 @@ class Task(Base):
     position: Mapped[int] = mapped_column(default=0)
     # Rows removed from the file are hidden, not deleted: later pieces keep what guests did
     active: Mapped[bool] = mapped_column(default=True)
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class Prize(Base):
@@ -162,6 +179,9 @@ class Prize(Base):
     position: Mapped[int] = mapped_column(default=0)
     # Rows removed from the file are hidden, not deleted: guests who bought them still get them
     active: Mapped[bool] = mapped_column(default=True)
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class Redemption(Base):
@@ -216,6 +236,9 @@ class Question(Base):
     option4: Mapped[str | None] = mapped_column(Text)
     # 1–4: which option is right; never sent to the guest
     correct: Mapped[int]
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class QuizAttempt(Base):
@@ -243,6 +266,9 @@ class Level(Base):
     # The file's «Уровни» sheet: «Название» and «Баллов от»; the first level starts at 0
     name: Mapped[str] = mapped_column(String(100))
     min_points: Mapped[int] = mapped_column(unique=True)
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
 
 
 class BadgeAward(Base):
@@ -269,3 +295,40 @@ class JobRun(Base):
     # ok · failed (error says why) · skipped (the previous run still held the lock)
     result: Mapped[str] = mapped_column(String(16), default="")
     error: Mapped[str] = mapped_column(Text, default="")
+
+
+class Setting(Base):
+    """A game setting the admin edits in the form. The keys and their defaults are in app.settings."""
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    min_value: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    max_value: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    # now (from now on) · recheck (past activity is checked again) · locked (refused while running)
+    effect: Mapped[str] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
+
+
+class ChangeEvent(Base):
+    """The admins' change log. Append-only: a database trigger refuses updates and deletes."""
+    __tablename__ = "change_events"
+    __table_args__ = (Index("change_events_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The admin who saved it; no foreign key, so the log outlives the account
+    staff_id: Mapped[int | None]
+    staff_name: Mapped[str] = mapped_column(String(100))
+    # A list kind (stages, tasks, …), settings, rating or guests
+    kind: Mapped[str] = mapped_column(String(32))
+    item_id: Mapped[int | None]
+    # What the item was called when it changed: a task's ID, a stage's name, a setting's key
+    item: Mapped[str] = mapped_column(String(200))
+    # The field's key; _created and _deleted for whole rows
+    field: Mapped[str] = mapped_column(String(64))
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    # form or excel
+    source: Mapped[str] = mapped_column(String(8))

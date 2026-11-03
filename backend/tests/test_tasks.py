@@ -88,11 +88,11 @@ def test_upload_of_four_stages_and_42_tasks(client, admin):
     assert (body["stages_added"], body["added"], body["failed"]) == (4, 42, [])
 
 
-def test_bad_rows_fail_with_reason_and_others_load(client, admin):
+def test_bad_rows_refuse_the_file_naming_each(client, admin):
     rows = [task("A", 1, "Хорошее"), task("B", 7, "Нет такого этапа"), task("C", 1, "Без баллов", points=None),
             task("D", 1, "Странный тип", type_="Танец"), task("A", 1, "Повтор ID")]
     body = upload(client, admin, xlsx(task_rows=rows)).json()
-    assert body["added"] == 1
+    assert (body["added"], body["stages_added"]) == (0, 0)
     assert body["failed"] == [
         {"sheet": "Задания", "row": 3, "reason": "unknown_stage"},
         {"sheet": "Задания", "row": 4, "reason": "no_points"},
@@ -198,20 +198,26 @@ def test_before_and_after_the_game(client, admin, guest, clock):
 def test_next_stage_now(client, admin, guest, clock):
     upload(client, admin, xlsx())
     clock("11:00")
+    # First it says what will change, and changes nothing
     r = client.post("/api/admin/stages/advance", headers=admin)
+    assert (r.status_code, r.json()["detail"]) == (
+        409, {"code": "confirm", "impact": [{"code": "stage_change", "from": 2, "to": 3}]})
+    assert feed(client, guest)["stage"]["number"] == 2
+    r = client.post("/api/admin/stages/advance?confirm=true", headers=admin)
     assert r.json()["current"] == 3
     f = feed(client, guest)
     assert f["stage"]["number"] == 3
     assert f["stage"]["message"] == "Маркет открыт"
     assert {t["text"] for t in f["tasks"]} == {f"Задание {i}" for i in range(42) if i % 4 + 1 == 3}
-    client.post("/api/admin/stages/advance", headers=admin)
-    assert client.post("/api/admin/stages/advance", headers=admin).status_code == 409
+    client.post("/api/admin/stages/advance?confirm=true", headers=admin)
+    r = client.post("/api/admin/stages/advance?confirm=true", headers=admin)
+    assert (r.status_code, r.json()["detail"]) == (409, "no_next_stage")
 
 
 def test_next_stage_before_the_game_starts_stage_one(client, admin, guest, clock):
     upload(client, admin, xlsx())
     clock("08:00")
-    assert client.post("/api/admin/stages/advance", headers=admin).json()["current"] == 1
+    assert client.post("/api/admin/stages/advance?confirm=true", headers=admin).json()["current"] == 1
 
 
 def test_task_card_details_and_done(client, admin, guest, clock):

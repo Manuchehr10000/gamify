@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import config, ledger
+from app import config, ledger, settings
 from app.auth import current_guest, start_session
 from app.db import get_db
 from app.models import Guest, ScoreEvent
@@ -14,7 +14,6 @@ from app.models import Guest, ScoreEvent
 router = APIRouter()
 
 ARRIVAL = "forum_arrival"
-ARRIVAL_POINTS = 10
 
 
 class Me(BaseModel):
@@ -49,6 +48,6 @@ def me(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -
 def consent(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Me:
     if guest.consented_at is None:
         guest.consented_at = datetime.now(timezone.utc)
-    ledger.write(db, guest.id, ARRIVAL, "arrival", ARRIVAL_POINTS, 0)
+    ledger.write(db, guest.id, ARRIVAL, "arrival", settings.number(db, "arrival_points"), 0)
     db.commit()
     return _me(db, guest)

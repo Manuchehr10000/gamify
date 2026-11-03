@@ -1,5 +1,5 @@
 import { Camera, Check, ChevronLeft, ExternalLink, LoaderCircle, Lock, QrCode, ShoppingBag, WifiOff } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link, useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
@@ -9,6 +9,7 @@ import { TaskIcon } from '../components/TaskIcon'
 import { Button, Card, Screen } from '../components/ui'
 import { cache, type Award, type Task } from '../feed'
 import { forgetUpload, sendPhoto, sendText, shrink, useUpload, type Upload } from '../uploads'
+import { useConfigVersion } from '../version'
 import { PartnerBadge, Reward } from './Feed'
 
 type State = { kind: 'loading' } | { kind: 'missing' } | { kind: 'ready'; task: Task }
@@ -256,7 +257,7 @@ export function TaskDetail() {
   // The result was seen here; next time the task itself says «Выполнено»
   useEffect(() => () => forgetUpload(id), [id])
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api<Task>(`/api/tasks/${id}`, { token: tokens.get('guest') })
       .then((task) => setState({ kind: 'ready', task }))
       .catch((err) => {
@@ -265,6 +266,10 @@ export function TaskDetail() {
         else setState((s) => (s.kind === 'loading' ? { kind: 'missing' } : s))
       })
   }, [id])
+
+  useEffect(load, [load])
+  // An admin's change to the task (points, switched off) shows within 10 seconds
+  useConfigVersion(load)
 
   if (shown) return <Screen><AwardView award={shown} /></Screen>
 
