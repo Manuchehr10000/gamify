@@ -149,6 +149,7 @@ function ListTab({ kind, token, loggedOut }: TabProps & { kind: Kind }) {
       {editing === null && <Button className="self-start" onClick={() => setEditing('new')}>{t('settingsAdmin.add')}</Button>}
       {editing !== null && (
         <RowForm
+          key={editing === 'new' ? 'new' : editing.id}
           kind={kind}
           token={token}
           fields={list.fields}

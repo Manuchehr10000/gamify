@@ -3,6 +3,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app import changes, settings
 from app.auth import require_role
@@ -83,7 +84,12 @@ def _upload(db: DbSession, raw: bytes, admin: Staff, apply: bool) -> ImportResul
         logged.append(field)
         changes.record(db, admin, kind, item_id, item, field, old, new, source="excel")
 
-    result = import_xlsx(db, raw, apply=apply, record=record)
+    try:
+        result = import_xlsx(db, raw, apply=apply, record=record)
+    except StaleDataError:
+        # A form save moved one of the file's rows first: the upload is refused whole, like a stale save
+        db.rollback()
+        raise HTTPException(409, {"code": "stale"}) from None
     if result.missing:
         raise HTTPException(400, {"code": "missing", "items": result.missing})
     return result

@@ -46,6 +46,8 @@ export function AdminTasks() {
     const detail = err instanceof ApiError ? err.detail as { code?: string; items?: string[] } | string : null
     if (typeof detail === 'object' && detail?.code === 'missing') {
       setError(t('tasksAdmin.missing', { items: (detail.items ?? []).join(', ') }))
+    } else if (typeof detail === 'object' && detail?.code === 'stale') {
+      setError(t('settingsAdmin.errors.stale'))
     } else if (detail === 'nobody_ranked') {
       setError(t('ratingAdmin.nobodyRanked'))
     } else if (detail === 'no_next_stage') {

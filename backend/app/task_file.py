@@ -271,7 +271,9 @@ def _questions(cols: dict[str, int], rows: list[tuple[int, list]],
 
 
 def _loaded(db: DbSession, task: Task) -> list[Question]:
-    return list(db.scalars(select(Question).where(Question.task_id == task.id).order_by(Question.number)))
+    # Locked, as the upload may replace them: a form save of one at the same moment waits, then is refused as stale
+    return list(db.scalars(select(Question).where(Question.task_id == task.id).order_by(Question.number)
+                           .with_for_update().execution_options(populate_existing=True)))
 
 
 def _questions_differ(old: list[Question], rows: list[QuestionRow]) -> bool:
