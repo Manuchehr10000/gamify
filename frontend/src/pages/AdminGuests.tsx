@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { Button, Card, Screen } from '../components/ui'
+import { AdminShell, DataTable, FileUpload } from '../components/console/admin'
+import { Button, Callout, Card } from '../components/console/ui'
 
 type Result = {
   added: number
@@ -74,42 +75,42 @@ export function AdminGuests() {
   if (!token) return <StaffLogin role="admin" onLogin={setToken} />
 
   return (
-    <Screen>
-      <h1 className="text-xl font-semibold">{t('staff.adminTitle')}</h1>
+    <AdminShell
+      title={t('staff.adminTitle')}
+      actions={(
+        <Button variant="outline" icon="download" block={false} onClick={() => download('/api/admin/guests/export', token, 'guests.csv').catch(fail)}>
+          {t('admin.download')}
+        </Button>
+      )}
+    >
       <Card>
-        <form onSubmit={check} className="flex flex-col gap-4">
-          <p className="text-sm text-slate-600">{t('admin.uploadHint')}</p>
-          <label className="flex cursor-pointer items-center gap-3 text-sm">
-            <span className="rounded-lg bg-slate-100 px-3 py-2 font-medium hover:bg-slate-200">{t('admin.chooseFile')}</span>
-            <span className="truncate text-slate-600">{file?.name ?? t('admin.noFile')}</span>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="sr-only"
-            />
-          </label>
-          <Button disabled={!file || busy}>{t('admin.upload')}</Button>
+        <form onSubmit={check} className="gc-admin-form" aria-busy={busy || undefined}>
+          <p className="gc-admin-note gc-body-s">{t('admin.uploadHint')}</p>
+          <FileUpload accept=".csv,text/csv" fileName={file?.name} busy={busy} onChange={setFile} />
+          <Button type="submit" busy={busy} disabled={!file}>{t('admin.upload')}</Button>
         </form>
       </Card>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {/* A file with missing columns: today's message */}
+      {error && <Callout tone="danger">{error}</Callout>}
       {preview && preview.failed.length > 0 && (
-        <Card className="flex flex-col gap-2">
-          <p className="font-medium text-red-700">{t('admin.failedTitle')}</p>
-          <ul className="text-sm text-red-700">
-            {preview.failed.map((f) => (
-              <li key={f.row}>{t('admin.row', { row: f.row, reason: t(`admin.reasons.${f.reason}`) })}</li>
-            ))}
-          </ul>
-        </Card>
+        <>
+          <Callout tone="danger">{t('admin.failedTitle')}</Callout>
+          <Card>
+            <DataTable
+              caption={t('admin.failedRows')}
+              columns={[{ key: 'row', label: t('admin.rowNumber'), align: 'right' }, { key: 'reason', label: t('admin.reason') }]}
+              rows={preview.failed.map((f) => ({ id: f.row, row: f.row, reason: t(`admin.reasons.${f.reason}`) }))}
+            />
+          </Card>
+        </>
       )}
       {preview && preview.failed.length === 0 && (
-        <Card className="flex flex-col gap-3">
-          <p className="font-medium">{t('admin.preview.title')}</p>
+        <Card>
+          <p className="gc-label">{t('admin.preview.title')}</p>
           {preview.items.length === 0
-            ? <p className="text-sm text-slate-600">{t('admin.preview.none')}</p>
+            ? <p className="gc-admin-note gc-body-s">{t('admin.preview.none')}</p>
             : (
-              <ul className="max-h-80 overflow-y-auto text-sm text-slate-700">
+              <ul className="gc-list-group gc-admin-preview gc-body-s">
                 {preview.items.map((i) => (
                   <li key={i.reg_id}>
                     {t('admin.preview.item', { reg_id: i.reg_id, name: i.name, change: t(`admin.preview.change.${i.change}`) })}
@@ -117,22 +118,19 @@ export function AdminGuests() {
                 ))}
               </ul>
             )}
-          <p className="text-sm text-slate-500">{t('admin.preview.note')}</p>
-          <div className="flex gap-3">
-            <Button disabled={busy || preview.items.length === 0} onClick={apply}>{t('admin.preview.apply')}</Button>
+          <p className="gc-admin-note gc-body-s">{t('admin.preview.note')}</p>
+          <div className="gc-admin-pair">
             <Button variant="outline" disabled={busy} onClick={() => setPreview(null)}>{t('admin.preview.cancel')}</Button>
+            <Button busy={busy} disabled={preview.items.length === 0} onClick={apply}>{t('admin.preview.apply')}</Button>
           </div>
         </Card>
       )}
       {result && (
-        <Card className="flex flex-col gap-2">
-          <p className="font-medium">{t('admin.added', { count: result.added })}</p>
-          {result.changed > 0 && <p className="text-slate-600">{t('admin.changed', { count: result.changed })}</p>}
-        </Card>
+        <Callout tone="success">
+          <p>{t('admin.added', { count: result.added })}</p>
+          {result.changed > 0 && <p>{t('admin.changed', { count: result.changed })}</p>}
+        </Callout>
       )}
-      <Button variant="outline" onClick={() => download('/api/admin/guests/export', token, 'guests.csv').catch(fail)}>
-        {t('admin.download')}
-      </Button>
-    </Screen>
+    </AdminShell>
   )
 }

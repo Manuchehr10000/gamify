@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Lock, Printer } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { confirmed } from '../admin'
 import { api, ApiError, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { Button, Card, Screen } from '../components/ui'
-import { hhmm, type Stage } from '../feed'
+import { AdminShell, DataTable, FileUpload, StageSchedule } from '../components/console/admin'
+import { InlineConfirm, SectionHeading } from '../components/console/rewards'
+import { Button, Callout, Card, Icon } from '../components/console/ui'
+import type { Stage } from '../feed'
 import type { Frozen } from '../rating'
 
 type Schedule = { state: 'none' | 'before' | 'running' | 'over'; current: number | null; stages: Stage[] }
@@ -36,6 +35,8 @@ export function AdminTasks() {
   const [result, setResult] = useState<Result | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  // The next-stage question in the stage card, naming the stage that ends and the one that starts
+  const [asking, setAsking] = useState<string | null>(null)
 
   const fail = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) {
@@ -104,14 +105,33 @@ export function AdminTasks() {
     }
   }
 
-  async function nextStage() {
+  // First ask the server what would change (without confirm it changes nothing), then ask the admin in the card
+  async function askNext() {
     setBusy(true)
     setError('')
     try {
-      // The server says which stage ends and which starts; nothing changes until the admin agrees
-      const next = await confirmed(t, (yes) =>
-        api<Schedule>(`/api/admin/stages/advance${yes ? '?confirm=true' : ''}`, { token, method: 'POST' }))
-      if (next) setSchedule(next)
+      setSchedule(await api<Schedule>('/api/admin/stages/advance', { token, method: 'POST' }))
+    } catch (err) {
+      const detail = err instanceof ApiError ? err.detail as { code?: string; impact?: { from: number | null; to: number | null }[] } : null
+      if (err instanceof ApiError && err.status === 409 && detail?.code === 'confirm') {
+        const none = t('settingsAdmin.stageNone')
+        const lines = (detail.impact ?? []).map((i) => t('settingsAdmin.impact.stage_change', { from: i.from ?? none, to: i.to ?? none }))
+        setAsking([t('tasksAdmin.confirmNext'), ...lines].join(' '))
+      } else {
+        fail(err)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Called only after the admin said yes in the stage card; «Отмена» never sends the confirm
+  async function nextStage() {
+    setAsking(null)
+    setBusy(true)
+    setError('')
+    try {
+      setSchedule(await api<Schedule>('/api/admin/stages/advance?confirm=true', { token, method: 'POST' }))
     } catch (err) {
       fail(err)
     } finally {
@@ -121,105 +141,94 @@ export function AdminTasks() {
 
   if (!token) return <StaffLogin role="admin" onLogin={setToken} />
 
-  const current = schedule?.stages.find((s) => s.number === schedule.current)
-  const canAdvance = schedule?.state === 'before' || (schedule?.state === 'running' && schedule.current !== schedule.stages.length)
   return (
-    <Screen>
-      <div className="flex flex-col gap-4 print:hidden">
-        <h1 className="text-xl font-semibold">{t('tasksAdmin.title')}</h1>
-        <Card className="flex flex-col gap-3">
-          <p className="text-sm text-slate-600">{t('tasksAdmin.currentStage')}</p>
-          <p className="text-lg font-semibold">
-            {current
-              ? `${current.number}. ${current.name} · ${hhmm(current.starts_at)}–${hhmm(current.ends_at)}`
-              : t(`tasksAdmin.state.${schedule?.state ?? 'none'}`)}
-          </p>
-          {schedule && schedule.stages.length > 0 && (
-            <ol className="text-sm text-slate-600">
-              {schedule.stages.map((s) => (
-                <li key={s.number} className={s.number === schedule.current ? 'font-medium text-slate-900' : ''}>
-                  {s.number}. {s.name} · {hhmm(s.starts_at)}–{hhmm(s.ends_at)}
-                </li>
-              ))}
-            </ol>
-          )}
-          <Button variant="outline" disabled={busy || !canAdvance} onClick={nextStage}>{t('tasksAdmin.next')}</Button>
-        </Card>
+    <AdminShell
+      title={t('tasksAdmin.title')}
+      actions={(
+        <>
+          <Button variant="outline" icon="download" block={false} onClick={() => download('/api/admin/tasks/export', token, 'tasks.xlsx').catch(fail)}>
+            {t('tasksAdmin.download')}
+          </Button>
+          <Button variant="outline" icon="qr" block={false} to="/admin/tasks/qr">{t('tasksAdmin.qrLink')}</Button>
+        </>
+      )}
+    >
+      {/* Printing this page gives the frozen top 10 only */}
+      <div className="gc-admin-shell__body gc-no-print">
+        {error && <Callout tone="danger">{error}</Callout>}
+        <StageSchedule
+          schedule={schedule}
+          busy={busy}
+          asking={asking}
+          onAsk={askNext}
+          onCancel={() => setAsking(null)}
+          onAdvance={nextStage}
+        />
         <Card>
-          <form onSubmit={check} className="flex flex-col gap-4">
-            <p className="text-sm text-slate-600">{t('tasksAdmin.uploadHint')}</p>
-            <label className="flex cursor-pointer items-center gap-3 text-sm">
-              <span className="rounded-lg bg-slate-100 px-3 py-2 font-medium hover:bg-slate-200">{t('admin.chooseFile')}</span>
-              <span className="truncate text-slate-600">{file?.name ?? t('admin.noFile')}</span>
-              <input
-                type="file"
-                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                className="sr-only"
-              />
-            </label>
-            <Button disabled={!file || busy}>{t('tasksAdmin.upload')}</Button>
+          <form onSubmit={check} className="gc-admin-form" aria-busy={busy || undefined}>
+            <p className="gc-admin-note gc-body-s">{t('tasksAdmin.uploadHint')}</p>
+            <FileUpload
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              fileName={file?.name}
+              busy={busy}
+              onChange={setFile}
+            />
+            <Button type="submit" busy={busy} disabled={!file}>{t('tasksAdmin.upload')}</Button>
           </form>
         </Card>
-        {error && <p className="text-sm text-red-600">{error}</p>}
         {preview && <Preview preview={preview} busy={busy} onApply={apply} onCancel={() => setPreview(null)} />}
         {result && (
-          <Card className="flex flex-col gap-1">
-            <p className="font-medium text-emerald-700">{t('tasksAdmin.applied')}</p>
-            <p className="font-medium">{t('tasksAdmin.added', { count: result.added })}</p>
-            <p className="text-slate-600">{t('tasksAdmin.changed', { count: result.changed })}</p>
-            <p className="text-slate-600">{t('tasksAdmin.hidden', { count: result.hidden })}</p>
+          <Callout tone="success">
+            <p className="gc-label">{t('tasksAdmin.applied')}</p>
+            <p>{t('tasksAdmin.added', { count: result.added })}</p>
+            <p>{t('tasksAdmin.changed', { count: result.changed })}</p>
+            <p>{t('tasksAdmin.hidden', { count: result.hidden })}</p>
             {(result.stages_added > 0 || result.stages_changed > 0) && (
-              <p className="text-slate-600">
-                {t('tasksAdmin.stages', { added: result.stages_added, changed: result.stages_changed })}
-              </p>
+              <p>{t('tasksAdmin.stages', { added: result.stages_added, changed: result.stages_changed })}</p>
             )}
             {(result.prizes_added > 0 || result.prizes_changed > 0 || result.prizes_hidden > 0) && (
-              <p className="text-slate-600">
+              <p>
                 {t('tasksAdmin.prizes', {
                   added: result.prizes_added, changed: result.prizes_changed, hidden: result.prizes_hidden,
                 })}
               </p>
             )}
-            {result.levels_changed && <p className="text-slate-600">{t('tasksAdmin.levels')}</p>}
-          </Card>
+            {result.levels_changed && <p>{t('tasksAdmin.levels')}</p>}
+          </Callout>
         )}
-        <Button variant="outline" onClick={() => download('/api/admin/tasks/export', token, 'tasks.xlsx').catch(fail)}>
-          {t('tasksAdmin.download')}
-        </Button>
-        <Link to="/admin/tasks/qr" className="text-center font-medium text-emerald-700 underline">{t('tasksAdmin.qrLink')}</Link>
       </div>
       <RatingFreeze token={token} fail={fail} />
-    </Screen>
+    </AdminShell>
   )
 }
 
 function Preview({ preview, busy, onApply, onCancel }:
   { preview: Result; busy: boolean; onApply: () => void; onCancel: () => void }) {
   const { t } = useTranslation()
+  // A bad row refuses the whole file: one red strip naming every bad row
   if (preview.failed.length > 0) {
     return (
-      <Card className="flex flex-col gap-2">
-        <p className="font-medium text-red-700">{t('tasksAdmin.refused')}</p>
-        <ul className="text-sm text-red-700">
+      <Callout tone="danger">
+        <p className="gc-label">{t('tasksAdmin.refused')}</p>
+        <ul>
           {preview.failed.map((f) => (
             <li key={`${f.sheet}-${f.row}-${f.reason}`}>
               {t('tasksAdmin.row', { sheet: f.sheet, row: f.row, reason: t(`tasksAdmin.reasons.${f.reason}`, { min: f.min, max: f.max, column: f.column }) })}
             </li>
           ))}
         </ul>
-      </Card>
+      </Callout>
     )
   }
   return (
-    <Card className="flex flex-col gap-3">
-      <p className="font-medium">{t('tasksAdmin.preview.title')}</p>
+    <Card>
+      <p className="gc-label">{t('tasksAdmin.preview.title')}</p>
       {preview.items.length === 0
-        ? <p className="text-sm text-slate-600">{t('tasksAdmin.preview.none')}</p>
+        ? <p className="gc-admin-note gc-body-s">{t('tasksAdmin.preview.none')}</p>
         : (
-          <ul className="max-h-80 overflow-y-auto text-sm">
+          <ul className="gc-list-group gc-admin-preview gc-body-s">
             {preview.items.map((i) => (
-              <li key={`${i.sheet}-${i.code}-${i.change}`} className={i.change === 'hidden' ? 'text-amber-700' : 'text-slate-700'}>
+              <li key={`${i.sheet}-${i.code}-${i.change}`} className={i.change === 'hidden' ? 'gc-admin-preview__item--hidden' : ''}>
                 {i.sheet === 'Уровни'
                   ? t('tasksAdmin.preview.levels')
                   : t('tasksAdmin.preview.item', { sheet: i.sheet, code: i.code, name: i.name, change: t(`tasksAdmin.preview.change.${i.change}`) })}
@@ -227,9 +236,9 @@ function Preview({ preview, busy, onApply, onCancel }:
             ))}
           </ul>
         )}
-      <div className="flex gap-3">
-        <Button disabled={busy || preview.items.length === 0} onClick={onApply}>{t('tasksAdmin.preview.apply')}</Button>
+      <div className="gc-admin-pair">
         <Button variant="outline" disabled={busy} onClick={onCancel}>{t('tasksAdmin.preview.cancel')}</Button>
+        <Button busy={busy} disabled={preview.items.length === 0} onClick={onApply}>{t('tasksAdmin.preview.apply')}</Button>
       </div>
     </Card>
   )
@@ -240,6 +249,8 @@ function RatingFreeze({ token, fail }: { token: string; fail: (err: unknown) => 
   const { t } = useTranslation()
   const [state, setState] = useState<Frozen | null>(null)
   const [busy, setBusy] = useState(false)
+  // Freezing or unfreezing asks in the card first
+  const [asking, setAsking] = useState(false)
 
   useEffect(() => {
     // frozen: null only reads the state and the frozen list; it never freezes
@@ -247,7 +258,7 @@ function RatingFreeze({ token, fail }: { token: string; fail: (err: unknown) => 
   }, [token, fail])
 
   async function toggle(frozen: boolean) {
-    if (!window.confirm(t(frozen ? 'ratingAdmin.confirmFreeze' : 'ratingAdmin.confirmUnfreeze'))) return
+    setAsking(false)
     setBusy(true)
     try {
       setState(await api<Frozen>('/api/admin/rating/freeze', { token, json: { frozen } }))
@@ -260,46 +271,45 @@ function RatingFreeze({ token, fail }: { token: string; fail: (err: unknown) => 
 
   if (!state) return null
   return (
-    <Card className="flex flex-col gap-3 print:p-0 print:shadow-none print:ring-0">
-      <div className="flex flex-col gap-3 print:hidden">
-        <h2 className="text-lg font-semibold">{t('ratingAdmin.title')}</h2>
-        <p className="flex items-start gap-2 text-sm text-slate-600">
-          {state.frozen && <Lock className="mt-0.5 size-4 shrink-0 text-emerald-700" aria-hidden />}
-          {t(state.frozen ? 'ratingAdmin.frozenNote' : 'ratingAdmin.live')}
+    <Card>
+      <div className="gc-admin-shell__body gc-no-print">
+        <SectionHeading>{t('ratingAdmin.title')}</SectionHeading>
+        <p className={`gc-admin-note gc-body-s ${state.frozen ? 'gc-admin-note--icon' : ''}`}>
+          {state.frozen && <Icon name="lock" size={16} />}
+          <span>{t(state.frozen ? 'ratingAdmin.frozenNote' : 'ratingAdmin.live')}</span>
         </p>
-        {state.frozen
-          ? <Button variant="outline" disabled={busy} onClick={() => toggle(false)}>{t('ratingAdmin.unfreeze')}</Button>
-          : <Button disabled={busy} onClick={() => toggle(true)}>{t('ratingAdmin.freeze')}</Button>}
+        {asking
+          ? (
+            <InlineConfirm
+              question={t(state.frozen ? 'ratingAdmin.confirmUnfreeze' : 'ratingAdmin.confirmFreeze')}
+              busy={busy}
+              onCancel={() => setAsking(false)}
+              onConfirm={() => toggle(!state.frozen)}
+            />
+          )
+          : state.frozen
+            ? <Button variant="outline" busy={busy} onClick={() => setAsking(true)}>{t('ratingAdmin.unfreeze')}</Button>
+            : <Button busy={busy} onClick={() => setAsking(true)}>{t('ratingAdmin.freeze')}</Button>}
       </div>
       {state.frozen && (
         <>
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">{t('ratingAdmin.listTitle')}</h2>
-            <Button variant="outline" className="h-10 print:hidden" onClick={() => window.print()} disabled={!state.top.length}>
-              <Printer className="mr-2 size-4" aria-hidden />
+          <div className="gc-admin-head-row">
+            <SectionHeading>{t('ratingAdmin.listTitle')}</SectionHeading>
+            <Button variant="outline" icon="printer" block={false} onClick={() => window.print()} disabled={!state.top.length}>
               {t('ratingAdmin.print')}
             </Button>
           </div>
-          <table className="w-full text-left text-sm">
-            <thead className="text-slate-500">
-              <tr>
-                <th className="py-1 pr-2 font-medium">{t('ratingAdmin.place')}</th>
-                <th className="py-1 pr-2 font-medium">{t('ratingAdmin.name')}</th>
-                <th className="py-1 pr-2 font-medium">{t('ratingAdmin.company')}</th>
-                <th className="py-1 text-right font-medium">{t('ratingAdmin.points')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.top.map((r) => (
-                <tr key={r.place} className="border-t border-slate-200">
-                  <td className="py-2 pr-2 tabular-nums">{r.place}</td>
-                  <td className="py-2 pr-2 font-medium">{`${r.last_name} ${r.first_name}`.trim()}</td>
-                  <td className="py-2 pr-2">{r.company}</td>
-                  <td className="py-2 text-right tabular-nums">{r.points}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable
+            columns={[
+              { key: 'place', label: t('ratingAdmin.place'), align: 'right' },
+              { key: 'name', label: t('ratingAdmin.name') },
+              { key: 'company', label: t('ratingAdmin.company') },
+              { key: 'points', label: t('ratingAdmin.points'), align: 'right' },
+            ]}
+            rows={state.top.map((r) => ({
+              id: r.place, place: r.place, name: `${r.last_name} ${r.first_name}`.trim(), company: r.company || null, points: r.points,
+            }))}
+          />
         </>
       )}
     </Card>

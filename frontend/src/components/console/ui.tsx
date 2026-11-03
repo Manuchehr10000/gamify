@@ -74,6 +74,12 @@ function useConsoleShell(theme: Theme) {
   }, [theme])
 }
 
+// The console theme for a page that draws its own frame (the admin menu sits beside its <main>, not in it)
+export function ConsoleTheme({ theme }: { theme: Theme }) {
+  useConsoleShell(theme)
+  return null
+}
+
 // The page's one <main> in a console theme; Screen for the phone column, the hall board on its own
 export function Shell({ theme, className, children }: { theme: Theme; className: string; children: ReactNode }) {
   useConsoleShell(theme)
@@ -135,12 +141,14 @@ type ButtonProps = {
   href?: string
   // submit: sends its form (Enter in a field does too)
   type?: 'button' | 'submit'
+  // false: as wide as its words, e.g. beside an admin page's title
+  block?: boolean
 }
 
 // The console switch: a button, an in-app link or an outside link that all look and press the same
-export function Button({ children, variant = 'primary', size = 'md', icon, busy, disabled, onClick, to, href, type = 'button' }: ButtonProps) {
+export function Button({ children, variant = 'primary', size = 'md', icon, busy, disabled, onClick, to, href, type = 'button', block = true }: ButtonProps) {
   const off = disabled || busy
-  const className = `gc-button gc-button--block gc-button--${variant} gc-button--${size} gc-label ${off ? 'gc-button--disabled' : ''}`
+  const className = `gc-button ${block ? 'gc-button--block' : ''} gc-button--${variant} gc-button--${size} gc-label ${off ? 'gc-button--disabled' : ''}`
   const iconSize = size === 'lg' ? 24 : 20
   const inner = (
     <>
@@ -169,15 +177,15 @@ export function NavRow({ to, icon, label, tone = 'default' }: { to: string; icon
   )
 }
 
-type Tone = 'info' | 'warning' | 'danger' | 'offline' | 'locked'
-const TONE_ICONS: Record<Tone, IconName> = { info: 'star', warning: 'clock', danger: 'alert', offline: 'wifi-off', locked: 'lock' }
+type Tone = 'info' | 'success' | 'warning' | 'danger' | 'offline' | 'locked'
+const TONE_ICONS: Record<Tone, IconName> = { info: 'star', success: 'check', warning: 'clock', danger: 'alert', offline: 'wifi-off', locked: 'lock' }
 
-// An inline strip: an icon, a short message and at most one action
+// An inline strip: an icon, a short message (or a short list) and at most one action
 export function Callout({ tone, icon, children, action }: { tone: Tone; icon?: IconName; children: ReactNode; action?: ReactNode }) {
   return (
     <div className={`gc-callout gc-callout--${tone}`} role={tone === 'danger' ? 'alert' : undefined}>
       <span className="gc-callout__icon"><Icon name={icon ?? TONE_ICONS[tone]} size={20} /></span>
-      <p className="gc-callout__text gc-body">{children}</p>
+      <div className="gc-callout__text gc-body">{children}</div>
       {action && <div className="gc-callout__action">{action}</div>}
     </div>
   )

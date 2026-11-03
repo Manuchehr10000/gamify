@@ -24,14 +24,6 @@ export function Input({ className = '', ...props }: InputHTMLAttributes<HTMLInpu
   )
 }
 
-export function Screen({ children }: { children: ReactNode }) {
-  return (
-    <main className="min-h-dvh bg-slate-50 px-4 py-8 text-slate-900">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-4">{children}</div>
-    </main>
-  )
-}
-
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200 ${className}`}>{children}</div>
 }

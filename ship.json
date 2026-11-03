@@ -46,7 +46,6 @@
       "i18next",
       "jwt-decode",
       "knip",
-      "lucide-react",
       "qrcode.react",
       "react",
       "react-dom",

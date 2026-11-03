@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, api, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { Button, Card } from '../components/ui'
+import { AdminShell, DataTable } from '../components/console/admin'
+import { SectionHeading } from '../components/console/rewards'
+import { StatTile } from '../components/console/staff'
+import { Button, Callout, Card, Loading } from '../components/console/ui'
 
 type Live = {
   logged_in: number
@@ -21,38 +24,6 @@ type Live = {
 type Mismatch = { name: string; points: number; points_sum: number; coins: number; coins_sum: number }
 
 const POLL_MS = 30_000
-
-function Stat({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-3xl font-semibold tabular-nums">{value}</span>
-      <span className="text-sm text-slate-600">{label}</span>
-    </div>
-  )
-}
-
-function Table({ head, rows }: { head: string[]; rows: (string | number)[][] }) {
-  return (
-    <table className="w-full text-left text-sm">
-      <thead className="text-slate-500">
-        <tr>
-          {head.map((h, i) => (
-            <th key={h} className={`py-1 font-medium ${i ? 'pl-2 text-right' : ''}`}>{h}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr key={String(r[0])} className="border-t border-slate-100">
-            {r.map((c, i) => (
-              <td key={i} className={`py-2 ${i ? 'pl-2 text-right tabular-nums' : 'font-medium'}`}>{c}</td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
 
 // The organizer's live numbers during the forum: current counts only, refreshed every 30 seconds
 export function AdminLive() {
@@ -102,70 +73,73 @@ export function AdminLive() {
   }
 
   const oldest = live?.oldest_seconds
+  const completions = { key: 'n', label: t('live.completions'), align: 'right' as const }
   return (
-    <main className="min-h-dvh bg-slate-50 px-4 py-8 text-slate-900">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-        <h1 className="text-xl font-semibold">{t('live.title')}</h1>
-        {error && <p className="text-sm text-red-600">{t('common.error')}</p>}
-        {live && (
-          <>
-            <Card className="grid grid-cols-2 gap-6">
-              <Stat label={t('live.loggedIn')} value={live.logged_in} />
-              <Stat label={t('live.active')} value={live.active} />
-            </Card>
-            <Card className="flex flex-col gap-3">
-              <h2 className="font-semibold">{t('live.moderation')}</h2>
-              <div className="grid grid-cols-2 gap-6">
-                <Stat label={t('live.waiting')} value={live.waiting} />
-                <Stat
-                  label={t('live.oldest')}
-                  value={oldest == null ? '—' : t('live.minutes', { count: Math.floor(oldest / 60) })}
-                />
-              </div>
-            </Card>
-            <Card className="flex flex-col gap-3">
-              <h2 className="font-semibold">{t('live.market')}</h2>
-              <div className="grid grid-cols-3 gap-6">
-                <Stat label={t('live.bought')} value={live.bought} />
-                <Stat label={t('live.issued')} value={live.issued} />
-                <Stat label={t('live.left')} value={live.left} />
-              </div>
-            </Card>
-            <Card className="flex flex-col gap-3">
-              <h2 className="font-semibold">{t('live.byType')}</h2>
-              {live.by_type.length === 0
-                ? <p className="text-sm text-slate-500">{t('live.none')}</p>
-                : <Table head={[t('live.type'), t('live.completions')]}
-                    rows={live.by_type.map((r) => [t(`types.${r.name}`), r.completions])} />}
-            </Card>
-            <Card className="flex flex-col gap-3">
-              <h2 className="font-semibold">{t('live.byStage')}</h2>
-              {live.by_stage.length === 0
-                ? <p className="text-sm text-slate-500">{t('live.none')}</p>
-                : <Table head={[t('live.stage'), t('live.completions')]}
-                    rows={live.by_stage.map((s) => [`${s.number}. ${s.name}`, s.completions])} />}
-            </Card>
-            <Card className="flex flex-col gap-3">
-              <h2 className="font-semibold">{t('live.partners')}</h2>
-              {live.partners.length === 0
-                ? <p className="text-sm text-slate-500">{t('live.none')}</p>
-                : <Table head={[t('live.partner'), t('live.completions'), t('live.guests')]}
-                    rows={live.partners.map((p) => [p.partner, p.completions, p.guests])} />}
-            </Card>
-          </>
-        )}
-        <Button variant="outline" onClick={() => download('/api/admin/partners/export', token, 'partners.csv').catch(fail)}>
+    <AdminShell
+      title={t('live.title')}
+      actions={(
+        <Button variant="outline" icon="download" block={false} onClick={() => download('/api/admin/partners/export', token, 'partners.csv').catch(fail)}>
           {t('live.report')}
         </Button>
-        <Card className="flex flex-col gap-3">
-          <p className="text-sm text-slate-600">{t('live.balanceHint')}</p>
-          <Button variant="outline" disabled={checking} onClick={checkBalance}>{t('live.balance')}</Button>
-          {mismatches && (mismatches.length === 0
-            ? <p className="text-sm text-slate-500">{t('live.balanceOk')}</p>
-            : <Table head={[t('live.guest'), t('live.points'), t('live.pointsSum'), t('live.coins'), t('live.coinsSum')]}
-                rows={mismatches.map((m) => [m.name, m.points, m.points_sum, m.coins, m.coins_sum])} />)}
-        </Card>
-      </div>
-    </main>
+      )}
+    >
+      {error && <Callout tone="danger">{t('common.error')}</Callout>}
+      {!live && !error && <Loading />}
+      {live && (
+        <>
+          {/* Seven readouts; the oldest wait in whole minutes, with no warning colour at any age */}
+          <div className="gc-admin-stats">
+            <StatTile label={t('live.loggedIn')} value={live.logged_in} />
+            <StatTile label={t('live.active')} value={live.active} />
+            <StatTile label={t('live.waiting')} value={live.waiting} />
+            <StatTile label={t('live.oldest')} value={oldest == null ? '—' : t('live.minutes', { count: Math.floor(oldest / 60) })} />
+            <StatTile label={t('live.bought')} value={live.bought} />
+            <StatTile label={t('live.issued')} value={live.issued} />
+            <StatTile label={t('live.left')} value={live.left} />
+          </div>
+          <Card>
+            <SectionHeading>{t('live.byType')}</SectionHeading>
+            <DataTable
+              columns={[{ key: 'type', label: t('live.type') }, completions]}
+              rows={live.by_type.map((r) => ({ id: r.name, type: t(`types.${r.name}`), n: r.completions }))}
+              empty={t('live.none')}
+            />
+          </Card>
+          <Card>
+            <SectionHeading>{t('live.byStage')}</SectionHeading>
+            <DataTable
+              columns={[{ key: 'stage', label: t('live.stage') }, completions]}
+              rows={live.by_stage.map((s) => ({ id: s.number, stage: `${s.number}. ${s.name}`, n: s.completions }))}
+              empty={t('live.none')}
+            />
+          </Card>
+          <Card>
+            <SectionHeading>{t('live.partners')}</SectionHeading>
+            <DataTable
+              columns={[{ key: 'partner', label: t('live.partner') }, completions, { key: 'g', label: t('live.guests'), align: 'right' }]}
+              rows={live.partners.map((p) => ({ id: p.partner, partner: p.partner, n: p.completions, g: p.guests }))}
+              empty={t('live.none')}
+            />
+          </Card>
+        </>
+      )}
+      <Card>
+        <p className="gc-admin-note gc-body-s">{t('live.balanceHint')}</p>
+        <Button variant="outline" busy={checking} onClick={checkBalance}>{t('live.balance')}</Button>
+        {mismatches && (
+          <DataTable
+            columns={[
+              { key: 'name', label: t('live.guest') },
+              { key: 'points', label: t('live.points'), align: 'right' },
+              { key: 'pointsSum', label: t('live.pointsSum'), align: 'right' },
+              { key: 'coins', label: t('live.coins'), align: 'right' },
+              { key: 'coinsSum', label: t('live.coinsSum'), align: 'right' },
+            ]}
+            rows={mismatches.map((m, i) => ({ id: i, name: m.name, points: m.points, pointsSum: m.points_sum, coins: m.coins, coinsSum: m.coins_sum }))}
+            empty={t('live.balanceOk')}
+          />
+        )}
+      </Card>
+    </AdminShell>
   )
 }
