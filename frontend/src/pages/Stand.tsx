@@ -4,9 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
+import { PartnerBadge } from '../components/PartnerBadge'
 import { Button, Card, Screen } from '../components/ui'
 import { hhmm } from '../feed'
-import { PartnerBadge } from './Feed'
 
 type Handover = { prize: string; partner: string; first_name: string; issued_at: string | null }
 type Issue = { result: 'issued' | 'already'; handover: Handover }

@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { AwardView } from '../components/AwardView'
-import { Card, Screen } from '../components/ui'
+import { ResultCard } from '../components/console/game'
+import { Loading, MessageCard, Screen } from '../components/console/ui'
 import type { Award } from '../feed'
 
 type State =
   | { kind: 'loading' }
   | { kind: 'message'; text: string }
+  | { kind: 'notFound' }
   | { kind: 'done'; award: Award }
 
 // A task's printed QR opens <site>/q/<code> in the phone's camera app; this page claims it
@@ -28,7 +29,7 @@ export function Scan() {
           tokens.clear('guest')
           setState({ kind: 'message', text: t('welcome.notFound') })
         } else if (err instanceof ApiError && err.status === 404) {
-          setState({ kind: 'message', text: t('award.notFound') })
+          setState({ kind: 'notFound' })
         } else {
           setState({ kind: 'message', text: t('common.error') })
         }
@@ -37,9 +38,10 @@ export function Scan() {
 
   return (
     <Screen>
-      {state.kind === 'loading' && <p className="text-center text-slate-500">{t('common.loading')}</p>}
-      {state.kind === 'message' && <Card className="text-center text-lg font-medium">{state.text}</Card>}
-      {state.kind === 'done' && <AwardView award={state.award} />}
+      {state.kind === 'loading' && <Loading />}
+      {state.kind === 'message' && <MessageCard icon="alert" title={state.text} />}
+      {state.kind === 'notFound' && <ResultCard award={null} />}
+      {state.kind === 'done' && <ResultCard award={state.award} />}
     </Screen>
   )
 }

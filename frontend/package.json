@@ -11,6 +11,10 @@
     "knip": "knip"
   },
   "dependencies": {
+    "@fontsource/exo-2": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/pixelify-sans": "^5.3.0",
+    "@fontsource/press-start-2p": "^5.3.0",
     "@hookform/resolvers": "^7.0.1",
     "@tailwindcss/vite": "^4.3.3",
     "i18next": "^26.5.11",

@@ -1,14 +1,10 @@
-import { Check, ChevronRight, Coins, LoaderCircle, ShoppingBag, Star, Trophy, WifiOff, X, type LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { BADGE_ICONS } from '../badges'
-import { DayBar } from '../components/DayBar'
-import { LevelUp } from '../components/LevelUp'
-import { ReviewNote } from '../components/ReviewNote'
-import { TaskIcon } from '../components/TaskIcon'
-import { Card, Screen } from '../components/ui'
+import { LevelUp, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
+import { BADGE_GLYPHS, type IconName } from '../components/console/glyphs'
+import { Callout, Loading, MessageCard, NavRow, PageHeader, Screen, StatusChip } from '../components/console/ui'
 import { cache, hhmm, type Feed as FeedData, type Stage, type Task } from '../feed'
 import { forgetUpload, onSent, useUpload } from '../uploads'
 import { useConfigVersion } from '../version'
@@ -16,7 +12,7 @@ import { useConfigVersion } from '../version'
 // The stage can change at any moment (by the clock or the admin's button): ask again well inside a minute
 const POLL_MS = 30_000
 
-type Moment = { title: string; icon?: LucideIcon }
+type Moment = { title: string; icon?: IconName }
 
 type State =
   | { kind: 'loading' }
@@ -40,7 +36,7 @@ export function Feed() {
       cache.saveFeed({ ...feed, new_level: null, new_badges: [] })
       const fresh: Moment[] = [
         ...(feed.new_level ? [{ title: t('level.new', { name: feed.new_level }) }] : []),
-        ...feed.new_badges.map((b) => ({ title: t('badges.new', { name: t(`badges.${b}.name`) }), icon: BADGE_ICONS[b] })),
+        ...feed.new_badges.map((b) => ({ title: t('badges.new', { name: t(`badges.${b}.name`) }), icon: BADGE_GLYPHS[b] })),
       ]
       if (fresh.length) setMoments((shown) => [...shown, ...fresh])
       // A photo sent back for a retake: the earlier upload's «Выполнено» no longer holds
@@ -88,13 +84,11 @@ export function Feed() {
     return () => clearTimeout(timer)
   }, [banner])
 
-  if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
+  if (state.kind === 'loading') return <Screen><Loading /></Screen>
   if (state.kind === 'loggedOut' || state.kind === 'error') {
     return (
       <Screen>
-        <Card className="text-center text-lg font-medium">
-          {t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')}
-        </Card>
+        <MessageCard icon="alert" title={t(state.kind === 'loggedOut' ? 'welcome.notFound' : 'common.error')} />
       </Screen>
     )
   }
@@ -105,119 +99,34 @@ export function Feed() {
       {moments.length > 0 && (
         <LevelUp key={moments[0].title} title={moments[0].title} icon={moments[0].icon} onClose={() => setMoments((m) => m.slice(1))} />
       )}
-      {offline && (
-        <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800">
-          <WifiOff className="size-4 shrink-0" aria-hidden />
-          {t('feed.offline')}
-        </p>
-      )}
-      {banner && (
-        <div className="flex items-start gap-3 rounded-2xl bg-emerald-600 p-4 text-white shadow-md" role="status">
-          <div className="flex-1">
-            <p className="font-semibold">{t('feed.newStage', { name: banner.name })}</p>
-            {banner.message && <p className="mt-1 text-sm text-emerald-50">{banner.message}</p>}
-          </div>
-          <button onClick={() => setBanner(null)} aria-label={t('feed.close')} className="-m-1 p-1">
-            <X className="size-5" aria-hidden />
-          </button>
-        </div>
-      )}
-      <Totals feed={feed} />
-      <Link
-        to="/market"
-        className="flex items-center gap-3 rounded-2xl bg-amber-50 px-4 py-3 font-medium text-amber-900 ring-1 ring-amber-200"
-      >
-        <ShoppingBag className="size-5" aria-hidden />
-        <span className="flex-1">{t('feed.toMarket')}</span>
-        <ChevronRight className="size-5" aria-hidden />
-      </Link>
-      <Link
-        to="/app/rating"
-        className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 font-medium text-slate-800 shadow-sm ring-1 ring-slate-200"
-      >
-        <Trophy className="size-5 text-emerald-700" aria-hidden />
-        <span className="flex-1">{t('feed.toRating')}</span>
-        <ChevronRight className="size-5" aria-hidden />
-      </Link>
+      <PageHeader title={t('common.title')} />
+      {offline && <Callout tone="offline">{t('feed.offline')}</Callout>}
+      {banner && <StageBanner stage={banner} onClose={() => setBanner(null)} />}
+      <Wallet feed={feed} />
+      <NavRow to="/market" icon="bag" tone="market" label={t('feed.toMarket')} />
+      <NavRow to="/app/rating" icon="trophy" label={t('feed.toRating')} />
       <Body feed={feed} />
     </Screen>
   )
 }
 
-// The top bar: the level and how far the next one is, the points and coins; it opens the profile
-function Totals({ feed }: { feed: FeedData }) {
-  const { t } = useTranslation()
-  return (
-    <Link
-      to="/app/profile"
-      aria-label={t('feed.toProfile')}
-      className="flex flex-col items-center gap-1 rounded-2xl bg-white py-3 shadow-sm ring-1 ring-slate-200"
-    >
-      {feed.level && (
-        <span className="flex items-baseline gap-2 text-sm">
-          <span className="font-semibold text-slate-900">{feed.level}</span>
-          {feed.to_next !== null && <span className="text-slate-500">{t('feed.toNext', { count: feed.to_next })}</span>}
-        </span>
-      )}
-      <span className="flex items-center gap-6 text-lg font-semibold">
-        <span className="text-emerald-700">{t('feed.points', { count: feed.points })}</span>
-        <span className="flex items-center gap-1.5 text-amber-700">
-          <Coins className="size-5" aria-hidden />
-          {t('feed.coins', { count: feed.coins })}
-        </span>
-      </span>
-    </Link>
-  )
-}
-
 function Body({ feed }: { feed: FeedData }) {
   const { t } = useTranslation()
-  if (feed.state === 'over') return <Notice icon={<Trophy className="size-8" />} text={t('feed.over')} />
+  if (feed.state === 'over') return <MessageCard icon="trophy" title={t('feed.over')} />
   if (feed.state !== 'running' || !feed.stage) {
     const text = feed.starts_at ? t('feed.before', { time: hhmm(feed.starts_at) }) : t('feed.soon')
-    return <Notice text={text} />
+    return <MessageCard icon="clock" title={text} />
   }
   return (
     <>
-      <DayBar stage={feed.stage} count={feed.stage_count} />
-      {feed.tasks.length === 0 && <p className="py-8 text-center text-slate-500">{t('feed.empty')}</p>}
+      <StageBar stage={feed.stage} count={feed.stage_count} />
+      {feed.tasks.length === 0 && <MessageCard title={t('feed.empty')} />}
       <ul className="flex flex-col gap-3">
         {feed.tasks.map((task) => (
           <li key={task.id}><TaskCard task={task} /></li>
         ))}
       </ul>
     </>
-  )
-}
-
-function Notice({ text, icon }: { text: string; icon?: ReactNode }) {
-  return (
-    <Card className="flex flex-col items-center gap-3 py-12 text-center text-lg font-medium">
-      {icon && <span className="text-emerald-600">{icon}</span>}
-      {text}
-    </Card>
-  )
-}
-
-export function Reward({ task }: { task: Task }) {
-  const { t } = useTranslation()
-  return (
-    <span className="flex items-center gap-3 text-sm font-medium">
-      <span className="text-emerald-700">{t('feed.points', { count: task.points })}</span>
-      <span className="flex items-center gap-1 text-amber-700">
-        <Coins className="size-4" aria-hidden />
-        {t('feed.coins', { count: task.coins })}
-      </span>
-    </span>
-  )
-}
-
-export function PartnerBadge({ name }: { name: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-      <Star className="size-3 fill-current" aria-hidden />
-      {name}
-    </span>
   )
 }
 
@@ -230,40 +139,26 @@ function TaskCard({ task: fromFeed }: { task: Task }) {
   // A photo or text that just went through counts at once, before the next feed load
   const task = upload?.state === 'sent' && upload.award.result !== 'unavailable' ? upload.award.task : fromFeed
   const sending = upload?.state === 'sending' || upload?.state === 'offline'
+  const deadline = task.window_end && !task.done
+    ? task.method === 'quiz' ? t('feed.closesIn', { count: minutesLeft(task.window_end) }) : t('feed.closesAt', { time: hhmm(task.window_end) })
+    : undefined
+  const edge = task.review === 'penalty' ? 'gc-task-card--rejected' : task.done ? 'gc-task-card--done' : ''
   return (
-    <Link
-      to={`/app/tasks/${task.id}`}
-      className={`flex flex-col gap-3 rounded-2xl bg-white p-4 shadow-sm ring-1 transition active:scale-[0.99] ${task.review === 'penalty' ? 'ring-red-200' : task.done ? 'ring-emerald-200' : 'ring-slate-200'}`}
-    >
-      <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-        <TaskIcon type={task.type} className="size-4 text-emerald-700" />
-        <span>{t(`types.${task.type}`)}</span>
-        {task.partner_name && <PartnerBadge name={task.partner_name} />}
-        {task.window_end && !task.done && (
-          <span className="text-xs text-red-600">
-            {task.method === 'quiz' ? t('feed.closesIn', { count: minutesLeft(task.window_end) }) : t('feed.closesAt', { time: hhmm(task.window_end) })}
-          </span>
-        )}
-      </div>
-      <p className="line-clamp-3 text-base">{task.text}</p>
+    <Link to={`/app/tasks/${task.id}`} className={`gc-task-card ${edge}`}>
+      <TaskTypeTag task={task} deadline={deadline} />
+      <p className="gc-task-card__text gc-body">{task.text}</p>
       {!sending && <ReviewNote task={task} />}
-      <div className="flex items-center justify-between">
+      <div className="gc-task-card__foot">
         <Reward task={task} />
-        {task.done && task.review === 'penalty' && (
-          <span className="flex items-center gap-1 text-sm font-medium text-red-700">{t('review.rejected')}</span>
-        )}
-        {task.done && task.review !== 'penalty' && (
-          <span className="flex items-center gap-1 text-sm font-medium text-emerald-700">
-            <Check className="size-4" aria-hidden />
-            {t('feed.done')}
-          </span>
-        )}
-        {!task.done && sending && (
-          <span className="flex items-center gap-1 text-sm font-medium text-slate-600">
-            {upload.state === 'offline' ? <WifiOff className="size-4" aria-hidden /> : <LoaderCircle className="size-4 animate-spin" aria-hidden />}
-            {t(upload.state === 'offline' ? 'submit.offlineShort' : 'submit.sending')}
-          </span>
-        )}
+        <span className="gc-task-card__status">
+          {task.done && task.review === 'penalty' && <StatusChip tone="danger" icon="x">{t('review.rejected')}</StatusChip>}
+          {task.done && task.review !== 'penalty' && <StatusChip tone="success" icon="check">{t('feed.done')}</StatusChip>}
+          {!task.done && sending && (
+            upload.state === 'offline'
+              ? <StatusChip tone="warning" icon="wifi-off">{t('submit.offlineShort')}</StatusChip>
+              : <StatusChip tone="muted">{t('submit.sending')}</StatusChip>
+          )}
+        </span>
       </div>
     </Link>
   )

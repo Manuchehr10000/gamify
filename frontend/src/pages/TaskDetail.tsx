@@ -1,16 +1,12 @@
-import { Camera, Check, ChevronLeft, ExternalLink, LoaderCircle, Lock, QrCode, ShoppingBag, WifiOff } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { AwardView } from '../components/AwardView'
-import { ReviewNote } from '../components/ReviewNote'
-import { TaskIcon } from '../components/TaskIcon'
-import { Button, Card, Screen } from '../components/ui'
+import { ResultCard, Reward, ReviewNote, TaskTypeTag } from '../components/console/game'
+import { Button, Callout, Card, Checkbox, Icon, Loading, MessageCard, PageHeader, Screen, Spinner } from '../components/console/ui'
 import { cache, type Award, type Task } from '../feed'
 import { forgetUpload, sendPhoto, sendText, shrink, useUpload, type Upload } from '../uploads'
 import { useConfigVersion } from '../version'
-import { PartnerBadge, Reward } from './Feed'
 
 type State = { kind: 'loading' } | { kind: 'missing' } | { kind: 'ready'; task: Task }
 
@@ -24,53 +20,28 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
   if (task.done && task.review === 'penalty') return <ReviewNote task={task} />
   // A finished quiz opens its result
   if (task.done && task.method === 'quiz') {
-    return (
-      <Link to={`/app/quiz/${task.id}`} className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
-        <Check className="size-5" aria-hidden />
-        {t('quiz.seeResult')}
-      </Link>
-    )
+    return <Button to={`/app/quiz/${task.id}`} variant="outline" icon="check">{t('quiz.seeResult')}</Button>
   }
   if (task.done) {
     return (
-      <p className="flex items-center justify-center gap-1 py-3 font-medium text-emerald-700">
-        <Check className="size-5" aria-hidden />
+      <p className="gc-done gc-label">
+        <Icon name="check" size={20} />
         {t('feed.done')}
       </p>
     )
   }
   if (task.method === 'quiz') {
-    if (task.locked) {
-      return (
-        <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-amber-800">
-          <Lock className="size-5 shrink-0" aria-hidden />
-          {t('quiz.checkInFirst')}
-        </p>
-      )
-    }
-    return (
-      <Link to={`/app/quiz/${task.id}`} className="inline-flex h-12 items-center justify-center rounded-xl bg-emerald-600 px-5 font-medium text-white">
-        {t('quiz.start')}
-      </Link>
-    )
+    if (task.locked) return <Callout tone="locked">{t('quiz.checkInFirst')}</Callout>
+    return <Button to={`/app/quiz/${task.id}`}>{t('quiz.start')}</Button>
   }
   if (task.method === 'qr') {
-    return (
-      <p className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-emerald-800">
-        <QrCode className="size-5 shrink-0" aria-hidden />
-        {t('task.scanHint')}
-      </p>
-    )
+    return <Callout tone="info" icon="qr">{t('task.scanHint')}</Callout>
   }
   if (task.method === 'market') {
     return (
-      <div className="flex flex-col gap-4">
-        <p className="text-slate-700">{t('task.marketHint')}</p>
-        <Link to="/market" className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 font-medium text-white">
-          <ShoppingBag className="size-4" aria-hidden />
-          {t('task.toMarket')}
-        </Link>
-      </div>
+      <Callout tone="info" icon="bag" action={<Button to="/market" icon="bag">{t('task.toMarket')}</Button>}>
+        {t('task.marketHint')}
+      </Callout>
     )
   }
   if (task.method === 'photo' || task.method === 'text' || task.method === 'photo_text') {
@@ -81,7 +52,7 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
       </>
     )
   }
-  if (task.method !== 'link') return <Button disabled>{t('task.doSoon')}</Button>
+  if (task.method !== 'link') return <Button disabled icon="lock">{t('task.doSoon')}</Button>
 
   async function confirm() {
     setBusy(true)
@@ -97,29 +68,23 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
 
   return (
     <div className="flex flex-col gap-4">
-      <a
+      <Button
         href={task.link}
-        target="_blank"
-        rel="noopener noreferrer"
+        icon="external"
         onClick={() => {
           cache.markLinkOpened(task.id)
           setOpened(true)
         }}
-        className="inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 font-medium text-white"
       >
         {t('task.do')}
-        <ExternalLink className="size-4" aria-hidden />
-      </a>
+      </Button>
       {opened && (
         <>
-          <label className="flex items-center gap-3 text-base">
-            <input type="checkbox" className="size-5 accent-emerald-600" checked={ticked} onChange={(e) => setTicked(e.target.checked)} />
-            {t('task.registered')}
-          </label>
-          <Button variant="outline" disabled={!ticked || busy} onClick={confirm}>{t('task.confirm')}</Button>
+          <Checkbox checked={ticked} onChange={setTicked}>{t('task.registered')}</Checkbox>
+          <Button variant="outline" disabled={!ticked} busy={busy} onClick={confirm}>{t('task.confirm')}</Button>
         </>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <Callout tone="danger">{error}</Callout>}
     </div>
   )
 }
@@ -129,23 +94,11 @@ const TEXT_MAX = 500
 function UploadStatus({ upload }: { upload: Upload | null }) {
   const { t } = useTranslation()
   if (upload?.state === 'sending') {
-    return (
-      <p className="flex items-center justify-center gap-2 py-3 font-medium text-slate-700">
-        <LoaderCircle className="size-5 animate-spin" aria-hidden />
-        {t('submit.sending')}
-      </p>
-    )
+    return <p className="flex min-h-12 items-center justify-center"><Spinner label={t('submit.sending')} /></p>
   }
-  if (upload?.state === 'offline') {
-    return (
-      <p className="flex items-center gap-2 rounded-xl bg-amber-50 px-4 py-3 text-amber-800">
-        <WifiOff className="size-5 shrink-0" aria-hidden />
-        {t('submit.offline')}
-      </p>
-    )
-  }
+  if (upload?.state === 'offline') return <Callout tone="offline">{t('submit.offline')}</Callout>
   if (upload?.state === 'failed') {
-    return <p className="text-sm text-red-600">{t(`submit.errors.${upload.reason}`, { defaultValue: t('common.error') })}</p>
+    return <Callout tone="danger">{t(`submit.errors.${upload.reason}`, { defaultValue: t('common.error') })}</Callout>
   }
   return null
 }
@@ -206,29 +159,34 @@ function Submit({ task }: { task: Task }) {
           }}
         />
       )}
-      {preview && <img src={preview} alt={t('submit.previewAlt')} className="max-h-96 w-full rounded-xl object-contain bg-slate-100" />}
+      {/* The frame appears once a photo is picked: «Загрузка…» while it is prepared, then the photo */}
+      {(preparing || preview) && (
+        <div className="gc-photo-frame gc-crt" aria-busy={preparing || undefined}>
+          {preparing
+            ? <Spinner size={32} label={t('common.loading')} />
+            : <img src={preview} alt={t('submit.previewAlt')} className="gc-photo-frame__img" />}
+        </div>
+      )}
       {wantsText && (
-        <label className="flex flex-col gap-1">
+        <label className="gc-text-area">
           <textarea
             value={text}
             maxLength={TEXT_MAX}
             rows={5}
             disabled={busy}
             placeholder={t('submit.textPlaceholder')}
+            aria-label={t('submit.textPlaceholder')}
             onChange={(e) => setText(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
+            className="gc-text-area__field gc-body"
           />
-          <span className="self-end text-xs text-slate-500">{t('submit.count', { count: text.length, max: TEXT_MAX })}</span>
+          <span className="gc-text-area__count gc-caption gc-num">{t('submit.count', { count: text.length, max: TEXT_MAX })}</span>
         </label>
       )}
-      {pickError && <p className="text-sm text-red-600">{t('submit.badPhoto')}</p>}
+      {pickError && <Callout tone="danger" icon="camera">{t('submit.badPhoto')}</Callout>}
       <UploadStatus upload={upload} />
       {!busy && (
         wantsPhoto && !photo ? (
-          <Button disabled={preparing} onClick={() => picker.current?.click()} className="gap-2">
-            {preparing ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : <Camera className="size-4" aria-hidden />}
-            {t('task.do')}
-          </Button>
+          <Button busy={preparing} icon="camera" onClick={() => picker.current?.click()}>{t('task.do')}</Button>
         ) : (
           <>
             <Button disabled={!ready || preparing} onClick={send}>{t('submit.send')}</Button>
@@ -271,28 +229,26 @@ export function TaskDetail() {
   // An admin's change to the task (points, switched off) shows within 10 seconds
   useConfigVersion(load)
 
-  if (shown) return <Screen><AwardView award={shown} /></Screen>
+  if (shown) return <Screen><ResultCard award={shown} /></Screen>
+  if (state.kind === 'loading') return <Screen><Loading /></Screen>
+  if (state.kind === 'missing') {
+    return (
+      <Screen>
+        <MessageCard icon="alert" title={t('task.missing')} action={<Button to="/app" icon="chevron-left">{t('feed.toFeed')}</Button>} />
+      </Screen>
+    )
+  }
 
+  const { task } = state
   return (
     <Screen>
-      <Link to="/app" className="flex items-center gap-1 text-sm font-medium text-slate-600">
-        <ChevronLeft className="size-4" aria-hidden />
-        {t('feed.toFeed')}
-      </Link>
-      {state.kind === 'loading' && <p className="text-center text-slate-500">{t('common.loading')}</p>}
-      {state.kind === 'missing' && <Card className="text-center text-lg font-medium">{t('task.missing')}</Card>}
-      {state.kind === 'ready' && (
-        <Card className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-            <TaskIcon type={state.task.type} className="size-5 text-emerald-700" />
-            <span>{t(`types.${state.task.type}`)}</span>
-            {state.task.partner_name && <PartnerBadge name={state.task.partner_name} />}
-          </div>
-          <p className="whitespace-pre-line text-lg leading-relaxed">{state.task.text}</p>
-          <Reward task={state.task} />
-          <Action task={state.task} onAward={setAward} />
-        </Card>
-      )}
+      <PageHeader title={t(`types.${task.type}`)} back={{ to: '/app', label: t('feed.toFeed') }} />
+      <Card>
+        <TaskTypeTag task={task} showType={false} />
+        <p className="gc-body-l m-0 whitespace-pre-line [overflow-wrap:anywhere]">{task.text}</p>
+        <Reward task={task} size="m" />
+        <Action task={task} onAward={setAward} />
+      </Card>
     </Screen>
   )
 }

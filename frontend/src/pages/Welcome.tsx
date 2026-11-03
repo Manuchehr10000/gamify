@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { Button, Card, Screen } from '../components/ui'
+import { splitNumber } from '../components/console/glyphs'
+import { Button, Icon, Loading, MessageCard, Screen, Stripe } from '../components/console/ui'
 
 type Me = { first_name: string; consented: boolean; arrival_points: number }
 type State = { kind: 'loading' } | { kind: 'notFound' } | { kind: 'error' } | { kind: 'ready'; me: Me }
@@ -20,7 +20,6 @@ function firstState(): State {
 
 export function Welcome() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const [state, setState] = useState<State>(firstState)
 
   useEffect(() => {
@@ -46,13 +45,11 @@ export function Welcome() {
     }
   }
 
-  if (state.kind === 'loading') return <Screen><p className="text-center text-slate-500">{t('common.loading')}</p></Screen>
+  if (state.kind === 'loading') return <Screen><Loading /></Screen>
   if (state.kind === 'notFound' || state.kind === 'error') {
     return (
       <Screen>
-        <Card className="text-center text-lg font-medium">
-          {t(state.kind === 'notFound' ? 'welcome.notFound' : 'common.error')}
-        </Card>
+        <MessageCard icon="alert" title={t(state.kind === 'notFound' ? 'welcome.notFound' : 'common.error')} />
       </Screen>
     )
   }
@@ -60,24 +57,33 @@ export function Welcome() {
   if (!me.consented) {
     return (
       <Screen>
-        <Card className="flex flex-col gap-5">
-          <p className="text-base leading-relaxed">{t('welcome.consent')}</p>
+        <section className="gc-welcome-hero gc-welcome-hero--consent">
+          <p className="gc-welcome-hero__consent gc-body">{t('welcome.consent')}</p>
           <Button onClick={agree}>{t('welcome.ok')}</Button>
-        </Card>
+        </section>
       </Screen>
     )
   }
+  const [before, points, after] = splitNumber(t('welcome.points', { points: me.arrival_points }))
   return (
     <Screen>
-      <Card className="flex flex-col items-center gap-4 py-10 text-center">
-        <h1 className="text-2xl font-semibold">{t('welcome.hello', { name: me.first_name })}</h1>
-        {me.arrival_points > 0 && (
-          <p className="rounded-2xl bg-emerald-50 px-4 py-2 text-lg font-medium text-emerald-700">
-            {t('welcome.points', { points: me.arrival_points })}
-          </p>
-        )}
-        <Button className="mt-4 w-full" onClick={() => navigate('/app')}>{t('welcome.toTasks')}</Button>
-      </Card>
+      <section className="gc-welcome-hero">
+        <Stripe />
+        <div className="gc-welcome-hero__body">
+          <h1 className="gc-welcome-hero__hello gc-display-l">{t('welcome.hello', { name: me.first_name })}</h1>
+          {me.arrival_points > 0 && (
+            <p className="gc-welcome-hero__points gc-crt gc-body-l">
+              <Icon name="star" size={32} />
+              <span>
+                {before}<span className="gc-glow gc-score-l gc-num">{points}</span>{after}
+              </span>
+            </p>
+          )}
+          <div className="gc-welcome-hero__action">
+            <Button to="/app" size="lg">{t('welcome.toTasks')}</Button>
+          </div>
+        </div>
+      </section>
     </Screen>
   )
 }

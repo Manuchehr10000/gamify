@@ -4,9 +4,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
+import { PartnerBadge } from '../components/PartnerBadge'
 import { Button, Card, Screen } from '../components/ui'
 import { hhmm } from '../feed'
-import { PartnerBadge } from './Feed'
 
 type Prize = {
   id: number

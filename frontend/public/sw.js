@@ -9,6 +9,12 @@ async function keepApp() {
   const page = await fetch('/', { cache: 'no-store' })
   const html = await page.clone().text()
   const files = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1])
+  // The Console fonts are named in the stylesheet, not the page: keep them too, so the titles, numbers and text
+  // keep their faces with the network off even when the first visit fetched them before this worker existed
+  for (const css of files.filter((f) => f.endsWith('.css'))) {
+    const text = await (await fetch(css)).text()
+    files.push(...[...text.matchAll(/url\((\/assets\/[^)]+\.woff2)\)/g)].map((m) => m[1]))
+  }
   await cache.put('/', page)
   await cache.addAll(files)
 }
