@@ -1,4 +1,4 @@
-import type { Badge } from './badges'
+import type { HeldBadge } from './badges'
 import type { FeedPush } from './push'
 
 // multiplier: the stage's points multiplier (1 to 5 in steps of 0.5); a feed saved before it came has none
@@ -34,7 +34,7 @@ export type Feed = {
   // Set once, right after the guest climbed past the level they last saw: the full-screen moment
   new_level: string | null
   // Badges just earned, sent once each: a full-screen moment each, after the level's
-  new_badges: Badge[]
+  new_badges: HeldBadge[]
   // How many photos and texts this phone may keep waiting to send (the admin's setting)
   queue_size: number
   // The latest push still inside its 10-minute life: its banner shows once; a feed saved before pushes has none

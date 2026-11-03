@@ -11,9 +11,9 @@ import { Button, Card, Input } from '../components/ui'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 
-type Kind = 'stages' | 'tasks' | 'prizes' | 'questions' | 'levels' | 'partners' | 'staff' | 'push'
+type Kind = 'stages' | 'tasks' | 'prizes' | 'questions' | 'levels' | 'partners' | 'staff' | 'push' | 'badges'
 type Tab = Kind | 'settings' | 'log'
-const TABS: Tab[] = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'push', 'settings', 'log']
+const TABS: Tab[] = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'push', 'badges', 'settings', 'log']
 
 type Value = string | number | boolean | null
 type Field = {
@@ -58,6 +58,7 @@ const COLUMNS: Record<Kind, string[]> = {
   partners: ['name', 'package', 'active'],
   staff: ['name', 'role', 'active'],
   push: ['at', 'kind', 'title', 'text', 'state'],
+  badges: ['code', 'name', 'rule', 'count', 'kinds', 'coins', 'on_screen', 'active'],
 }
 
 const when = new Intl.DateTimeFormat('ru-RU', {
@@ -358,6 +359,7 @@ function RowForm({ kind, token, fields, row, onDone, onCancel, loggedOut }: TabP
           ))}
         </div>
         {kind === 'partners' && row && <LogoUpload token={token} partner={row} onDone={onDone} loggedOut={loggedOut} />}
+        {kind === 'badges' && <p className="text-xs text-slate-500">{t('settingsAdmin.badgeHint')}</p>}
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex gap-3">
           <Button disabled={busy}>{t('settingsAdmin.save')}</Button>
@@ -585,7 +587,7 @@ function PushSettings({ token, loggedOut }: TabProps) {
   )
 }
 
-const LOG_KINDS = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'settings', 'rating', 'guests', 'push']
+const LOG_KINDS = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'settings', 'rating', 'guests', 'push', 'badges']
 
 function Log({ token, loggedOut }: TabProps) {
   const { t } = useTranslation()

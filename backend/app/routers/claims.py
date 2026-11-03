@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import claims, ledger, photos, places, settings, stages
+from app import badges, claims, ledger, photos, places, settings, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Claim, Guest, Submission, Task
@@ -64,6 +64,8 @@ def _pay(db: DbSession, guest: Guest, t: Task, c: Claim, photo: bytes | None = N
                          stage_id=c.stage_id) is not None
     if added:
         db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, thumb=thumb, text=c.text, upload=c.id))
+        db.flush()
+        badges.sync(db, [guest.id], actor=guest.id)
     c.state = "done"
     db.commit()
     return _result(db, guest, t, "awarded" if added else "already")

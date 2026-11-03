@@ -333,17 +333,57 @@ class Level(Base):
     __mapper_args__ = {"version_id_col": version}
 
 
+class Badge(Base):
+    """A badge the admin set in the «Бейджи» sheet or tab: a rule with its numbers and filters. TAG's five come from
+    the migration with 011's codes."""
+    __tablename__ = "badges"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The admin's ID: re-uploads match rows by it, and badge:{code} is its coins' reason in score_events (so at most 26)
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    # tasks · all_of_type · quiz_streak · bonuses · first_n · place (app.badges.RULES)
+    rule: Mapped[str] = mapped_column(String(16))
+    # The N the rule needs; empty for «Все задания типа»
+    count: Mapped[int | None]
+    # «Тип задания»: task types or ways of doing it, as the file names them, comma-separated; empty = any
+    kinds: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    # Only this partner's tasks; or any_partner: N tasks of one and the same partner
+    partner_id: Mapped[int | None] = mapped_column(ForeignKey("partners.id"))
+    any_partner: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    # «Первые N»: the task whose first N guests get it
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id"))
+    # Paid once on earning, taken back on losing; never points, never a stage multiplier
+    coins: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # «На экран»: the hall screen announces a guest earning it
+    on_screen: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    # Switched off: nobody holds it, and its coins are taken back
+    active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+    # Row order in the last upload: the order guests see them in
+    position: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # Raised by every save; a form sends the version it read, and a stale one is refused
+    version: Mapped[int] = mapped_column(default=1, server_default="1")
+    __mapper_args__ = {"version_id_col": version}
+
+
 class BadgeAward(Base):
     __tablename__ = "badge_awards"
-    # A badge the guest holds and has seen; the full-screen moment shows when one is added. A rejection that breaks
-    # its condition removes the row, so earning it again shows the moment again
+    # A badge the guest holds now, worked out when something changes; losing it removes the row, so earning it again
+    # shows the moment again
     __table_args__ = (UniqueConstraint("guest_id", "badge"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
-    # One of badges.BADGES: photo_hunter, networker, erudite, brand_friend, forum_spirit
-    badge: Mapped[str] = mapped_column(String(32))
+    # The badge's code (badges.code)
+    badge: Mapped[str] = mapped_column(ForeignKey("badges.code"))
+    # When it was earned, from the server clock
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # The guest saw the full-screen moment
+    seen: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    # Earned by the guest's own action, of a badge marked «на экран»: the hall screen may show it within 60 seconds
+    announce: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+    # When the hall screen started showing it
+    shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class JobRun(Base):

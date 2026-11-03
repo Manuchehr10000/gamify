@@ -11,12 +11,12 @@ from fastapi import HTTPException
 from sqlalchemy import ColumnElement, delete, exists, func, inspect, select, text
 from sqlalchemy.orm import Session as DbSession
 
-from app import accounts, changes, push, settings, stages
-from app.models import (ChangeEvent, Level, Partner, Prize, PushMessage, Question, QuizAttempt, ScoreEvent, Session,
-                        Stage, Staff, Submission, Task)
+from app import accounts, badges, changes, push, settings, stages
+from app.models import (Badge, BadgeAward, ChangeEvent, Guest, Level, Partner, Prize, PushMessage, Question, QuizAttempt,
+                        ScoreEvent, Session, Stage, Staff, Submission, Task)
 from app.stages import EVENT_TZ
-from app.task_file import (BATCH_SIZE, BLITZ_FIELDS, LIMITS, METHODS, PACKAGES, SPEED_DEFAULTS, TYPES, rule_coins, sold,
-                           stage_multiplier)
+from app.task_file import (BATCH_SIZE, BLITZ_FIELDS, COUNT_RULES, LIMITS, METHODS, PACKAGES, RULES, SPEED_DEFAULTS, TYPES,
+                           rule_coins, sold, stage_multiplier, task_kinds)
 
 ROLES = ("admin", "moderator", "desk", "stand")
 # The desk and the stands share one account each: its PIN is reset, never a second one added
@@ -72,6 +72,8 @@ class Kind:
     extra: Callable[[DbSession, list], dict[int, dict]] = lambda db, rows: {}
     # Brings the rows up to date before the list is read (the push schedule follows its sources)
     refresh: Callable[[DbSession], None] | None = None
+    # Run once the save is flushed and confirmed: what guests hold is worked out again (badges)
+    recheck: Callable[[DbSession], None] | None = None
     secret_fields: tuple[str, ...] = field(default=())
 
 
@@ -289,7 +291,8 @@ def _task_lock(db: DbSession, t: Task) -> None:
 
 def _task_keep(db: DbSession, t: Task) -> str | None:
     used = (exists().where(ScoreEvent.reason == f"task:{t.id}"), exists().where(Submission.task_id == t.id),
-            exists().where(QuizAttempt.task_id == t.id), exists().where(Task.requires_task_id == t.id))
+            exists().where(QuizAttempt.task_id == t.id), exists().where(Task.requires_task_id == t.id),
+            exists().where(Badge.task_id == t.id))
     return "in_use" if any(db.scalar(select(u)) for u in used) else None
 
 
@@ -364,7 +367,7 @@ def _level_keep(db: DbSession, lv: Level) -> str | None:
 
 def _partner_keep(db: DbSession, p: Partner) -> str | None:
     used = db.scalar(select(exists().where(Task.partner_id == p.id))) or db.scalar(
-        select(exists().where(Prize.partner_id == p.id)))
+        select(exists().where(Prize.partner_id == p.id))) or db.scalar(select(exists().where(Badge.partner_id == p.id)))
     return "in_use" if used else None
 
 
@@ -459,6 +462,58 @@ def _push_extra(db: DbSession, rows: list) -> dict[int, dict]:
                    "source": m.source is not None} for m in rows}
 
 
+# Badges ----------------------------------------------------------------------------------------------------------
+
+def _badge_after(db: DbSession, b: Badge, changed: dict) -> None:
+    if b.coins is None:
+        b.coins = 0
+    if b.any_partner is None:
+        b.any_partner = False
+    if b.on_screen is None:
+        b.on_screen = False
+    # The names as the file writes them, so the profile's condition and the download read the same
+    kinds = task_kinds(b.kinds)
+    if kinds is not None:
+        b.kinds = kinds
+    if b.rule not in COUNT_RULES:
+        b.count = None
+    if b.rule != "first_n":
+        b.task_id = None
+    # A badge added in the form goes after the others
+    if b.id is None:
+        b.position = (db.scalar(select(func.max(Badge.position))) or 0) + 1
+
+
+def _badge_check(db: DbSession, b: Badge, creating: bool) -> None:
+    """A rule without the numbers it needs is refused, naming the field."""
+    if task_kinds(b.kinds) is None:
+        raise refuse("bad_kinds", field="kinds")
+    if b.rule in COUNT_RULES and b.count is None:
+        raise refuse("required", field="count")
+    if b.rule == "all_of_type" and not b.kinds:
+        raise refuse("required", field="kinds")
+    if b.rule == "first_n" and b.task_id is None:
+        raise refuse("required", field="task_id")
+    if b.any_partner and b.partner_id is not None:
+        raise refuse("partner_or_any", field="any_partner")
+
+
+def _badge_keep(db: DbSession, b: Badge) -> str | None:
+    """A badge guests hold, or once held (its coins are in their history), is switched off instead."""
+    used = (exists().where(BadgeAward.badge == b.code), exists().where(ScoreEvent.reason == badges.reason(b.code)))
+    return "in_use" if any(db.scalar(select(u)) for u in used) else None
+
+
+def _badge_impact(db: DbSession, b: Badge, before: object, gone: bool) -> list[dict]:
+    """A save that gives the badge to guests who meet it now, or takes it from those who no longer do."""
+    holders = set(db.scalars(select(BadgeAward.guest_id).where(BadgeAward.badge == b.code)))
+    meet = set() if gone else {gid for gid, codes in badges.compute(db, list(db.scalars(select(Guest.id)))).items()
+                               if b.code in codes}
+    if meet == holders:
+        return []
+    return [{"code": "badge_recheck", "item": b.code, "gained": len(meet - holders), "lost": len(holders - meet)}]
+
+
 def set_secret(db: DbSession, s: Staff, secret: str) -> None:
     if accounts.taken(db, s.role, secret, s.id):
         raise refuse("secret_taken", field="secret")
@@ -493,7 +548,7 @@ KINDS: dict[str, Kind] = {
          Field("active", "bool")],
         lambda: [Task.position, Task.id],
         check=_task_check, keep=_task_keep, lock=_task_lock, state=_task_state, impact=_task_impact, after=_task_after,
-        extra=lambda db, rows: {t.id: {"qr_code": t.qr_code} for t in rows}),
+        extra=lambda db, rows: {t.id: {"qr_code": t.qr_code} for t in rows}, recheck=badges.recheck),
     "prizes": Kind(
         Prize,
         [Field("code", "text", True, *LIMITS["prizes", "code"], unique=True),
@@ -542,4 +597,17 @@ KINDS: dict[str, Kind] = {
          Field("state", "choice", choices=push.STATES)],
         lambda: [PushMessage.at, PushMessage.id],
         check=_push_check, keep=_push_keep, after=_push_after, extra=_push_extra, refresh=push.regenerate),
+    "badges": Kind(
+        Badge,
+        [Field("code", "text", True, *LIMITS["badges", "code"], unique=True, fixed=True),
+         Field("name", "text", True, *LIMITS["badges", "name"]),
+         Field("rule", "choice", True, choices=tuple(RULES), effect="recheck"),
+         Field("count", "int", False, *LIMITS["badges", "count"], effect="recheck"),
+         Field("kinds", "text", max=LIMITS["badges", "kinds"][1], effect="recheck"),
+         Field("partner_id", "ref", ref="partners", effect="recheck"), Field("any_partner", "bool", effect="recheck"),
+         Field("task_id", "ref", ref="tasks", effect="recheck"),
+         Field("coins", "int", False, *LIMITS["badges", "coins"], effect="recheck"), Field("on_screen", "bool"),
+         Field("active", "bool", effect="recheck")],
+        lambda: [Badge.position, Badge.id],
+        check=_badge_check, keep=_badge_keep, after=_badge_after, impact=_badge_impact, recheck=badges.recheck),
 }

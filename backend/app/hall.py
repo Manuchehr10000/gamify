@@ -3,12 +3,12 @@ The screens hold no state of their own: every screen open on /hall polls GET /ap
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
-from app import push, settings, stages
-from app.models import HallState, LogoShow, Partner, Stage, Staff, Task
+from app import push, rating, settings, stages
+from app.models import Badge, BadgeAward, Guest, HallState, LogoShow, Partner, Stage, Staff, Task
 
 # The packages from biggest to smallest; a partner with no package shows like the smallest
 PACKAGES = ("general", "headliner", "mf_partner", "supporters")
@@ -122,6 +122,46 @@ def latest_push(db: DbSession) -> Push | None:
     if m is None:
         return None
     return Push(m.id, f"{m.title}\n{m.text}" if m.text else m.title)
+
+
+@dataclass
+class Announcement:
+    id: int
+    name: str
+    badge: str
+
+
+# A badge earned longer ago than this is dropped unshown, so a backlog never builds
+BADGE_MAX_AGE = timedelta(seconds=60)
+# Held while the next badge is picked, so two screens polling at once start the same one
+BADGE_LOCK = 7024
+
+
+def badge_announcement(db: DbSession, push_showing: bool) -> Announcement | None:
+    """The badge the hall screen shows full screen now, for 15 seconds like a push, one at a time: the one started in
+    the last 15 seconds, else the oldest waiting one earned in the last 60 seconds. Pushes' rule: only in «Авто» and
+    «Только логотипы», never in «Эфир» (switched or by the clock) or «Пауза»; a push showing goes first."""
+    t = stages.now()
+    m = mode(db)
+    start = live_from(db)
+    if push_showing or m not in ("auto", "logos") or (m == "auto" and start is not None and t >= start):
+        return None
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": BADGE_LOCK})
+    q = (select(BadgeAward, Guest.first_name, Guest.last_name, Badge.name)
+         .join(Guest, Guest.id == BadgeAward.guest_id).join(Badge, Badge.code == BadgeAward.badge))
+    row = db.execute(q.where(BadgeAward.shown_at > t - PUSH_SECONDS, BadgeAward.shown_at <= t)
+                     .order_by(BadgeAward.shown_at.desc()).limit(1)).first()
+    if row is None:
+        row = db.execute(q.where(BadgeAward.announce, BadgeAward.shown_at.is_(None), Badge.active, Badge.on_screen,
+                                 BadgeAward.created_at >= t - BADGE_MAX_AGE, BadgeAward.created_at <= t)
+                         .order_by(BadgeAward.created_at, BadgeAward.id).limit(1)).first()
+        if row is not None:
+            row[0].shown_at = t
+    db.commit()
+    if row is None:
+        return None
+    award, first, last, name = row
+    return Announcement(award.id, rating.guest_name(first, last), name)
 
 
 @dataclass

@@ -119,6 +119,11 @@ def decide(submission_id: int, body: DecisionIn, name: str = Depends(current_mod
         raise HTTPException(404, "submission_not_found")
     if s.status:
         return Decision(result="already", status=s.status, moderator=s.moderator, decided_at=local(s.decided_at))
+    # Every guest the decision may touch is locked first, in id order, before any write: a rejection may move the next
+    # guest into a «Первые N» badge on this task, and two decisions (or a recheck) must lock guests the same way
+    touched = sorted({s.guest_id, *(badges.first_n_guests(db, s.task_id) if body.action in ("retake", "penalty")
+                                    else [])})
+    db.execute(select(Guest.id).where(Guest.id.in_(touched)).order_by(Guest.id).with_for_update())
     # What sending it earned, which may differ from the task now if the file was uploaded again since
     award = ledger.award(db, s.guest_id, task_reason(s.task_id))
     points = award.points if award else 0
@@ -136,9 +141,9 @@ def decide(submission_id: int, body: DecisionIn, name: str = Depends(current_mod
         db.flush()
         levels.dropped(db, s.guest_id)
     s.status, s.moderator, s.decided_at = STATUS[body.action], name, stages.now()
-    if body.action in ("retake", "penalty"):
-        # A rejected submission no longer counts towards a badge
-        db.flush()
-        badges.lost(db, s.guest_id)
+    # A rejected submission no longer counts towards a badge, and a bonus may earn one. A rejection may also move the
+    # next guest into a «Первые N» badge on this task, quietly
+    db.flush()
+    badges.sync(db, touched, actor=s.guest_id)
     db.commit()
     return Decision(result="decided", status=s.status, moderator=s.moderator, decided_at=local(s.decided_at))

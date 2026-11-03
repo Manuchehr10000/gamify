@@ -13,11 +13,27 @@ import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import insert, text  # noqa: E402
 
 from app import accounts, settings  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import Badge  # noqa: E402
+
+BADGES = Badge.__table__
+# As the migration inserts them
+TAG_BADGES = [
+    {"code": "photo_hunter", "name": "Фотоохотник", "rule": "tasks", "count": 5, "kinds": "Фото, Фото+текст",
+     "any_partner": False, "position": 0},
+    {"code": "networker", "name": "Нетворкер", "rule": "all_of_type", "count": None, "kinds": "Нетворкинг",
+     "any_partner": False, "position": 1},
+    {"code": "erudite", "name": "Эрудит", "rule": "quiz_streak", "count": 5, "kinds": "", "any_partner": False,
+     "position": 2},
+    {"code": "brand_friend", "name": "Друг бренда", "rule": "tasks", "count": 3, "kinds": "", "any_partner": True,
+     "position": 3},
+    {"code": "forum_spirit", "name": "Дух форума", "rule": "bonuses", "count": 1, "kinds": "Крейзи",
+     "any_partner": False, "position": 4},
+]
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -39,7 +55,7 @@ SEEDED = ("Администратор", "Стойка регистрации", "
 def clean():
     with engine.begin() as c:
         # staff stays: the app's start seeded it once from the values above
-        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, partners, redemptions, submissions, claims, feed_rotations, questions, quiz_attempts, levels, badge_awards, job_runs, change_events, settings, hall_state, logo_shows, push_subscriptions, push_messages RESTART IDENTITY CASCADE"))
+        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, partners, redemptions, submissions, claims, feed_rotations, questions, quiz_attempts, levels, badge_awards, badges, job_runs, change_events, settings, hall_state, logo_shows, push_subscriptions, push_messages RESTART IDENTITY CASCADE"))
         c.execute(text("DELETE FROM staff WHERE name <> ALL(:names)"), {"names": list(SEEDED)})
         c.execute(text("UPDATE staff SET active = true"))
         for name, secret_hash in SECRETS.items():
@@ -47,6 +63,8 @@ def clean():
         # The levels the migration starts with: TAG's five
         c.execute(text("INSERT INTO levels (name, min_points) VALUES ('Новичок форума', 0), ('Участник', 50), "
                        "('Актив', 150), ('Эксперт форума', 300), ('Легенда MF', 500)"))
+        # The badges the migration starts with: TAG's five
+        c.execute(insert(BADGES), TAG_BADGES)
     # The settings' defaults, as the app's start fills them
     with SessionLocal() as db:
         settings.ensure(db)

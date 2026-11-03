@@ -31,14 +31,29 @@ class Entry(BaseModel):
     at: datetime
 
 
+class ShelfBadge(BaseModel):
+    code: str
+    # The admin's name for it
+    name: str
+    # The rule and its numbers and filters: the page writes the greyed condition from them
+    rule: str
+    count: int | None
+    kinds: str
+    partner: str
+    any_partner: bool
+    # «Первые N»: the task's text
+    task: str
+    held: bool
+
+
 class Profile(BaseModel):
     level: str
     to_next: int | None
     points: int
     # Below zero when a rejection took back coins already spent
     coins: int
-    # The badges held now, in badges.BADGES order; the page greys out the rest
-    badges: list[str]
+    # Every badge switched on, in the order guests see them; the page greys out the ones not held
+    badges: list[ShelfBadge]
     # Newest first
     history: list[Entry]
 
@@ -84,4 +99,4 @@ def profile(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_d
         else:
             entry.rejected = True
     return Profile(level=lv.name if lv else "", to_next=lv.to_next if lv else None, points=points, coins=coins,
-                   badges=badges.of(db, guest.id), history=history)
+                   badges=[ShelfBadge(**vars(b)) for b in badges.shelf(db, guest.id)], history=history)

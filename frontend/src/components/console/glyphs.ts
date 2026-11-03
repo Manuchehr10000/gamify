@@ -1,4 +1,4 @@
-import type { Badge } from '../../badges'
+import type { HeldBadge } from '../../badges'
 
 // The design system's pixel icons. Each glyph: 12 rows x 3 hex digits, one 12-bit row of the 12x12 grid,
 // most significant bit on the left
@@ -81,13 +81,23 @@ const TYPE_ICONS: Record<string, IconName> = {
 }
 export const typeIcon = (type: string): IconName => TYPE_ICONS[type] ?? 'zap'
 
-export const BADGE_GLYPHS: Record<Badge, IconName> = {
+// TAG's five keep their own icons; any other badge takes its rule type's
+const BADGE_GLYPHS: Record<string, IconName> = {
   photo_hunter: 'camera',
   networker: 'users',
   erudite: 'cap',
   brand_friend: 'handshake',
   forum_spirit: 'flame',
 }
+const RULE_GLYPHS: Record<HeldBadge['rule'], IconName> = {
+  tasks: 'check',
+  all_of_type: 'star',
+  quiz_streak: 'quiz',
+  bonuses: 'sparkle',
+  first_n: 'timer',
+  place: 'trophy',
+}
+export const badgeIcon = (b: HeldBadge): IconName => BADGE_GLYPHS[b.code] ?? RULE_GLYPHS[b.rule] ?? 'award'
 
 // The first number in a translated line («+30 баллов», «до 14:30») is set in the pixel score face, the rest in the
 // reading face: the language file keeps whole phrases, so the number is found rather than passed separately

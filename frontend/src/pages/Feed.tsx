@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { HomeScreenGuide, LevelUp, MultiplierCorner, PushAsk, PushBanner, Reward, ReviewNote, StageBanner, StageBar, TaskTypeTag, Wallet } from '../components/console/game'
-import { BADGE_GLYPHS, type IconName } from '../components/console/glyphs'
+import { badgeIcon, type IconName } from '../components/console/glyphs'
 import { Callout, Loading, MessageCard, NavRow, PageHeader, Screen, StatusChip } from '../components/console/ui'
 import { cache, feedPath, hhmm, multiplierMark, type Feed as FeedData, type Stage, type Task } from '../feed'
 import { closeGuide, enablePush, firstSight, guideClosed, markAsked, mayAsk, needsHomeScreen, useLoginInAddress, type FeedPush } from '../push'
@@ -47,7 +47,7 @@ export function Feed() {
       cache.saveFeed({ ...feed, new_level: null, new_badges: [] })
       const fresh: Moment[] = [
         ...(feed.new_level ? [{ title: t('level.new', { name: feed.new_level }) }] : []),
-        ...feed.new_badges.map((b) => ({ title: t('badges.new', { name: t(`badges.${b}.name`) }), icon: BADGE_GLYPHS[b] })),
+        ...feed.new_badges.map((b) => ({ title: t('badges.new', { name: b.name }), icon: badgeIcon(b) })),
       ]
       if (fresh.length) setMoments((shown) => [...shown, ...fresh])
       // A photo sent back for a retake: the earlier upload's «Выполнено» no longer holds

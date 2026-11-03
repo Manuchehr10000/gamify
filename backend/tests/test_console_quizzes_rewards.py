@@ -155,16 +155,19 @@ def test_frozen_results_say_so_above_the_list(client, admin):
 # Profile and the moment
 
 def test_profile_lists_held_badges_and_the_screen_greys_the_rest(client, admin, guest, clock):
-    assert profile(client, guest)["badges"] == []
+    assert [b["code"] for b in profile(client, guest)["badges"] if b["held"]] == []
     codes = [f"q{i}" for i in range(1, 6)]
     load_quiz(client, admin, [quiz(c, f"Квиз {c}", points=10) for c in codes], [q for c in codes for q in questions(c, 2)])
     t = ids(client, admin)
     clock("09:30")
     for c in codes:
         play(client, guest, t[c], right=2)
-    assert profile(client, guest)["badges"] == ["erudite"]
-    # Every badge has its condition for the greyed tile, and the words screen readers hear
-    assert all(RU["badges"][b]["condition"] for b in ("photo_hunter", "networker", "erudite", "brand_friend", "forum_spirit"))
+    shelf = profile(client, guest)["badges"]
+    assert [b["code"] for b in shelf if b["held"]] == ["erudite"]
+    # Every badge is on the shelf; the greyed ones' condition is written from each rule type's words
+    assert [b["code"] for b in shelf] == ["photo_hunter", "networker", "erudite", "brand_friend", "forum_spirit"]
+    rules = RU["badges"]["rules"]
+    assert all(rules.get(b["rule"]) or rules.get(f'{b["rule"]}_many') for b in shelf)
     assert (RU["badges"]["held"], RU["badges"]["notHeld"]) == ("получен", "не получен")
 
 

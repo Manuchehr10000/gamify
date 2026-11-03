@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, places, stages
+from app import badges, ledger, places, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, Question, QuizAttempt, Task
@@ -128,7 +128,9 @@ def _finish(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -
         return
     a.correct = sum(1 for q in questions if a.answers.get(str(q.number)) == q.correct)
     a.total = len(questions)
-    a.finished_at = stages.now()
+    # Ended by its timer: it finished at its deadline, not when something noticed, so «Квизы подряд» keeps the order
+    deadline = _deadline(t, a)
+    a.finished_at = min(stages.now(), deadline) if deadline else stages.now()
     # A zero score still marks the task done in the feed. The points' share, rounded up, is then multiplied once at
     # the multiplier from «Начать»
     ledger.write(db, a.guest_id, task_reason(t.id), "task", _share(t.points, a.correct, a.total),
@@ -139,6 +141,9 @@ def _finish(db: DbSession, t: Task, a: QuizAttempt, questions: list[Question]) -
     if bonus:
         ledger.write(db, a.guest_id, speed_reason(t.id), "speed", bonus, 0, multiplier=a.multiplier,
                      stage_id=a.stage_id)
+    # A quiz finished, or settled when its time ran out, may complete a run of perfect quizzes or another badge
+    db.flush()
+    badges.sync(db, [a.guest_id], actor=a.guest_id)
     db.commit()
 
 

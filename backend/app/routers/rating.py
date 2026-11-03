@@ -13,6 +13,15 @@ from app.routers.quiz import settle
 
 router = APIRouter()
 
+
+class HeldBadge(BaseModel):
+    code: str
+    # The admin's name for it
+    name: str
+    # Its rule type: the icon for a badge without one of its own
+    rule: str
+
+
 class Place(BaseModel):
     place: int
     # First name and last initial
@@ -21,7 +30,7 @@ class Place(BaseModel):
     # The level the points reach, shown beside the name
     level: str
     # The badges held now, as small icons beside the name
-    badges: list[str]
+    badges: list[HeldBadge]
 
 
 class GuestPlace(Place):
@@ -40,6 +49,10 @@ class Rating(BaseModel):
     me: Mine | None
 
 
+def _held(held: list[badges.Held]) -> list[HeldBadge]:
+    return [HeldBadge(code=h.code, name=h.name, rule=h.rule) for h in held]
+
+
 @router.get("/api/rating")
 def guest_rating(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_db)) -> Rating:
     # A quiz pays when its time is up, not when its guest next opens the feed
@@ -52,7 +65,7 @@ def guest_rating(guest: Guest = Depends(current_guest), db: DbSession = Depends(
     return Rating(
         frozen=frozen,
         top=[GuestPlace(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
-                        points=r.points, level=levels.name(lv, r.points), badges=held[r.guest.id],
+                        points=r.points, level=levels.name(lv, r.points), badges=_held(held[r.guest.id]),
                         me=r.guest.id == guest.id)
              for r in rows[:top]],
         me=Mine(place=mine.place, points=mine.points) if mine else None,
@@ -83,6 +96,14 @@ class HallPush(BaseModel):
     text: str
 
 
+class HallBadge(BaseModel):
+    # The award's id: each screen shows it once
+    id: int
+    # First name and last initial
+    name: str
+    badge: str
+
+
 class Hall(BaseModel):
     frozen: bool
     top: list[Place]
@@ -99,6 +120,9 @@ class Hall(BaseModel):
     next: Countdown | None
     # The latest push sent in the last 15 seconds (piece 19), shown once per id
     push: HallPush | None
+    # A guest's badge marked «на экран», shown full screen like a push, one at a time; none while a push shows, in
+    # «Эфир» or «Пауза»
+    badge: HallBadge | None
 
 
 @router.get("/api/hall")
@@ -109,18 +133,21 @@ def hall(db: DbSession = Depends(get_db)) -> Hall:
     lv = levels.load(db)
     top = settings.number(db, "hall_top")
     held = badges.earned(db, [r.guest.id for r in rows[:top]])
+    places = [Place(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name), points=r.points,
+                    level=levels.name(lv, r.points), badges=_held(held[r.guest.id])) for r in rows[:top]]
     target = screen.next_target(db)
     push = screen.latest_push(db)
+    # Commits when it starts a badge: read after the places, so the commit doesn't reload them
+    badge = screen.badge_announcement(db, push is not None)
     look = screen.look(db)
-    return Hall(frozen=frozen, top=[Place(place=r.place, name=rating.guest_name(r.guest.first_name, r.guest.last_name),
-                                          points=r.points, level=levels.name(lv, r.points), badges=held[r.guest.id])
-                                    for r in rows[:top]],
+    return Hall(frozen=frozen, top=places,
                 mode=screen.mode(db), live_from=screen.live_from(db), now=stages.now(),
                 slide_seconds=look.slide_seconds, min_font_px=look.min_font_px,
                 logos=[HallLogo(id=lg.id, name=lg.name, size=lg.size, every=lg.every, url=lg.url)
                        for lg in screen.logos(db)],
                 next=Countdown(kind=target.kind, name=target.name, at=target.at) if target else None,
-                push=HallPush(id=push.id, text=push.text) if push else None)
+                push=HallPush(id=push.id, text=push.text) if push else None,
+                badge=HallBadge(id=badge.id, name=badge.name, badge=badge.badge) if badge else None)
 
 
 class ModeIn(BaseModel):
@@ -186,10 +213,18 @@ def freeze(body: FreezeIn, admin: Staff = Depends(require_role("admin")), db: Db
     def logged() -> None:
         changes.record(db, admin, "rating", None, "Рейтинг", "frozen", not body.frozen, body.frozen)
         settings.bump(db)
+        # «Место» badges follow the freeze: the top N get them, quietly; unfreezing takes them back
+        db.flush()
+        badges.recheck(db)
 
     # Freezing again keeps the first freeze and gives its list back, so the admin page can reprint it
     if body.frozen:
         settle(db)
+    # The freeze writes every ranked guest's row and rechecks badges: all guests are locked first, in id order, as
+    # every other recheck does
+    if body.frozen is not None:
+        badges.lock_all(db)
+    if body.frozen:
         try:
             rating.freeze(db, logged)
         except rating.NothingToFreeze:

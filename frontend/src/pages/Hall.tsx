@@ -7,7 +7,8 @@ import type { Hall as HallData, HallLogo, HallMode } from '../rating'
 
 const POLL_MS = 10_000
 const PUSH_MS = 15_000
-// Pushes interrupt the cycle and the logo slides; «Эфир» and «Пауза» are never interrupted
+// Pushes, and badges marked «на экран», interrupt the cycle and the logo slides; «Эфир» and «Пауза» are never
+// interrupted
 const PUSH_MODES: HallMode[] = ['auto', 'logos']
 // A logo that hasn't loaded by then is left out of its slide
 const PRELOAD_MS = 5000
@@ -85,6 +86,7 @@ export function Hall() {
   const pushRef = useRef(false)
   const pushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const seenPushes = useRef(new Set<number>())
+  const seenBadges = useRef(new Set<number>())
   const step = useRef(0)
   const logoSlides = useRef(0)
   const loaded = useRef(new Set<string>())
@@ -155,6 +157,18 @@ export function Hall() {
               }, PUSH_MS)
             }
           }
+          // A badge shows the same way, after any push: the server sends one at a time and none while a push shows
+          if (data.badge && !pushRef.current && !seenBadges.current.has(data.badge.id)) {
+            seenBadges.current.add(data.badge.id)
+            if (PUSH_MODES.includes(data.mode) && !onAir(data, Date.now() + offset)) {
+              pushRef.current = true
+              setPush(t('hall.badge', { name: data.badge.name, badge: data.badge.badge }))
+              pushTimer.current = setTimeout(() => {
+                pushRef.current = false
+                setPush(null)
+              }, PUSH_MS)
+            }
+          }
           hallRef.current = data
           skewRef.current = offset
           setSkew(offset)
@@ -171,7 +185,7 @@ export function Hall() {
       clearInterval(timer)
       clearTimeout(pushTimer.current)
     }
-  }, [flush, record, serverNow])
+  }, [flush, record, serverNow, t])
 
   // The countdown and «Эфир» run on the screen's own clock between polls
   useEffect(() => {

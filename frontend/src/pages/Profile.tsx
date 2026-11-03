@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
-import { BADGES, type Badge } from '../badges'
+import type { ShelfBadge } from '../badges'
 import { HomeScreenGuide } from '../components/console/game'
 import { BadgeTile, SectionHeading } from '../components/console/rewards'
 import { Amount, Button, Card, Loading, MessageCard, PageHeader, Screen, StatusChip } from '../components/console/ui'
@@ -26,8 +26,8 @@ type ProfileData = {
   points: number
   // Below zero when a rejection took back coins already spent
   coins: number
-  // The badges held now; the page shows all five and greys out the rest
-  badges: Badge[]
+  // Every badge switched on, in the order guests see them; the ones not held are greyed with their condition
+  badges: ShelfBadge[]
   history: Entry[]
 }
 
@@ -85,8 +85,8 @@ export function Profile() {
         : <Button variant="outline" icon="plus" onClick={() => setGuide(true)}>{t('profile.pushGuide')}</Button>)}
       <SectionHeading>{t('badges.title')}</SectionHeading>
       <ul className="gc-badge-grid">
-        {BADGES.map((b) => (
-          <li key={b}><BadgeTile badge={b} held={profile.badges.includes(b)} /></li>
+        {profile.badges.map((b) => (
+          <li key={b.code}><BadgeTile badge={b} /></li>
         ))}
       </ul>
       <SectionHeading>{t('profile.history')}</SectionHeading>

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, places, stages
+from app import badges, ledger, places, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.guests import random_code
@@ -99,5 +99,6 @@ def buy(prize_id: int, guest: Guest = Depends(current_guest), db: DbSession = De
         if places.take(db, guest.id, t):
             # At the multiplier of the stage running at the purchase
             ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins, multiplier=stages.multiplier(db))
+    badges.sync(db, [guest.id], actor=guest.id)
     db.commit()
     return _market(db, guest)

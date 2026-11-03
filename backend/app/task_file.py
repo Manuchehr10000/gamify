@@ -1,5 +1,6 @@
 """The admin's Excel file: sheet «Этапы» (the day's schedule), sheet «Задания» (the task catalog),
-sheet «Вопросы» (the quizzes' questions), sheet «Призы» (the market's prizes) and sheet «Уровни» (the levels by points).
+sheet «Вопросы» (the quizzes' questions), sheet «Призы» (the market's prizes), sheet «Уровни» (the levels by points)
+and sheet «Бейджи» (the badges and their rules).
 
 Upload reads the sheets; download writes them back the same way, so the file can be edited and uploaded again.
 An upload applies whole or not at all, after a preview of what it adds, changes and hides.
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app import changes, settings
 from app.guests import random_code
-from app.models import Level, Partner, Prize, Question, Redemption, Stage, Task
+from app.models import Badge, Level, Partner, Prize, Question, Redemption, Stage, Task
 from app.stages import EVENT_TZ
 
 STAGES_SHEET = "Этапы"
@@ -27,6 +28,7 @@ TASKS_SHEET = "Задания"
 PRIZES_SHEET = "Призы"
 QUESTIONS_SHEET = "Вопросы"
 LEVELS_SHEET = "Уровни"
+BADGES_SHEET = "Бейджи"
 
 STAGE_COLUMNS = {
     "number": "Номер",
@@ -80,6 +82,18 @@ LEVEL_COLUMNS = {
     "name": "Название",
     "min_points": "Баллов от",
 }
+BADGE_COLUMNS = {
+    "code": "ID",
+    "name": "Название",
+    "rule": "Тип правила",
+    "count": "Число",
+    "kinds": "Тип задания",
+    "partner": "Партнёр",
+    "task": "Задание",
+    "coins": "Монеты",
+    "on_screen": "На экран",
+}
+REQUIRED_BADGE = ("code", "name", "rule")
 REQUIRED_STAGE = ("number", "name", "starts_at", "ends_at")
 REQUIRED_TASK = ("code", "stage", "type", "text", "points")
 # A stage's «Карточек в ленте» when the cell is blank
@@ -118,6 +132,19 @@ METHODS = {
 # The «Маркет» cell on a stage: «да» marks where the market opens; export writes the first word
 YES = ("да", "yes", "1", "+", "x", "true")
 NO = ("", "нет", "no", "0", "-", "false")
+# The badges' six rule types; export writes the first name
+RULES = {
+    "tasks": ["Задания"],
+    "all_of_type": ["Все задания типа"],
+    "quiz_streak": ["Квизы подряд"],
+    "bonuses": ["Бонусы"],
+    "first_n": ["Первые N"],
+    "place": ["Место"],
+}
+# The badge rules that take «Число», and the one that takes a task
+COUNT_RULES = ("tasks", "quiz_streak", "bonuses", "first_n", "place")
+# A badge's «Партнёр» cell for N tasks of one and the same partner
+ANY_PARTNER = ("Любой один партнёр", "Любой один")
 # Partner packages in feed order (TAG's rules, section 6)
 PACKAGES = {
     "general": ["Генеральный партнёр", "General"],
@@ -139,11 +166,44 @@ LIMITS = {
     ("questions", "number"): (1, 100), ("questions", "text"): (1, 1000), ("questions", "option"): (1, 300),
     ("levels", "name"): (1, 100), ("levels", "min_points"): (0, 100000),
     ("partners", "name"): (1, 100),
+    # badge:{ID} fits score_events.reason's 32 characters
+    ("badges", "code"): (1, 26), ("badges", "name"): (1, 100), ("badges", "count"): (1, 10000),
+    ("badges", "kinds"): (0, 200), ("badges", "coins"): (0, 10000),
 }
 # A stage's «Множитель» moves in halves: 1, 1.5, 2 … 5
 MULTIPLIER_STEP = Decimal("0.5")
 DATE_FORMATS = ("%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S")
 EXCEL_DATE = "DD.MM.YYYY HH:MM"
+
+
+def _kinds(text: str) -> list[tuple[str, str]] | None:
+    """«Фото, Фото+текст», «Крейзи»: each a task type or a way of doing it, as (key, the name export writes). None when
+    one is neither."""
+    out: list[tuple[str, str]] = []
+    for part in re.split(r"[,;]", text or ""):
+        if not part.strip():
+            continue
+        key = _lookup(TYPES, part)
+        found = (key, TYPES[key][0]) if key else None
+        if found is None:
+            key = _lookup(METHODS, part)
+            found = (key, METHODS[key][0]) if key else None
+        if found is None:
+            return None
+        if found not in out:
+            out.append(found)
+    return out
+
+
+def task_kinds(text: str) -> str | None:
+    """A badge's «Тип задания» as stored and written back: the names comma-separated; None when one is unknown."""
+    kinds = _kinds(text)
+    return None if kinds is None else ", ".join(name for _, name in kinds)
+
+
+def kind_keys(text: str) -> set[str]:
+    """The task types and ways of doing it a badge's «Тип задания» names; empty = any task."""
+    return {key for key, _ in _kinds(text) or []}
 
 
 def rule_coins(points: int, partner: bool, multiplier: Decimal) -> int:
@@ -408,12 +468,16 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
     # A file without «Уровни» leaves the levels as they are
     level_sheet = sheets.get(LEVELS_SHEET.lower())
     level_cols, level_rows = _sheet_rows(wb[level_sheet], LEVEL_COLUMNS) if level_sheet else ({}, [])
+    # A file without «Бейджи» leaves the badges as they are
+    badge_sheet = sheets.get(BADGES_SHEET.lower())
+    badge_cols, badge_rows = _sheet_rows(wb[badge_sheet], BADGE_COLUMNS) if badge_sheet else ({}, [])
     result.missing = [f"{STAGES_SHEET}: {STAGE_COLUMNS[c]}" for c in REQUIRED_STAGE if c not in stage_cols] + [
         f"{TASKS_SHEET}: {TASK_COLUMNS[c]}" for c in REQUIRED_TASK if c not in task_cols] + [
         f"{PRIZES_SHEET}: {PRIZE_COLUMNS[c]}" for c in REQUIRED_PRIZE if prize_sheet and c not in prize_cols] + [
         f"{QUESTIONS_SHEET}: {QUESTION_COLUMNS[c]}" for c in REQUIRED_QUESTION
         if question_sheet and c not in question_cols] + [
-        f"{LEVELS_SHEET}: {LEVEL_COLUMNS[c]}" for c in LEVEL_COLUMNS if level_sheet and c not in level_cols]
+        f"{LEVELS_SHEET}: {LEVEL_COLUMNS[c]}" for c in LEVEL_COLUMNS if level_sheet and c not in level_cols] + [
+        f"{BADGES_SHEET}: {BADGE_COLUMNS[c]}" for c in REQUIRED_BADGE if badge_sheet and c not in badge_cols]
     if result.missing:
         return result
 
@@ -422,6 +486,11 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
         result.failed.append({"sheet": sheet, "row": row, "reason": str(reason), **detail})
 
     notes = _Notes(result)
+    # The upload rechecks every guest's badges: their rows are locked first, before the rows it changes, as a guest's
+    # own action locks the guest before the task. The quiz router's import keeps app.badges off this module's top
+    from app import badges
+    if apply:
+        badges.lock_all(db)
     multiplier = settings.get(db, "partner_coin_multiplier")
     # Switched-off stages too: a row for one switches it back on, as a hidden task's row brings the task back
     stages = {s.number: s for s in db.scalars(_locked(Stage))}
@@ -623,6 +692,8 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
         _import_prizes(db, prize_cols, prize_rows, partners, notes, fail)
     if level_sheet:
         _import_levels(db, level_cols, level_rows, notes, fail)
+    if badge_sheet:
+        _import_badges(db, badge_cols, badge_rows, partners, tasks, notes, fail)
     if result.failed:
         # Refused whole: nothing of it applies, and the counts say so
         db.rollback()
@@ -632,6 +703,10 @@ def import_xlsx(db: DbSession, raw: bytes, apply: bool = True, record: Recorder 
         return result
     if record is not None:
         notes.write(db, record)
+    # The upload may change what guests meet (a task's type or partner, a hidden task, a badge's rule): every guest's
+    # badges are checked again, quietly
+    db.flush()
+    badges.recheck(db)
     db.commit()
     return result
 
@@ -749,6 +824,74 @@ def _import_levels(db: DbSession, cols: dict[str, int], rows: list[tuple[int, li
     notes.log.append(("levels", LEVELS_SHEET, "levels", shown, "; ".join(f"{name} {points}" for name, points in levels)))
 
 
+def _import_badges(db: DbSession, cols: dict[str, int], rows: list[tuple[int, list]], partners: dict[str, Partner],
+                   tasks: dict[str, Task], notes: _Notes, fail: Callable[[str, int, "str | RowError"], None]) -> None:
+    """The badges by ID; one missing from the sheet is switched off, which removes it from everyone. The counts are
+    the preview's items of the sheet."""
+    db.flush()
+    badges = {b.code: b for b in db.scalars(_locked(Badge))}
+    seen: set[str] = set()
+    for position, (n, row) in enumerate(rows):
+        try:
+            code = _long(_text(_cell(row, cols, "code")), ("badges", "code"), BADGE_COLUMNS["code"])
+            if not code:
+                raise RowError("no_id")
+            if code in seen:
+                raise RowError("duplicate_id")
+            name = _long(_text(_cell(row, cols, "name")), ("badges", "name"), BADGE_COLUMNS["name"])
+            if not name:
+                raise RowError("no_name")
+            rule_cell = _text(_cell(row, cols, "rule"))
+            rule = _lookup(RULES, rule_cell) if rule_cell else None
+            if rule is None:
+                raise RowError("unknown_rule")
+            count_cell = _cell(row, cols, "count")
+            if rule in COUNT_RULES and not _text(count_cell):
+                raise RowError("no_count")
+            count = _int(count_cell, "bad_count", ("badges", "count")) if rule in COUNT_RULES else None
+            kinds = task_kinds(_long(_text(_cell(row, cols, "kinds")), ("badges", "kinds"), BADGE_COLUMNS["kinds"]))
+            if kinds is None:
+                raise RowError("unknown_kind")
+            if rule == "all_of_type" and not kinds:
+                raise RowError("no_kinds")
+            partner_cell = _text(_cell(row, cols, "partner"))
+            any_partner = partner_cell.lower() in (a.lower() for a in ANY_PARTNER)
+            partner = partners.get(partner_cell) if partner_cell and not any_partner else None
+            if partner_cell and not any_partner and partner is None:
+                raise RowError("unknown_partner")
+            task_cell = _text(_cell(row, cols, "task"))
+            if rule == "first_n" and not task_cell:
+                raise RowError("no_task")
+            task = tasks.get(task_cell) if task_cell else None
+            if task_cell and task is None:
+                raise RowError("unknown_task")
+            coins_cell = _cell(row, cols, "coins")
+            coins = _int(coins_cell, "bad_coins", ("badges", "coins")) if _text(coins_cell) else 0
+            screen_cell = _text(_cell(row, cols, "on_screen")).lower()
+            if screen_cell not in YES + NO:
+                raise RowError("bad_on_screen")
+        except RowError as e:
+            fail(BADGES_SHEET, n, e)
+            continue
+        seen.add(code)
+        values = {"name": name, "rule": rule, "count": count, "kinds": kinds,
+                  "partner_id": partner.id if partner else None, "any_partner": any_partner,
+                  "task_id": task.id if task and rule == "first_n" else None, "coins": coins,
+                  "on_screen": screen_cell in YES, "position": position, "active": True}
+        badge = badges.get(code)
+        if badge is None:
+            badge = Badge(code=code, **values)
+            db.add(badge)
+            notes.added("badges", badge, {"code": code, **values})
+            notes.item(BADGES_SHEET, code, name, "added")
+        elif notes.set("badges", badge, values):
+            notes.item(BADGES_SHEET, code, name, "changed")
+    for code, badge in badges.items():
+        if code not in seen and badge.active:
+            notes.set("badges", badge, {"active": False})
+            notes.item(BADGES_SHEET, code, badge.name, "hidden")
+
+
 def _new_qr(db: DbSession) -> str:
     db.flush()
     while True:
@@ -768,7 +911,7 @@ def _number(d: Decimal) -> int | float:
 
 
 def export_xlsx(db: DbSession) -> bytes:
-    """All five sheets with what is loaded now; with nothing loaded, an empty template with the right columns
+    """All six sheets with what is loaded now; with nothing loaded, an empty template with the right columns
     (and the levels, which start as TAG's five)."""
     wb = Workbook()
     ws = wb.active
@@ -821,6 +964,14 @@ def export_xlsx(db: DbSession) -> bytes:
     wl.append(list(LEVEL_COLUMNS.values()))
     for lv in db.scalars(select(Level).order_by(Level.min_points)):
         wl.append([lv.name, lv.min_points])
+
+    wb_ = wb.create_sheet(BADGES_SHEET)
+    wb_.append(list(BADGE_COLUMNS.values()))
+    task_codes = dict(db.execute(select(Task.id, Task.code)).all())
+    for b in db.scalars(select(Badge).where(Badge.active).order_by(Badge.position, Badge.id)):
+        partner = ANY_PARTNER[0] if b.any_partner else partners[b.partner_id].name if b.partner_id else None
+        wb_.append([b.code, b.name, RULES[b.rule][0], b.count, b.kinds or None, partner, task_codes.get(b.task_id),
+                    b.coins, YES[0] if b.on_screen else None])
 
     out = io.BytesIO()
     wb.save(out)

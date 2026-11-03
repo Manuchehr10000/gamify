@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Badge } from '../../badges'
-import { BADGE_GLYPHS, splitNumber } from './glyphs'
+import { condition, type HeldBadge, type ShelfBadge } from '../../badges'
+import { badgeIcon, splitNumber } from './glyphs'
 import { Amount, Button, Icon } from './ui'
 
 const mmss = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
@@ -87,32 +87,32 @@ export function SectionHeading({ children }: { children: ReactNode }) {
 }
 
 // Small pixel icons of the badges held, beside a name in the rating and the hall; each one named for screen readers
-export function BadgeIcons({ badges }: { badges: Badge[] }) {
-  const { t } = useTranslation()
+export function BadgeIcons({ badges }: { badges: HeldBadge[] }) {
   if (badges.length === 0) return null
   return (
     <span className="gc-badge-icons">
-      {badges.map((b) => <Icon key={b} name={BADGE_GLYPHS[b]} size={16} label={t(`badges.${b}.name`)} />)}
+      {badges.map((b) => <Icon key={b.code} name={badgeIcon(b)} size={16} label={b.name} />)}
     </span>
   )
 }
 
 // One badge on the profile: held in colour with a check, or greyed with the lock and its condition;
-// screen readers hear «получен» or «не получен», not only the colour
-export function BadgeTile({ badge, held }: { badge: Badge; held: boolean }) {
+// screen readers hear «получен» or «не получен», not only the colour. The condition is written from the badge's rule
+export function BadgeTile({ badge }: { badge: ShelfBadge }) {
   const { t } = useTranslation()
+  const held = badge.held
   return (
     <div className={`gc-badge-tile gc-badge-tile--${held ? 'held' : 'locked'}`}>
-      <span className="gc-badge-tile__disc"><Icon name={BADGE_GLYPHS[badge]} size={24} /></span>
+      <span className="gc-badge-tile__disc"><Icon name={badgeIcon(badge)} size={24} /></span>
       <span className="gc-badge-tile__body">
-        <span className="gc-badge-tile__name gc-body">{t(`badges.${badge}.name`)}</span>
+        <span className="gc-badge-tile__name gc-body">{badge.name}</span>
         {held ? (
           <span className="gc-sr">{t('badges.held')}</span>
         ) : (
           <span className="gc-badge-tile__cond gc-body-s">
             <span className="gc-badge-tile__lock"><Icon name="lock" size={16} /></span>
             <span className="gc-sr">{`${t('badges.notHeld')}: `}</span>
-            <span>{t(`badges.${badge}.condition`)}</span>
+            <span>{condition(t, badge)}</span>
           </span>
         )}
       </span>
@@ -123,7 +123,7 @@ export function BadgeTile({ badge, held }: { badge: Badge; held: boolean }) {
 
 // One place of the top list: place, name with badges and level, points; my own row says «Вы»
 export function LeaderboardRow({ place, name, level, badges, points, me }:
-  { place: number; name: string; level: string; badges: Badge[]; points: number; me: boolean }) {
+  { place: number; name: string; level: string; badges: HeldBadge[]; points: number; me: boolean }) {
   const { t } = useTranslation()
   return (
     <div className={`gc-leaderboard-row ${place <= 3 ? 'gc-leaderboard-row--top' : ''} ${me ? 'gc-leaderboard-row--me' : ''}`}>

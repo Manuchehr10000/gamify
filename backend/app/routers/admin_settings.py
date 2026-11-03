@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session as DbSession
 
-from app import changes, settings, stages
+from app import badges, changes, settings, stages
 from app.admin_lists import KINDS, Kind, parse, refuse, row_out, schema, set_secret
 from app.auth import require_role
 from app.db import get_db
@@ -36,6 +36,12 @@ def _kind(kind: str) -> Kind:
     if kind not in KINDS:
         raise HTTPException(404, "unknown_kind")
     return KINDS[kind]
+
+
+def _lock_guests(db: DbSession, k: Kind) -> None:
+    """A save that rechecks badges locks every guest first, before its own row: guests before tasks, everywhere."""
+    if k.recheck is not None:
+        badges.lock_all(db)
 
 
 def _locked_row(db: DbSession, k: Kind, row_id: int):
@@ -120,6 +126,7 @@ def list_rows(kind: str, db: DbSession = Depends(get_db)) -> ListOut:
 def add_row(kind: str, values: dict = Body(embed=True), confirm: bool = False, admin: Staff = Depends(ADMIN),
             db: DbSession = Depends(get_db)) -> dict:
     k = _kind(kind)
+    _lock_guests(db, k)
     parsed = parse(db, k, values, None)
     before = k.state(db, None)
     row = k.model()
@@ -131,6 +138,8 @@ def add_row(kind: str, values: dict = Body(embed=True), confirm: bool = False, a
     db.add(row)
     _flush(db)
     _confirm(db, k.impact(db, row, before, False), confirm)
+    if k.recheck is not None:
+        k.recheck(db)
     item = changes.label(db, row)
     changes.record(db, admin, kind, row.id, item, changes.CREATED)
     # The new row's values, so the log holds what was added
@@ -144,6 +153,7 @@ def add_row(kind: str, values: dict = Body(embed=True), confirm: bool = False, a
 def save_row(kind: str, row_id: int, values: dict = Body(), version: int = Body(), confirm: bool = False,
              admin: Staff = Depends(ADMIN), db: DbSession = Depends(get_db)) -> dict:
     k = _kind(kind)
+    _lock_guests(db, k)
     row = _locked_row(db, k, row_id)
     # Read under the row's lock: of two admins saving at once, the second finds the version moved
     if row.version != version:
@@ -162,6 +172,8 @@ def save_row(kind: str, row_id: int, values: dict = Body(), version: int = Body(
         k.lock(db, row)
     _flush(db)
     _confirm(db, k.impact(db, row, before, False), confirm)
+    if k.recheck is not None:
+        k.recheck(db)
     item = changes.label(db, row)
     for name, old, new in diff:
         changes.record(db, admin, kind, row.id, item, name, changes.shown(db, name, old), changes.shown(db, name, new))
@@ -175,6 +187,7 @@ def delete_row(kind: str, row_id: int, confirm: bool = False, admin: Staff = Dep
                db: DbSession = Depends(get_db)) -> dict:
     """Only a row nothing uses: one other data uses is switched off instead."""
     k = _kind(kind)
+    _lock_guests(db, k)
     row = _locked_row(db, k, row_id)
     reason = k.keep(db, row)
     if reason:
@@ -191,6 +204,8 @@ def delete_row(kind: str, row_id: int, confirm: bool = False, admin: Staff = Dep
         db.execute(delete(Session).where(Session.staff_id == row.id))
     db.delete(row)
     _flush(db)
+    if k.recheck is not None:
+        k.recheck(db)
     changes.record(db, admin, kind, row_id, item, changes.DELETED)
     settings.bump(db)
     db.commit()
@@ -368,7 +383,7 @@ def change_log(kind: str = "", item: str = "", staff_id: int | None = None, date
 LOG_HEAD = ["Время", "Администратор", "Раздел", "Запись", "Поле", "Было", "Стало", "Источник"]
 KIND_NAMES = {"stages": "Этапы", "tasks": "Задания", "prizes": "Призы", "questions": "Вопросы", "levels": "Уровни",
               "partners": "Партнёры", "staff": "Доступ", "settings": "Настройки", "rating": "Рейтинг",
-              "guests": "Гости", "push": "Push"}
+              "guests": "Гости", "push": "Push", "badges": "Бейджи"}
 SOURCES = {"form": "Форма", "excel": "Excel"}
 # The file names fields as the forms and the Excel sheets do
 FIELD_NAMES = {
@@ -385,6 +400,8 @@ FIELD_NAMES = {
     "package": "Пакет партнёра", "logo": "Логотип", "role": "Роль", "secret": "PIN / пароль",
     "value": "Значение", "frozen": "Заморожен", "_import": "Загрузка списка",
     "kind": "Вид", "at": "Время", "title": "Заголовок", "state": "Состояние",
+    "rule": "Тип правила", "count": "Число", "kinds": "Тип задания", "any_partner": "Любой один партнёр",
+    "on_screen": "На экран",
 }
 
 

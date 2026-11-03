@@ -194,12 +194,22 @@ export function AdminTasks() {
               </p>
             )}
             {result.levels_changed && <p>{t('tasksAdmin.levels')}</p>}
+            <BadgeCounts items={result.items} />
           </Callout>
         )}
       </div>
       <RatingFreeze token={token} fail={fail} />
     </AdminShell>
   )
+}
+
+// The «Бейджи» sheet's counts, from the items the upload added, changed and switched off
+function BadgeCounts({ items }: { items: Result['items'] }) {
+  const { t } = useTranslation()
+  const count = (change: string) => items.filter((i) => i.sheet === 'Бейджи' && i.change === change).length
+  const [added, changed, hidden] = [count('added'), count('changed'), count('hidden')]
+  if (added + changed + hidden === 0) return null
+  return <p>{t('tasksAdmin.badges', { added, changed, hidden })}</p>
 }
 
 function Preview({ preview, busy, onApply, onCancel }:

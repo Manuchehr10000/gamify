@@ -68,6 +68,14 @@ class FeedPush(BaseModel):
     url: str
 
 
+class NewBadge(BaseModel):
+    code: str
+    # The admin's name for it
+    name: str
+    # Its rule type: the icon for a badge without one of its own
+    rule: str
+
+
 class Feed(BaseModel):
     points: int
     coins: int
@@ -76,8 +84,8 @@ class Feed(BaseModel):
     to_next: int | None
     # Set once, when the guest has just climbed past the level they last saw: the full-screen moment
     new_level: str | None
-    # Badges just earned and not seen before, in badges.BADGES order: a full-screen moment each, after the level's
-    new_badges: list[str]
+    # Badges just earned and not seen before, in the order guests see them: a full-screen moment each, after the level's
+    new_badges: list[NewBadge]
     # How many photos and texts the phone may keep waiting to send (the admin's setting)
     queue_size: int
     # The latest push still inside its 10-minute life: the banner for anyone with the app open, push or not
@@ -254,7 +262,7 @@ def _feed(db: DbSession, guest: Guest, advance: bool) -> Feed:
     lv = levels.place(levels.load(db), points)
     mine = {"points": points, "coins": coins, "level": lv.name if lv else "", "to_next": lv.to_next if lv else None,
             "new_level": lv.name if levels.climbed(db, guest, lv) else None,
-            "new_badges": badges.fresh(db, guest.id), "queue_size": settings.number(db, "upload_queue_size"),
+            "new_badges": [NewBadge(code=b.code, name=b.name, rule=b.rule) for b in badges.fresh(db, guest.id)], "queue_size": settings.number(db, "upload_queue_size"),
             "push": _push(db), "ask_push": push.should_ask(db, guest.id)}
     first = d.stages[0].starts_at.astimezone(EVENT_TZ) if d.stages else None
     if d.current is None:
@@ -332,6 +340,7 @@ def _award(db: DbSession, guest: Guest, t: Task) -> Award:
     # Points × the running stage's multiplier (available() made it this task's stage); coins as they are
     added = ledger.write(db, guest.id, reason, "task", t.points, t.coins,
                          multiplier=stages.multiplier(db)) is not None
+    badges.sync(db, [guest.id], actor=guest.id)
     db.commit()
     return Award(result="awarded" if added else "already", task=task_out(db, guest, t))
 
