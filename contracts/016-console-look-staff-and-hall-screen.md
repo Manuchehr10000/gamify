@@ -1,5 +1,5 @@
 # Contract: Console look: staff and hall screen
-Status: building
+Status: on-dev
 Base: 4c2625fb42
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be60813b8966ed6676ecd0a2
