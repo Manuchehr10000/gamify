@@ -1,9 +1,9 @@
-import { Clock } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, api, blob, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { Button, Card } from '../components/ui'
+import { StatTile } from '../components/console/staff'
+import { Amount, Button, Callout, Checkbox, Loading, MessageCard, Screen, Spinner, Stripe } from '../components/console/ui'
 import { hhmm } from '../feed'
 
 type Item = { id: number; task: string; points: number; guest: string; text: string; photo: boolean; created_at: string }
@@ -61,33 +61,30 @@ export function Moderate() {
   if (!token) return <StaffLogin role="moderator" onLogin={setToken} />
 
   const items = queue?.items.filter((i) => !decided.has(i.id)) ?? []
+  const oldest = queue?.oldest_seconds ?? null
   return (
-    <main className="min-h-dvh bg-slate-50 px-4 py-6 text-slate-900">
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4">
-        <header className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl bg-white px-5 py-3 shadow-sm ring-1 ring-slate-200">
-          <span className="text-lg font-semibold">{queue?.moderator}</span>
-          {queue && (
-            <span className="flex flex-1 flex-wrap items-center gap-x-3 text-slate-700">
-              <span className="font-medium">{t('moderate.waiting', { count: queue.waiting })}</span>
-              {queue.oldest_seconds !== null && (
-                <span className="flex items-center gap-1 text-slate-500">
-                  <Clock className="size-4" aria-hidden />
-                  {queue.oldest_seconds < 60
-                    ? t('moderate.oldestNow')
-                    : t('moderate.oldestMinutes', { count: Math.floor(queue.oldest_seconds / 60) })}
-                </span>
-              )}
-            </span>
+    <Screen theme="label" wide>
+      <header className="gc-moderate-head">
+        <h1 className="gc-moderate-head__name gc-display-m">{queue?.moderator ?? t('staff.moderatorTitle')}</h1>
+        <Checkbox checked={top20} onChange={setTop20}>{t('moderate.top20')}</Checkbox>
+        <Stripe className="gc-moderate-head__stripe" />
+      </header>
+      {queue && (
+        <div className="gc-moderate-stats">
+          <StatTile label={t('live.waiting')} value={queue.waiting} />
+          {oldest !== null && (
+            <StatTile
+              label={t('live.oldest')}
+              value={oldest < 60 ? t('moderate.oldestNow') : t('live.minutes', { count: Math.floor(oldest / 60) })}
+            />
           )}
-          <label className="flex items-center gap-2 font-medium">
-            <input type="checkbox" className="size-5 accent-emerald-600" checked={top20} onChange={(e) => setTop20(e.target.checked)} />
-            {t('moderate.top20')}
-          </label>
-        </header>
-        {error && <p className="text-sm text-red-600">{t('common.error')}</p>}
-        {!queue && !error && <p className="text-center text-slate-500">{t('common.loading')}</p>}
-        {queue && items.length === 0 && <p className="py-12 text-center text-lg text-slate-500">{t('moderate.empty')}</p>}
-        <ul className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        </div>
+      )}
+      {error && <Callout tone="danger">{t('common.error')}</Callout>}
+      {!queue && !error && <Loading />}
+      {queue && items.length === 0 && <MessageCard icon="check" title={t('moderate.empty')} />}
+      {items.length > 0 && (
+        <ul className="gc-moderation-grid">
           {items.map((item) => (
             <li key={item.id}>
               <ItemCard
@@ -102,8 +99,8 @@ export function Moderate() {
             </li>
           ))}
         </ul>
-      </div>
-    </main>
+      )}
+    </Screen>
   )
 }
 
@@ -134,35 +131,33 @@ function ItemCard({ item, token, onDecided, onLoggedOut }:
   }
 
   return (
-    <Card className="flex flex-col gap-3 p-4">
+    <article className="gc-moderation-card" aria-busy={busy || undefined} aria-label={`${item.guest} · ${item.task}`}>
       {item.photo && (
-        <div className="flex h-72 items-center justify-center overflow-hidden rounded-xl bg-slate-100">
-          {photo && <img src={photo} alt={t('moderate.photoAlt')} className="max-h-full max-w-full object-contain" />}
+        <div className="gc-photo-frame gc-crt" aria-busy={!photo || undefined}>
+          {photo
+            ? <img src={photo} alt={t('moderate.photoAlt')} className="gc-photo-frame__img" />
+            : <Spinner size={32} label={t('common.loading')} />}
         </div>
       )}
-      {item.text && <p className="whitespace-pre-line text-base">{item.text}</p>}
-      <p className="text-sm font-medium text-slate-700">{item.task}</p>
-      <div className="flex flex-wrap items-center gap-x-3 text-sm text-slate-500">
-        <span className="font-medium text-slate-800">{item.guest}</span>
-        <span className="text-emerald-700">{t('feed.points', { count: item.points })}</span>
+      {item.text && <p className="gc-moderation-card__text gc-body">{item.text}</p>}
+      <p className="gc-moderation-card__task gc-label">{item.task}</p>
+      <p className="gc-moderation-card__meta gc-body-s">
+        <span className="gc-moderation-card__guest">{item.guest}</span>
+        <Amount kind="points" count={item.points} size="s" />
         <span>{t('moderate.sentAt', { time: hhmm(item.created_at) })}</span>
-      </div>
+      </p>
       {already ? (
-        <p className="rounded-xl bg-slate-100 px-4 py-3 font-medium text-slate-700">{t('moderate.already', { name: already })}</p>
+        <Callout tone="info" icon="eye">{t('moderate.already', { name: already })}</Callout>
       ) : (
-        <div className="grid grid-cols-2 gap-2">
+        <div className="gc-moderation-card__actions">
           <Button disabled={busy} onClick={() => decide('accept')}>{t('moderate.accept')}</Button>
           <Button variant="outline" disabled={busy} onClick={() => decide('bonus')}>{t('moderate.bonus')}</Button>
-          <Button variant="outline" disabled={busy} onClick={() => decide('retake')} className="h-auto min-h-12 py-2 text-sm">
-            {t('moderate.retake')}
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={() => decide('penalty')} className="h-auto min-h-12 py-2 text-sm">
-            {t('moderate.penalty')}
-          </Button>
+          <Button variant="outline" disabled={busy} onClick={() => decide('retake')}>{t('moderate.retake')}</Button>
+          <Button variant="danger" disabled={busy} onClick={() => decide('penalty')}>{t('moderate.penalty')}</Button>
         </div>
       )}
-      {error && <p className="text-sm text-red-600">{error}</p>}
-    </Card>
+      {error && <Callout tone="danger">{error}</Callout>}
+    </article>
   )
 }
 

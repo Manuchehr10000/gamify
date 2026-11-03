@@ -1,13 +1,14 @@
-import { Lock, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '../api'
-import { BadgeIcons } from '../components/BadgeIcon'
+import { BadgeIcons } from '../components/console/rewards'
+import { Icon, Shell, Stripe } from '../components/console/ui'
 import type { Hall as HallData } from '../rating'
 
 const POLL_MS = 10_000
 
-// The hall's big screen: no login, read-only. A dropped network keeps the last top 10 until it comes back
+// The hall's big screen: no login, read-only, the dark board in a woodgrain frame. A dropped network keeps the last
+// top 10 under «Нет связи» until it comes back
 export function Hall() {
   const { t } = useTranslation()
   const [hall, setHall] = useState<HallData | null>(null)
@@ -32,46 +33,42 @@ export function Hall() {
   }, [])
 
   return (
-    <main className="flex min-h-dvh flex-col bg-slate-950 px-[4vw] py-[4vh] text-white">
-      <header className="flex items-baseline justify-between gap-6">
-        <h1 className="text-[clamp(2rem,5vw,5rem)] font-bold leading-tight">{t('hall.forum')}</h1>
-        <p className="text-[clamp(1.25rem,3vw,3rem)] font-semibold text-emerald-400">{t('hall.title')}</p>
-      </header>
-      {hall?.frozen && (
-        <p className="mt-[2vh] flex items-center gap-3 text-[clamp(1rem,2vw,2rem)] font-medium text-amber-300">
-          <Lock className="size-[1em]" aria-hidden />
-          {t('hall.frozen')}
-        </p>
-      )}
-      {hall && hall.top.length === 0 && (
-        <p className="m-auto text-[clamp(1.5rem,3vw,3rem)] text-slate-400">{t('hall.empty')}</p>
-      )}
-      {hall && hall.top.length > 0 && (
-        <ol className="mt-[3vh] flex flex-1 flex-col justify-around">
-          {hall.top.map((r) => (
-            <li
-              key={r.place}
-              className="flex items-center gap-[2vw] border-b border-slate-800 py-[0.8vh] text-[clamp(1.25rem,3.6vw,4rem)] last:border-0"
-            >
-              <span className={`w-[2.5ch] text-right font-bold tabular-nums ${r.place <= 3 ? 'text-amber-300' : 'text-slate-400'}`}>
-                {r.place}
-              </span>
-              <span className="flex min-w-0 flex-1 items-baseline gap-[1.5vw]">
-                <span className="truncate font-semibold">{r.name}</span>
-                <BadgeIcons badges={r.badges} className="gap-[0.4vw] self-center text-[0.55em] text-amber-300" />
-                {r.level && <span className="shrink-0 text-[0.55em] font-medium text-slate-400">{r.level}</span>}
-              </span>
-              <span className="font-bold tabular-nums text-emerald-400">{r.points}</span>
-            </li>
-          ))}
-        </ol>
-      )}
-      {offline && (
-        <p className="mt-[2vh] flex items-center gap-2 text-sm text-slate-500">
-          <WifiOff className="size-4" aria-hidden />
-          {t('hall.offline')}
-        </p>
-      )}
-    </main>
+    <Shell theme="console" className="gc-hall-board gc-wood">
+      <div className="gc-hall-board__screen">
+        <header className="gc-hall-board__titles">
+          <p className="gc-hall-board__event">{t('hall.forum')}</p>
+          <h1 className="gc-hall-board__title gc-display-xl">{t('hall.title')}</h1>
+        </header>
+        <Stripe className="gc-hall-board__stripe" />
+        {hall?.frozen && (
+          <p className="gc-hall-board__notice gc-hall-board__notice--frozen" role="status">
+            <Icon name="lock" size={32} />
+            <span>{t('hall.frozen')}</span>
+          </p>
+        )}
+        {offline && (
+          <p className="gc-hall-board__notice gc-hall-board__notice--offline" role="status">
+            <Icon name="wifi-off" size={24} />
+            <span>{t('hall.offline')}</span>
+          </p>
+        )}
+        {hall && hall.top.length === 0 && <p className="gc-hall-board__empty">{t('hall.empty')}</p>}
+        {hall && hall.top.length > 0 && (
+          <ol className="gc-hall-board__list">
+            {hall.top.map((r) => (
+              <li key={r.place} className={`gc-hall-board__row ${r.place <= 3 ? 'gc-hall-board__row--top' : ''}`}>
+                <span className="gc-hall-board__place gc-score-l gc-num">{r.place}</span>
+                <span className="gc-hall-board__who">
+                  <span className="gc-hall-board__name">{r.name}</span>
+                  {r.badges.length > 0 && <span className="gc-hall-board__badges"><BadgeIcons badges={r.badges} /></span>}
+                  {r.level && <span className="gc-hall-board__level">{r.level}</span>}
+                </span>
+                <span className={`gc-hall-board__points ${r.place <= 3 ? 'gc-score-xl' : 'gc-score-l'} gc-num`}>{r.points}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </Shell>
   )
 }

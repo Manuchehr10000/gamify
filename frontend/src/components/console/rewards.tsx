@@ -86,8 +86,8 @@ export function SectionHeading({ children }: { children: ReactNode }) {
   return <h2 className="gc-section-heading gc-display-m">{children}</h2>
 }
 
-// Small pixel icons of the badges held, beside a name; each one named for screen readers
-function BadgeIcons({ badges }: { badges: Badge[] }) {
+// Small pixel icons of the badges held, beside a name in the rating and the hall; each one named for screen readers
+export function BadgeIcons({ badges }: { badges: Badge[] }) {
   const { t } = useTranslation()
   if (badges.length === 0) return null
   return (

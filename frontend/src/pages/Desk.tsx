@@ -3,7 +3,8 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { Button, Card, Input, Screen } from '../components/ui'
+import { GuestRow, QrCard, TextInput } from '../components/console/staff'
+import { Button, Callout, Card, PageHeader, Screen } from '../components/console/ui'
 
 type Guest = { id: number; first_name: string; last_name: string; phone: string; company: string; link: string }
 
@@ -53,63 +54,65 @@ export function Desk() {
 
   if (shown) {
     return (
-      <Screen>
-        <Card className="flex flex-col items-center gap-4 text-center">
-          <h1 className="text-2xl font-semibold">{shown.first_name} {shown.last_name}</h1>
-          {shown.company && <p className="text-slate-500">{shown.company}</p>}
-          <QRCodeSVG value={shown.link} size={280} marginSize={2} className="h-auto w-full max-w-xs" />
-          <p className="text-slate-600">{t('desk.scan')}</p>
-          <Button variant="outline" className="w-full" onClick={() => setShown(null)}>{t('common.back')}</Button>
-        </Card>
+      <Screen theme="label">
+        <QrCard title={`${shown.first_name} ${shown.last_name}`} subtitle={shown.company} caption={t('desk.scan')}>
+          <QRCodeSVG value={shown.link} size={280} marginSize={2} />
+        </QrCard>
+        <Button variant="outline" icon="chevron-left" onClick={() => setShown(null)}>{t('common.back')}</Button>
       </Screen>
     )
   }
 
   if (walkIn) {
     const field = (key: keyof typeof emptyWalkIn, required = false) => (
-      <Input
-        placeholder={t(`desk.${key === 'first_name' ? 'firstName' : key === 'last_name' ? 'lastName' : key}`)}
+      <TextInput
+        label={t(`desk.${key === 'first_name' ? 'firstName' : key === 'last_name' ? 'lastName' : key}`)}
         value={walkIn[key]}
         required={required}
+        type={key === 'phone' ? 'tel' : 'text'}
         inputMode={key === 'phone' ? 'tel' : undefined}
-        onChange={(e) => setWalkIn({ ...walkIn, [key]: e.target.value })}
+        onChange={(value) => setWalkIn({ ...walkIn, [key]: value })}
       />
     )
     return (
-      <Screen>
+      <Screen theme="label">
+        <PageHeader title={t('desk.addWalkIn')} />
         <Card>
-          <form onSubmit={addWalkIn} className="flex flex-col gap-3">
-            <h1 className="text-xl font-semibold">{t('desk.addWalkIn')}</h1>
+          <form onSubmit={addWalkIn} className="gc-staff-login__form">
             {field('first_name', true)}
             {field('last_name')}
             {field('phone', true)}
             {field('company')}
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <Button>{t('desk.create')}</Button>
-            <Button type="button" variant="outline" onClick={() => setWalkIn(null)}>{t('common.back')}</Button>
+            {error && <Callout tone="danger">{error}</Callout>}
+            <Button type="submit" icon="qr">{t('desk.create')}</Button>
+            <Button variant="outline" icon="chevron-left" onClick={() => setWalkIn(null)}>{t('common.back')}</Button>
           </form>
         </Card>
       </Screen>
     )
   }
 
+  const searching = query.trim().length >= 2
   return (
-    <Screen>
-      <h1 className="text-xl font-semibold">{t('staff.deskTitle')}</h1>
-      <Input placeholder={t('desk.search')} value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      {query.trim().length >= 2 && results?.length === 0 && <p className="text-slate-500">{t('desk.nothing')}</p>}
-      {query.trim().length >= 2 && results?.map((g) => (
-        <button
-          key={g.id}
-          onClick={() => setShown(g)}
-          className="rounded-xl bg-white p-4 text-left shadow-sm ring-1 ring-slate-200 hover:ring-emerald-600"
-        >
-          <div className="font-medium">{g.last_name} {g.first_name}</div>
-          <div className="text-sm text-slate-500">{[g.company, g.phone].filter(Boolean).join(' · ')}</div>
-        </button>
-      ))}
-      <Button variant="outline" onClick={() => { setError(''); setWalkIn(emptyWalkIn) }}>{t('desk.addWalkIn')}</Button>
+    <Screen theme="label">
+      <PageHeader title={t('staff.deskTitle')} />
+      <TextInput label={t('desk.search')} value={query} onChange={setQuery} autoFocus />
+      {error && <Callout tone="danger">{error}</Callout>}
+      {searching && results?.length === 0 && <p className="gc-empty gc-body">{t('desk.nothing')}</p>}
+      {searching && results && results.length > 0 && (
+        <ul className="gc-guest-list">
+          {results.map((g) => (
+            <li key={g.id}>
+              <GuestRow
+                name={`${g.last_name} ${g.first_name}`}
+                meta={[g.company, g.phone].filter(Boolean).join(' · ')}
+                onClick={() => setShown(g)}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+      <Button variant="outline" icon="user-plus" onClick={() => { setError(''); setWalkIn(emptyWalkIn) }}>{t('desk.addWalkIn')}</Button>
     </Screen>
   )
 }

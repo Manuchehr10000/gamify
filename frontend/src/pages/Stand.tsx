@@ -1,11 +1,9 @@
-import { Check, CircleAlert } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { PartnerBadge } from '../components/PartnerBadge'
-import { Button, Card, Screen } from '../components/ui'
+import { Button, Card, Icon, Loading, MessageCard, Screen } from '../components/console/ui'
 import { hhmm } from '../feed'
 
 type Handover = { prize: string; partner: string; first_name: string; issued_at: string | null }
@@ -56,32 +54,37 @@ export function Stand() {
 
   if (!token) return <StaffLogin role="stand" onLogin={setToken} />
 
+  if (state.kind === 'loading') return <Screen theme="label" center><Loading /></Screen>
+  if (state.kind === 'message') return <Screen theme="label" center><MessageCard icon="alert" title={state.text} /></Screen>
+
+  const { handover, issuedNow } = state
   return (
-    <Screen>
-      {state.kind === 'loading' && <p className="text-center text-slate-500">{t('common.loading')}</p>}
-      {state.kind === 'message' && <Card className="text-center text-lg font-medium">{state.text}</Card>}
-      {state.kind === 'ready' && (
-        <Card className="flex flex-col items-center gap-4 py-8 text-center">
-          <PartnerBadge name={state.handover.partner} />
-          <p className="text-2xl font-semibold">{state.handover.prize}</p>
-          <p className="text-lg text-slate-600">{t('stand.guest', { name: state.handover.first_name })}</p>
-          {state.issuedNow && (
-            <p className="flex items-center gap-2 text-xl font-semibold text-emerald-700">
-              <Check className="size-6" aria-hidden />
-              {t('stand.issued')}
-            </p>
-          )}
-          {!state.issuedNow && state.handover.issued_at && (
-            <p className="flex items-center gap-2 text-xl font-semibold text-red-700">
-              <CircleAlert className="size-6" aria-hidden />
-              {t('stand.already', { time: hhmm(state.handover.issued_at) })}
-            </p>
-          )}
-          {!state.handover.issued_at && (
-            <Button className="w-full" disabled={busy} onClick={issue}>{t('stand.issue')}</Button>
-          )}
-        </Card>
-      )}
+    <Screen theme="label" center>
+      <Card className="gc-handover">
+        <span className="gc-prize-card__partner gc-body-s">
+          <Icon name="star" size={16} />
+          <span className="gc-prize-card__partner-name">{handover.partner}</span>
+        </span>
+        <p className="gc-handover__prize gc-body-l">{handover.prize}</p>
+        <p className="gc-handover__guest gc-body">{t('stand.guest', { name: handover.first_name })}</p>
+        {issuedNow && (
+          <p className="gc-handover__result gc-handover__result--issued gc-body-l" role="status">
+            <Icon name="check" size={24} />
+            {t('stand.issued')}
+          </p>
+        )}
+        {!issuedNow && handover.issued_at && (
+          <p className="gc-handover__result gc-handover__result--already gc-body-l" role="alert">
+            <Icon name="alert" size={24} />
+            {t('stand.already', { time: hhmm(handover.issued_at) })}
+          </p>
+        )}
+        {!handover.issued_at && (
+          <div className="gc-handover__action">
+            <Button size="lg" icon="check" busy={busy} onClick={issue}>{t('stand.issue')}</Button>
+          </div>
+        )}
+      </Card>
     </Screen>
   )
 }

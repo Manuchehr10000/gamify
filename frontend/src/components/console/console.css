@@ -1,6 +1,7 @@
-/* Gamify Console, the guests' 80s game-console look, ported from the design system (Console skin only).
-   Every value is a token set on the element with data-theme="console": ConsoleScreen puts it on <html> while a
-   console screen is open, so staff, admin and the other guest screens keep their own look. */
+/* Gamify Console, the 80s game-console look, ported from the design system (Console skin only): the dark Console
+   theme for guests and the hall, the light Label theme (cream cartridge label) for staff. Every value is a token set
+   on the element with data-theme: Screen puts it on <html> while a console screen is open, so the screens not yet in
+   the look keep their own. */
 
 [data-theme="console"] {
   --ground: #110e0c;
@@ -38,6 +39,54 @@
   --shadow-raised: 4px 4px 0 #000000;
   --shadow-pressed: 1px 1px 0 #000000;
   --shadow-screen: inset 0 0 0 2px #000000;
+  --on-danger: #1d0602;
+  --glow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
+}
+
+/* Label: the same console in cream plastic, for staff on a phone or at a desk in a bright room */
+[data-theme="label"] {
+  --ground: #ece3d2;
+  --surface: #f8f2e7;
+  --surface-raised: #fffaf1;
+  --surface-sunken: #e0d4bf;
+  --line: #cdbfa8;
+  --border: #7a6754;
+  --ink: #1a1310;
+  --ink-muted: #5a4a3c;
+  --stripe-red: #d9442b;
+  --stripe-orange: #ee7a22;
+  --stripe-amber: #f5b031;
+  --wood-dark: #4a2a14;
+  --wood: #7b4a26;
+  --wood-light: #a76d3b;
+  --primary: #ee7a22;
+  --primary-pressed: #c95f12;
+  --on-primary: #140d08;
+  --primary-ink: #a8460b;
+  --coin: #f5c13d;
+  --on-coin: #1a1206;
+  --coin-ink: #8a5d00;
+  --xp: #3d5ce0;
+  --on-xp: #ffffff;
+  --xp-ink: #2f4bc4;
+  --success: #0b7563;
+  --success-ink: #0b6e5d;
+  --warning: #f5b031;
+  --warning-ink: #8a5800;
+  --danger: #c4321a;
+  --on-danger: #ffffff;
+  --danger-ink: #b02a14;
+  --focus: #2f4bc4;
+  --shadow-ink: #1a1310;
+  --shadow-raised: 4px 4px 0 #1a1310;
+  --shadow-pressed: 1px 1px 0 #1a1310;
+  --shadow-screen: inset 0 0 0 2px #7a6754;
+  /* Nothing glows on a printed label */
+  --glow: none;
+}
+
+/* Shape, space, type and textures: one set for both themes */
+[data-theme="console"], [data-theme="label"] {
   --radius-0: 0;
   --radius-1: 2px;
 
@@ -54,6 +103,7 @@
   --border-w: 2px;
   --stripe-h: 4px;
   --content-max: 448px;
+  --admin-max: 1200px;
 
   --font-display: "Press Start 2P", "Exo 2", ui-monospace, monospace; /* Press Start 2P has no ҳ: Exo 2 draws it */
   --font-score: "Pixelify Sans", "Press Start 2P", "Exo 2", ui-monospace, monospace;
@@ -62,7 +112,6 @@
 
   --ground-bg: repeating-linear-gradient(0deg, var(--line) 0 1px, transparent 1px 6px), var(--ground);
   --trim-bg: repeating-linear-gradient(90deg, var(--wood) 0 10px, var(--wood-dark) 10px 12px, var(--wood) 12px 22px, var(--wood-light) 22px 23px, var(--wood) 23px 31px);
-  --glow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
 }
 
 /* The page behind the screen and the browser bar: dark ground, also when the page is pulled past its end */
@@ -71,6 +120,12 @@ html[data-theme="console"] body {
   background: var(--ground);
   color: var(--ink);
   color-scheme: dark;
+}
+html[data-theme="label"],
+html[data-theme="label"] body {
+  background: var(--ground);
+  color: var(--ink);
+  color-scheme: light;
 }
 
 .gc-root, .gc-root * { box-sizing: border-box; }
@@ -504,6 +559,156 @@ html[data-theme="console"] body {
 
 /* Empty list text under a section heading */
 .gc-empty { margin: 0; padding: var(--space-6) 0; text-align: center; color: var(--ink-muted); }
+
+/* Staff and hall (Label theme on staff phones, the dark board on the hall screen) */
+
+.gc-display-xl { font-family: var(--font-display); font-size: 32px; line-height: 44px; font-weight: 400; }
+@media (max-width: 767px) { .gc-display-xl { font-size: 20px; line-height: 30px; } }
+
+/* The penalty switch: red, and spelled out in words */
+.gc-button--danger { background: var(--danger); color: var(--on-danger); }
+.gc-button--danger:active:not(.gc-button--disabled) { filter: brightness(0.9); }
+
+/* Wide: the moderation queue's grid; center: one card in the middle of the screen */
+.gc-screen--wide { padding-top: max(var(--space-6), env(safe-area-inset-top)); }
+.gc-screen--wide .gc-screen__col { max-width: var(--admin-max); }
+.gc-screen--center .gc-screen__col { flex: 1 0 auto; justify-content: center; }
+
+/* Text input: a 48px sunken well with its label above; 16px so iOS Safari does not zoom in */
+.gc-text-input { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; min-width: 0; }
+.gc-text-input__label { color: var(--ink); }
+.gc-text-input__field {
+  display: block; width: 100%; min-width: 0; height: var(--target);
+  margin: 0; padding: 0 var(--space-4);
+  font-size: 16px;
+  color: var(--ink); background: var(--surface-sunken);
+  border: var(--border-w) solid var(--border); border-radius: var(--radius-0);
+  box-shadow: inset 3px 3px 0 var(--shadow-ink);
+  -webkit-appearance: none; appearance: none;
+}
+.gc-text-input__field::placeholder { color: var(--ink-muted); opacity: 1; }
+.gc-text-input__field:focus-visible { border-color: var(--focus); outline: 3px solid var(--focus); outline-offset: 2px; }
+.gc-text-input--error .gc-text-input__field { border-color: var(--danger); }
+.gc-text-input__error { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; color: var(--danger-ink); }
+.gc-text-input__error > svg { margin-top: 2px; }
+
+/* Staff login: the role title beside a lock, one secret field, «Войти» */
+.gc-staff-login { padding: var(--space-6); }
+.gc-staff-login__form { display: flex; flex-direction: column; gap: var(--space-4); margin: 0; }
+.gc-staff-login__head { display: flex; align-items: center; gap: var(--space-3); color: var(--ink-muted); }
+.gc-staff-login__title { margin: 0; min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+
+/* Guest row: one tappable search result at the desk */
+.gc-guest-row {
+  display: flex; align-items: center; gap: var(--space-3);
+  width: 100%; min-height: var(--bar); margin: 0; padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised); color: var(--ink); text-align: left; cursor: pointer;
+  border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised);
+  -webkit-appearance: none; appearance: none;
+  transition: transform 60ms steps(1), box-shadow 60ms steps(1), border-color 60ms steps(1);
+}
+.gc-guest-row:active { transform: translate(3px, 3px); box-shadow: var(--shadow-pressed); }
+@media (hover: hover) { .gc-guest-row:hover { border-color: var(--primary); } }
+.gc-guest-row__body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.gc-guest-row__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gc-guest-row__meta { color: var(--ink-muted); overflow-wrap: anywhere; }
+.gc-guest-row__chevron { display: inline-flex; flex: none; color: var(--ink-muted); }
+.gc-guest-list { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+
+/* QR card: the code on a light quiet zone in both themes, so scanners read it */
+.gc-qr-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); min-width: 0; margin: 0; padding: var(--space-6) var(--space-4); text-align: center; background: var(--surface); color: var(--ink); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised); }
+.gc-qr-card__quiet { width: 100%; max-width: 320px; padding: var(--space-4); background: var(--ink); border: var(--border-w) solid var(--shadow-ink); border-radius: var(--radius-0); }
+[data-theme="label"] .gc-qr-card__quiet { background: var(--surface-raised); }
+.gc-qr-card__quiet > svg { display: block; width: 100%; max-width: 280px; height: auto; margin: 0 auto; shape-rendering: crispEdges; }
+.gc-qr-card__text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; max-width: 100%; }
+.gc-qr-card__title { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.gc-qr-card__subtitle, .gc-qr-card__caption { margin: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
+
+/* Stand: the prize being handed over and what happened */
+.gc-handover { align-items: center; gap: var(--space-4); padding: var(--space-8) var(--space-4); text-align: center; }
+.gc-handover__prize { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
+.gc-handover__guest { margin: 0; color: var(--ink-muted); overflow-wrap: anywhere; }
+.gc-handover__result { display: flex; align-items: center; justify-content: center; gap: var(--space-2); margin: 0; font-weight: 700; }
+.gc-handover__result--issued { color: var(--success-ink); }
+.gc-handover__result--already { color: var(--danger-ink); }
+.gc-handover__action { display: flex; flex-direction: column; width: 100%; }
+
+/* Stat tile: one live number on a screen panel, its label under it (read first) */
+.gc-stat-tile { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; padding: var(--space-3) var(--space-4); background: var(--surface-sunken); border: var(--border-w) solid var(--line); border-radius: var(--radius-0); box-shadow: var(--shadow-screen); color: var(--ink); }
+/* «меньше минуты» wraps on a narrow phone rather than being cut short */
+.gc-stat-tile__num { order: -1; min-width: 0; overflow-wrap: anywhere; color: var(--ink); }
+.gc-stat-tile__label { color: var(--ink-muted); overflow-wrap: anywhere; }
+
+/* Moderation: my name and the «Топ-20» switch, the screen panels, then the cards in 1, 2 or 3 columns */
+.gc-moderate-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-6); }
+.gc-moderate-head__name { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.gc-moderate-head__stripe { flex: 1 0 100%; }
+.gc-moderate-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--space-3); }
+.gc-moderation-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
+@media (min-width: 768px) { .gc-moderation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .gc-moderation-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.gc-moderation-card { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-width: 0; margin: 0; padding: var(--space-4); background: var(--surface); color: var(--ink); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised); }
+.gc-moderation-card .gc-photo-frame { aspect-ratio: auto; height: 18rem; }
+.gc-moderation-card__text { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.gc-moderation-card__task { margin: 0; overflow-wrap: anywhere; }
+.gc-moderation-card__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0; color: var(--ink-muted); }
+.gc-moderation-card__guest { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+.gc-moderation-card__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-top: auto; }
+/* The long labels wrap to two lines and the switches grow; a column never widens past half the card */
+.gc-moderation-card__actions .gc-button { min-width: 0; padding: var(--space-2) var(--space-3); line-height: 1.2; overflow-wrap: anywhere; }
+
+/* Hall board: the dark screen in a woodgrain frame, read from across the room. Ten rows fit one 1080p screen:
+   above 1280px the type grows with the width but stops where the height runs out */
+.gc-hall-board { display: flex; min-height: 100dvh; padding: max(var(--space-4), env(safe-area-inset-top)) max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left)); color: var(--ink); }
+.gc-hall-board__screen { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--space-4); min-width: 0; padding: var(--space-6); background: var(--surface-sunken); border: var(--border-w) solid var(--shadow-ink); box-shadow: var(--shadow-screen), var(--shadow-raised); }
+.gc-hall-board__titles { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.gc-hall-board__event { margin: 0; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 600; font-size: 24px; line-height: 1.2; }
+.gc-hall-board__title { margin: 0; color: var(--primary-ink); overflow-wrap: anywhere; }
+.gc-hall-board__stripe { margin: 0 calc(-1 * var(--space-6)); }
+.gc-hall-board__notice { display: flex; align-items: center; gap: var(--space-3); margin: 0; font-family: var(--font-sans); font-weight: 600; }
+.gc-hall-board__notice--frozen { color: var(--warning-ink); font-size: 28px; line-height: 1.2; }
+.gc-hall-board__notice--offline { color: var(--ink-muted); font-size: 18px; line-height: 1.3; }
+.gc-hall-board__empty { margin: auto; padding: var(--space-12) 0; color: var(--ink-muted); font-family: var(--font-sans); font-size: 32px; line-height: 1.25; text-align: center; }
+.gc-hall-board__list { display: flex; flex: 1 1 auto; flex-direction: column; justify-content: space-around; margin: 0; padding: 0; list-style: none; }
+.gc-hall-board__row { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-2) 0; border-bottom: var(--border-w) solid var(--line); }
+.gc-hall-board__row:last-child { border-bottom: 0; }
+.gc-hall-board__place { flex: none; width: 2.5ch; text-align: right; color: var(--ink-muted); }
+.gc-hall-board__row--top .gc-hall-board__place { color: var(--coin-ink); }
+.gc-hall-board__who { display: flex; flex: 1 1 auto; align-items: baseline; gap: var(--space-1) var(--space-4); min-width: 0; }
+.gc-hall-board__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-weight: 700; font-size: 28px; line-height: 1.2; }
+.gc-hall-board__badges { display: inline-flex; flex: none; align-self: center; color: var(--coin-ink); font-size: 28px; }
+.gc-hall-board__badges .gc-icon { width: 0.8em; height: 0.8em; }
+.gc-hall-board__level { flex: none; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 500; font-size: 18px; line-height: 1.2; white-space: nowrap; }
+.gc-hall-board__points { flex: none; color: var(--xp-ink); text-align: right; }
+.gc-hall-board__row--top .gc-hall-board__points { color: var(--coin-ink); }
+@media (max-width: 767px) {
+  .gc-hall-board__screen { padding: var(--space-4); }
+  .gc-hall-board__stripe { margin: 0 calc(-1 * var(--space-4)); }
+  .gc-hall-board__event { font-size: 18px; }
+  .gc-hall-board__row { gap: var(--space-3); }
+  .gc-hall-board__who { flex-wrap: wrap; }
+  .gc-hall-board__name { font-size: 20px; }
+  .gc-hall-board__badges { font-size: 20px; }
+  .gc-hall-board__level { font-size: 14px; }
+  .gc-hall-board__points.gc-score-xl { font-size: 36px; line-height: 40px; }
+  .gc-hall-board__notice--frozen { font-size: 20px; }
+  .gc-hall-board__empty { font-size: 22px; }
+}
+@media (min-width: 1280px) {
+  .gc-hall-board__screen { padding: var(--space-6) var(--space-12); gap: var(--space-4); }
+  .gc-hall-board__stripe { margin: 0 calc(-1 * var(--space-12)); }
+  .gc-hall-board__event { font-size: clamp(24px, min(2vw, 3.2vh), 40px); }
+  .gc-hall-board__title { font-size: clamp(32px, min(2.4vw, 4vh), 48px); line-height: 1.4; }
+  .gc-hall-board__row { gap: var(--space-8); padding: 0; }
+  .gc-hall-board__place { font-size: clamp(36px, min(3.4vw, 4.6vh), 72px); line-height: 1; }
+  .gc-hall-board__name { font-size: clamp(28px, min(3vw, 4.2vh), 64px); }
+  .gc-hall-board__level { font-size: clamp(18px, min(1.5vw, 2.4vh), 32px); }
+  .gc-hall-board__badges { font-size: clamp(28px, min(3vw, 4.2vh), 64px); }
+  .gc-hall-board__points { font-size: clamp(36px, min(3.4vw, 4.6vh), 72px); line-height: 1; }
+  .gc-hall-board__points.gc-score-xl { font-size: clamp(48px, min(5vw, 6vh), 112px); line-height: 1; }
+  .gc-hall-board__notice--frozen { font-size: clamp(24px, min(2vw, 3.2vh), 44px); }
+  .gc-hall-board__empty { font-size: clamp(32px, 3vw, 56px); }
+}
 
 /* With reduced motion nothing glows, flickers or slides */
 @media (prefers-reduced-motion: reduce) {

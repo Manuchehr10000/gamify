@@ -35,13 +35,16 @@ export function Spinner({ size = 20, label }: { size?: number; label?: string })
 
 const THEME_COLOR = 'meta[name="theme-color"]'
 
+type Theme = 'console' | 'label'
+
 // Puts the page in the Console look while a console screen is open: the theme on <html> (so the ground shows
-// past the page's ends), the dark browser bar, the pixel tab icon and content drawn up to the notch
-// (the screen pads itself clear of it). Everything goes back on leaving, so other screens keep their look.
-function useConsoleShell() {
+// past the page's ends), the browser bar in the ground's colour (dark for guests and the hall, light for staff),
+// the pixel tab icon and content drawn up to the notch (the screen pads itself clear of it). Everything goes back
+// on leaving, so other screens keep their look.
+function useConsoleShell(theme: Theme) {
   useLayoutEffect(() => {
     const root = document.documentElement
-    root.dataset.theme = 'console'
+    root.dataset.theme = theme
 
     let meta = document.querySelector<HTMLMetaElement>(THEME_COLOR)
     const addedMeta = !meta
@@ -68,15 +71,22 @@ function useConsoleShell() {
       if (icon && oldIcon !== null) icon.setAttribute('href', oldIcon)
       if (viewport) viewport.content = oldViewport
     }
-  }, [])
+  }, [theme])
 }
 
-export function Screen({ children }: { children: ReactNode }) {
-  useConsoleShell()
+// The page's one <main> in a console theme; Screen for the phone column, the hall board on its own
+export function Shell({ theme, className, children }: { theme: Theme; className: string; children: ReactNode }) {
+  useConsoleShell(theme)
+  return <main className={`gc-root ${className}`}>{children}</main>
+}
+
+// theme: label (light) on staff screens; wide: the moderation grid; center: one card mid-screen
+export function Screen({ children, theme = 'console', wide, center }:
+  { children: ReactNode; theme?: Theme; wide?: boolean; center?: boolean }) {
   return (
-    <main className="gc-root gc-screen gc-ribs">
+    <Shell theme={theme} className={`gc-screen gc-ribs ${wide ? 'gc-screen--wide' : ''} ${center ? 'gc-screen--center' : ''}`}>
       <div className="gc-screen__col">{children}</div>
-    </main>
+    </Shell>
   )
 }
 
@@ -113,7 +123,7 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 
 type ButtonProps = {
   children: ReactNode
-  variant?: 'primary' | 'outline'
+  variant?: 'primary' | 'outline' | 'danger'
   size?: 'md' | 'lg'
   icon?: IconName
   busy?: boolean
@@ -123,10 +133,12 @@ type ButtonProps = {
   to?: string
   // Out of the app: opens in a new tab
   href?: string
+  // submit: sends its form (Enter in a field does too)
+  type?: 'button' | 'submit'
 }
 
 // The console switch: a button, an in-app link or an outside link that all look and press the same
-export function Button({ children, variant = 'primary', size = 'md', icon, busy, disabled, onClick, to, href }: ButtonProps) {
+export function Button({ children, variant = 'primary', size = 'md', icon, busy, disabled, onClick, to, href, type = 'button' }: ButtonProps) {
   const off = disabled || busy
   const className = `gc-button gc-button--block gc-button--${variant} gc-button--${size} gc-label ${off ? 'gc-button--disabled' : ''}`
   const iconSize = size === 'lg' ? 24 : 20
@@ -141,7 +153,7 @@ export function Button({ children, variant = 'primary', size = 'md', icon, busy,
     return <a href={href} target="_blank" rel="noopener noreferrer" className={className} onClick={onClick}>{inner}</a>
   }
   return (
-    <button type="button" className={className} disabled={off} aria-busy={busy || undefined} onClick={onClick}>
+    <button type={type} className={className} disabled={off} aria-busy={busy || undefined} onClick={onClick}>
       {inner}
     </button>
   )

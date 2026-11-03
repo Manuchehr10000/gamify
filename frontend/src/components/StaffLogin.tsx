@@ -1,16 +1,20 @@
 import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
-import { Button, Card, Input, Screen } from './ui'
+import { TextInput } from './console/staff'
+import { Button, Card, Icon, Screen } from './console/ui'
 
+// The one login card of every staff and admin page, in the light Label look
 export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand' | 'moderator'; onLogin: (token: string) => void }) {
   const { t } = useTranslation()
   const [secret, setSecret] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const pin = role !== 'admin'
 
   async function submit(e: FormEvent) {
     e.preventDefault()
+    if (busy || !secret) return
     setBusy(true)
     setError('')
     try {
@@ -28,20 +32,24 @@ export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand'
   }
 
   return (
-    <Screen>
-      <Card>
-        <form onSubmit={submit} className="flex flex-col gap-4">
-          <h1 className="text-xl font-semibold">{t(`staff.${role}Title`)}</h1>
-          <Input
+    <Screen theme="label" center>
+      <Card className="gc-staff-login">
+        <form onSubmit={submit} className="gc-staff-login__form" noValidate aria-busy={busy || undefined}>
+          <div className="gc-staff-login__head">
+            <Icon name="lock" size={20} />
+            <h1 className="gc-staff-login__title gc-display-m">{t(`staff.${role}Title`)}</h1>
+          </div>
+          <TextInput
+            label={t(pin ? 'staff.pin' : 'staff.password')}
             type="password"
-            inputMode={role === 'admin' ? undefined : 'numeric'}
-            placeholder={t(role === 'admin' ? 'staff.password' : 'staff.pin')}
+            inputMode={pin ? 'numeric' : undefined}
+            autoComplete={pin ? 'off' : 'current-password'}
             value={secret}
-            onChange={(e) => setSecret(e.target.value)}
+            onChange={setSecret}
+            error={error}
             autoFocus
           />
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <Button disabled={busy || !secret}>{t('staff.enter')}</Button>
+          <Button type="submit" busy={busy} disabled={!secret}>{t('staff.enter')}</Button>
         </form>
       </Card>
     </Screen>
