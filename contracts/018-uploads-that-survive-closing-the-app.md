@@ -1,5 +1,5 @@
 # Contract: Uploads that survive closing the app
-Status: building
+Status: on-dev
 Base: d9b0eea3b8
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081bb8b1cd7373e4289ef
