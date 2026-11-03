@@ -1,5 +1,5 @@
 # Contract: Feed card states and rotation
-Status: building
+Status: on-dev
 Base: ba5a538d29
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081ccbc5cd34ee3fcbae5
