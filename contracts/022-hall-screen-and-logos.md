@@ -1,5 +1,5 @@
 # Contract: Hall screen «Эфир» and logos
-Status: building
+Status: on-dev
 Base: 2566eb635c
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be608134a5dfc2ae9e5a71d5
