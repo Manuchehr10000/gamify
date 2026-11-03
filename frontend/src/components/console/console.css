@@ -652,6 +652,11 @@ html[data-theme="label"] body {
 .gc-moderate-head__name { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .gc-moderate-head__stripe { flex: 1 0 100%; }
 .gc-moderate-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--space-3); }
+/* «Экран в зале»: the hall screen's four switches in /moderate and /admin/live, the current one lit */
+.gc-hall-switch { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.gc-hall-switch__title, .gc-hall-switch__hint { margin: 0; }
+.gc-hall-switch__hint { color: var(--ink-muted); }
+.gc-hall-switch__modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--space-2); }
 .gc-moderation-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); margin: 0; padding: 0; list-style: none; }
 @media (min-width: 768px) { .gc-moderation-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1024px) { .gc-moderation-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -667,55 +672,79 @@ html[data-theme="label"] body {
 
 /* Hall board: the dark screen in a woodgrain frame, read from across the room. Ten rows fit one 1080p screen:
    above 1280px the type grows with the width but stops where the height runs out */
-.gc-hall-board { display: flex; min-height: 100dvh; padding: max(var(--space-4), env(safe-area-inset-top)) max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left)); color: var(--ink); }
+.gc-hall-board { --hall-min-font: 40px; display: flex; min-height: 100dvh; padding: max(var(--space-4), env(safe-area-inset-top)) max(var(--space-4), env(safe-area-inset-right)) max(var(--space-4), env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left)); color: var(--ink); }
 .gc-hall-board__screen { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--space-4); min-width: 0; padding: var(--space-6); background: var(--surface-sunken); border: var(--border-w) solid var(--shadow-ink); box-shadow: var(--shadow-screen), var(--shadow-raised); }
 .gc-hall-board__titles { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
-.gc-hall-board__event { margin: 0; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 600; font-size: 24px; line-height: 1.2; }
+.gc-hall-board__event { margin: 0; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 600; font-size: max(var(--hall-min-font), 24px); line-height: 1.2; }
 .gc-hall-board__title { margin: 0; color: var(--primary-ink); overflow-wrap: anywhere; }
 .gc-hall-board__stripe { margin: 0 calc(-1 * var(--space-6)); }
 .gc-hall-board__notice { display: flex; align-items: center; gap: var(--space-3); margin: 0; font-family: var(--font-sans); font-weight: 600; }
-.gc-hall-board__notice--frozen { color: var(--warning-ink); font-size: 28px; line-height: 1.2; }
-.gc-hall-board__notice--offline { color: var(--ink-muted); font-size: 18px; line-height: 1.3; }
-.gc-hall-board__empty { margin: auto; padding: var(--space-12) 0; color: var(--ink-muted); font-family: var(--font-sans); font-size: 32px; line-height: 1.25; text-align: center; }
+.gc-hall-board__notice--frozen { color: var(--warning-ink); font-size: max(var(--hall-min-font), 28px); line-height: 1.2; }
+.gc-hall-board__notice--offline { color: var(--ink-muted); font-size: max(var(--hall-min-font), 18px); line-height: 1.3; }
+.gc-hall-board__empty { margin: auto; padding: var(--space-12) 0; color: var(--ink-muted); font-family: var(--font-sans); font-size: max(var(--hall-min-font), 32px); line-height: 1.25; text-align: center; }
 .gc-hall-board__list { display: flex; flex: 1 1 auto; flex-direction: column; justify-content: space-around; margin: 0; padding: 0; list-style: none; }
 .gc-hall-board__row { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-2) 0; border-bottom: var(--border-w) solid var(--line); }
 .gc-hall-board__row:last-child { border-bottom: 0; }
 .gc-hall-board__place { flex: none; width: 2.5ch; text-align: right; color: var(--ink-muted); }
 .gc-hall-board__row--top .gc-hall-board__place { color: var(--coin-ink); }
 .gc-hall-board__who { display: flex; flex: 1 1 auto; align-items: baseline; gap: var(--space-1) var(--space-4); min-width: 0; }
-.gc-hall-board__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-weight: 700; font-size: 28px; line-height: 1.2; }
-.gc-hall-board__badges { display: inline-flex; flex: none; align-self: center; color: var(--coin-ink); font-size: 28px; }
+.gc-hall-board__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-sans); font-weight: 700; font-size: max(var(--hall-min-font), 28px); line-height: 1.2; }
+.gc-hall-board__badges { display: inline-flex; flex: none; align-self: center; color: var(--coin-ink); font-size: max(var(--hall-min-font), 28px); }
 .gc-hall-board__badges .gc-icon { width: 0.8em; height: 0.8em; }
-.gc-hall-board__level { flex: none; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 500; font-size: 18px; line-height: 1.2; white-space: nowrap; }
+.gc-hall-board__level { flex: none; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 500; font-size: max(var(--hall-min-font), 18px); line-height: 1.2; white-space: nowrap; }
 .gc-hall-board__points { flex: none; color: var(--xp-ink); text-align: right; }
+.gc-hall-board__title, .gc-hall-board__place, .gc-hall-board__points { font-size: max(var(--hall-min-font), 36px); line-height: 1.1; }
+.gc-hall-board__points.gc-score-xl { font-size: max(var(--hall-min-font), 64px); line-height: 1; }
+/* Piece 18: the cycle's slides fade in; «Эфир» is marked beside the forum name */
+.gc-hall-board__titles { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.gc-hall-board__on-air { display: inline-flex; align-items: center; gap: var(--space-3); margin: 0; padding: var(--space-1) var(--space-4); color: var(--danger-ink); border: var(--border-w) solid currentColor; font-family: var(--font-display); font-size: max(var(--hall-min-font), 40px); line-height: 1.2; text-transform: uppercase; }
+/* «Эфир» wears the forum's colours: its name lit in the primary colour */
+.gc-hall-board__screen--air .gc-hall-board__event { color: var(--primary-ink); }
+.gc-hall-board__on-air-dot { width: 0.5em; height: 0.5em; border-radius: 50%; background: currentColor; }
+.gc-hall-board__slide { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--space-4); min-height: 0; animation: gc-hall-fade 600ms ease-out; }
+@keyframes gc-hall-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .gc-hall-board__slide { animation: none; } }
+.gc-hall-board__push { margin: auto; max-width: 24ch; color: var(--primary-ink); font-family: var(--font-sans); font-weight: 700; font-size: max(var(--hall-min-font), clamp(48px, 5vw, 112px)); line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
+.gc-hall-board__countdown { display: flex; flex: 1 1 auto; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-6); text-align: center; }
+.gc-hall-board__countdown-what { margin: 0; color: var(--ink-muted); font-family: var(--font-display); font-size: max(var(--hall-min-font), clamp(32px, 3vw, 64px)); line-height: 1.3; }
+.gc-hall-board__countdown-name { margin: 0; max-width: 30ch; color: var(--ink); font-family: var(--font-sans); font-weight: 700; font-size: max(var(--hall-min-font), clamp(32px, 3vw, 64px)); line-height: 1.2; overflow-wrap: anywhere; }
+.gc-hall-board__countdown-left { margin: 0; color: var(--coin-ink); font-family: var(--font-score); font-weight: 700; font-size: max(var(--hall-min-font), clamp(96px, 14vw, 280px)); line-height: 1; }
+.gc-hall-board__logos { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--space-6); min-height: 0; }
+.gc-hall-board__logos-title { margin: 0; color: var(--primary-ink); font-family: var(--font-display); font-size: max(var(--hall-min-font), clamp(32px, 2.4vw, 48px)); line-height: 1.4; }
+.gc-hall-board__logo-grid { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; justify-content: center; align-content: center; gap: var(--space-8); margin: 0; padding: 0; list-style: none; }
+.gc-hall-board__logo { display: flex; align-items: center; justify-content: center; padding: var(--space-4); background: #fff; border: var(--border-w) solid var(--shadow-ink); }
+.gc-hall-board__logo img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.gc-hall-board__logo--3 { width: min(40vw, 640px); height: min(30vh, 340px); }
+.gc-hall-board__logo--2 { width: min(24vw, 420px); height: min(20vh, 220px); }
+.gc-hall-board__logo--1 { width: min(14vw, 260px); height: min(12vh, 140px); }
 .gc-hall-board__row--top .gc-hall-board__points { color: var(--coin-ink); }
 @media (max-width: 767px) {
   .gc-hall-board__screen { padding: var(--space-4); }
   .gc-hall-board__stripe { margin: 0 calc(-1 * var(--space-4)); }
-  .gc-hall-board__event { font-size: 18px; }
+  .gc-hall-board__event { font-size: max(var(--hall-min-font), 18px); }
   .gc-hall-board__row { gap: var(--space-3); }
   .gc-hall-board__who { flex-wrap: wrap; }
-  .gc-hall-board__name { font-size: 20px; }
-  .gc-hall-board__badges { font-size: 20px; }
-  .gc-hall-board__level { font-size: 14px; }
-  .gc-hall-board__points.gc-score-xl { font-size: 36px; line-height: 40px; }
-  .gc-hall-board__notice--frozen { font-size: 20px; }
-  .gc-hall-board__empty { font-size: 22px; }
+  .gc-hall-board__name { font-size: max(var(--hall-min-font), 20px); }
+  .gc-hall-board__badges { font-size: max(var(--hall-min-font), 20px); }
+  .gc-hall-board__level { font-size: max(var(--hall-min-font), 14px); }
+  .gc-hall-board__points.gc-score-xl { font-size: max(var(--hall-min-font), 36px); line-height: 40px; }
+  .gc-hall-board__notice--frozen { font-size: max(var(--hall-min-font), 20px); }
+  .gc-hall-board__empty { font-size: max(var(--hall-min-font), 22px); }
 }
 @media (min-width: 1280px) {
   .gc-hall-board__screen { padding: var(--space-6) var(--space-12); gap: var(--space-4); }
   .gc-hall-board__stripe { margin: 0 calc(-1 * var(--space-12)); }
-  .gc-hall-board__event { font-size: clamp(24px, min(2vw, 3.2vh), 40px); }
-  .gc-hall-board__title { font-size: clamp(32px, min(2.4vw, 4vh), 48px); line-height: 1.4; }
+  .gc-hall-board__event { font-size: max(var(--hall-min-font), clamp(24px, min(2vw, 3.2vh), 40px)); }
+  .gc-hall-board__title { font-size: max(var(--hall-min-font), clamp(32px, min(2.4vw, 4vh), 48px)); line-height: 1.4; }
   .gc-hall-board__row { gap: var(--space-8); padding: 0; }
-  .gc-hall-board__place { font-size: clamp(36px, min(3.4vw, 4.6vh), 72px); line-height: 1; }
-  .gc-hall-board__name { font-size: clamp(28px, min(3vw, 4.2vh), 64px); }
-  .gc-hall-board__level { font-size: clamp(18px, min(1.5vw, 2.4vh), 32px); }
-  .gc-hall-board__badges { font-size: clamp(28px, min(3vw, 4.2vh), 64px); }
-  .gc-hall-board__points { font-size: clamp(36px, min(3.4vw, 4.6vh), 72px); line-height: 1; }
-  .gc-hall-board__points.gc-score-xl { font-size: clamp(48px, min(5vw, 6vh), 112px); line-height: 1; }
-  .gc-hall-board__notice--frozen { font-size: clamp(24px, min(2vw, 3.2vh), 44px); }
-  .gc-hall-board__empty { font-size: clamp(32px, 3vw, 56px); }
+  .gc-hall-board__place { font-size: max(var(--hall-min-font), clamp(36px, min(3.4vw, 4.6vh), 72px)); line-height: 1; }
+  .gc-hall-board__name { font-size: max(var(--hall-min-font), clamp(28px, min(3vw, 4.2vh), 64px)); }
+  .gc-hall-board__level { font-size: max(var(--hall-min-font), clamp(18px, min(1.5vw, 2.4vh), 32px)); }
+  .gc-hall-board__badges { font-size: max(var(--hall-min-font), clamp(28px, min(3vw, 4.2vh), 64px)); }
+  .gc-hall-board__points { font-size: max(var(--hall-min-font), clamp(36px, min(3.4vw, 4.6vh), 72px)); line-height: 1; }
+  .gc-hall-board__points.gc-score-xl { font-size: max(var(--hall-min-font), clamp(48px, min(5vw, 6vh), 112px)); line-height: 1; }
+  .gc-hall-board__notice--frozen { font-size: max(var(--hall-min-font), clamp(24px, min(2vw, 3.2vh), 44px)); }
+  .gc-hall-board__empty { font-size: max(var(--hall-min-font), clamp(32px, 3vw, 56px)); }
 }
 
 /* Admin pages (Label theme): the shared menu, tables that turn into cards on a phone, uploads, the stage plan */

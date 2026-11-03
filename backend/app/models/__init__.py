@@ -396,3 +396,27 @@ class ChangeEvent(Base):
     new_value: Mapped[str | None] = mapped_column(Text)
     # form or excel
     source: Mapped[str] = mapped_column(String(8))
+
+
+class HallState(Base):
+    """The hall screen's mode, switched by a moderator or admin. One row (id 1); none means «Авто»."""
+    __tablename__ = "hall_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # auto · live («Эфир сейчас») · logos («Только логотипы») · pause
+    mode: Mapped[str] = mapped_column(String(8))
+    # Who switched last, by the name they logged in with
+    staff_name: Mapped[str] = mapped_column(String(100))
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LogoShow(Base):
+    """One logo on the hall screen: when it came up and how long it stayed. Read by piece 21's partner report."""
+    __tablename__ = "logo_shows"
+    __table_args__ = (UniqueConstraint("partner_id", "started_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    partner_id: Mapped[int] = mapped_column(ForeignKey("partners.id", ondelete="CASCADE"))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    seconds: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -39,7 +39,7 @@ SEEDED = ("Администратор", "Стойка регистрации", "
 def clean():
     with engine.begin() as c:
         # staff stays: the app's start seeded it once from the values above
-        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, partners, redemptions, submissions, claims, feed_rotations, questions, quiz_attempts, levels, badge_awards, job_runs, change_events, settings RESTART IDENTITY CASCADE"))
+        c.execute(text("TRUNCATE guests, sessions, score_events, tasks, stages, prizes, partners, redemptions, submissions, claims, feed_rotations, questions, quiz_attempts, levels, badge_awards, job_runs, change_events, settings, hall_state, logo_shows RESTART IDENTITY CASCADE"))
         c.execute(text("DELETE FROM staff WHERE name <> ALL(:names)"), {"names": list(SEEDED)})
         c.execute(text("UPDATE staff SET active = true"))
         for name, secret_hash in SECRETS.items():

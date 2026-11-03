@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, api, blob, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
-import { StatTile } from '../components/console/staff'
+import { HallSwitch, StatTile } from '../components/console/staff'
 import { Amount, Button, Callout, Checkbox, Loading, MessageCard, Screen, Spinner, Stripe } from '../components/console/ui'
 import { hhmm } from '../feed'
 
@@ -80,6 +80,7 @@ export function Moderate() {
           )}
         </div>
       )}
+      <HallSwitch token={token} onLoggedOut={logOut} />
       {error && <Callout tone="danger">{t('common.error')}</Callout>}
       {!queue && !error && <Loading />}
       {queue && items.length === 0 && <MessageCard icon="check" title={t('moderate.empty')} />}

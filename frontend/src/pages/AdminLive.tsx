@@ -4,7 +4,7 @@ import { ApiError, api, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
 import { AdminShell, DataTable } from '../components/console/admin'
 import { SectionHeading } from '../components/console/rewards'
-import { StatTile } from '../components/console/staff'
+import { HallSwitch, StatTile } from '../components/console/staff'
 import { Button, Callout, Card, Loading } from '../components/console/ui'
 
 type Live = {
@@ -83,6 +83,9 @@ export function AdminLive() {
         </Button>
       )}
     >
+      <Card>
+        <HallSwitch token={token} onLoggedOut={() => fail(new ApiError(401, null))} />
+      </Card>
       {error && <Callout tone="danger">{t('common.error')}</Callout>}
       {!live && !error && <Loading />}
       {live && (

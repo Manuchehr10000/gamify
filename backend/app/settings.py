@@ -43,6 +43,20 @@ SETTINGS: dict[str, Spec] = {
     "claim_minutes": Spec(Decimal(60), Decimal(10), Decimal(240)),
     # Submissions one phone keeps waiting to send; beyond that «Дождитесь загрузки предыдущих фото»
     "upload_queue_size": Spec(Decimal(5), Decimal(1), Decimal(10)),
+    # The hall screen: each slide's seconds, «Эфир» this many minutes before the last stage ends, and the smallest
+    # text it shows
+    "hall_slide_seconds": Spec(Decimal(8), Decimal(4), Decimal(30)),
+    "hall_live_minutes": Spec(Decimal(30), Decimal(5), Decimal(120)),
+    "hall_min_font_px": Spec(Decimal(40), Decimal(24), Decimal(80)),
+    # Each partner package's logo size (1 small, 2 medium, 3 large) and how often it shows (every Nth logo slide)
+    "hall_general_size": Spec(Decimal(3), Decimal(1), Decimal(3)),
+    "hall_general_every": Spec(Decimal(1), Decimal(1), Decimal(10)),
+    "hall_headliner_size": Spec(Decimal(2), Decimal(1), Decimal(3)),
+    "hall_headliner_every": Spec(Decimal(1), Decimal(1), Decimal(10)),
+    "hall_mf_partner_size": Spec(Decimal(2), Decimal(1), Decimal(3)),
+    "hall_mf_partner_every": Spec(Decimal(2), Decimal(1), Decimal(10)),
+    "hall_supporters_size": Spec(Decimal(1), Decimal(1), Decimal(3)),
+    "hall_supporters_every": Spec(Decimal(3), Decimal(1), Decimal(10)),
 }
 
 # Raised by every admin save; phones and screens poll it and reload when it moves

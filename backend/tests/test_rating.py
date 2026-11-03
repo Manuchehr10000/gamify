@@ -201,7 +201,8 @@ def test_freeze_needs_the_admin_password(client, guest):
 
 
 def test_hall_with_nobody_ranked_is_empty(client):
-    assert hall(client) == {"frozen": False, "top": []}
+    body = hall(client)
+    assert (body["frozen"], body["top"]) == (False, [])
 
 
 def test_freeze_with_nobody_ranked_says_so(client, admin):

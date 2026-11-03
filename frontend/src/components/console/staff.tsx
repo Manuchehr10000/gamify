@@ -1,5 +1,8 @@
-import { useId, type ReactNode } from 'react'
-import { Icon } from './ui'
+import { useEffect, useId, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { ApiError, api } from '../../api'
+import type { Hall, HallMode } from '../../rating'
+import { Button, Callout, Icon } from './ui'
 
 type TextInputProps = {
   label: string
@@ -76,5 +79,65 @@ export function QrCard({ title, subtitle, caption, children }: { title: string; 
         {caption && <p className="gc-qr-card__caption gc-body-s">{caption}</p>}
       </figcaption>
     </figure>
+  )
+}
+
+const HALL_MODES: HallMode[] = ['auto', 'live', 'logos', 'pause']
+const HALL_POLL_MS = 10_000
+
+// «Экран в зале» in /moderate and /admin/live: four switches, the current one lit. Every screen on /hall takes a
+// switch at its next poll
+export function HallSwitch({ token, onLoggedOut }: { token: string; onLoggedOut: () => void }) {
+  const { t } = useTranslation()
+  const [mode, setMode] = useState<HallMode | null>(null)
+  const [busy, setBusy] = useState<HallMode | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      api<Hall>('/api/hall', { timeoutMs: 8000 })
+        .then((h) => alive && setMode(h.mode))
+        .catch(() => {})
+    load()
+    const timer = setInterval(load, HALL_POLL_MS)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [])
+
+  async function choose(next: HallMode) {
+    setBusy(next)
+    setError(false)
+    try {
+      const r = await api<{ mode: HallMode }>('/api/hall/mode', { token, json: { mode: next } })
+      setMode(r.mode)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) onLoggedOut()
+      else setError(true)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <section className="gc-hall-switch" aria-labelledby="hall-switch-title">
+      <h2 id="hall-switch-title" className="gc-hall-switch__title gc-label">{t('hallScreen.title')}</h2>
+      <div className="gc-hall-switch__modes" role="group" aria-labelledby="hall-switch-title">
+        {HALL_MODES.map((m) => (
+          <Button
+            key={m}
+            variant={m === mode ? 'primary' : 'outline'}
+            busy={busy === m}
+            disabled={busy !== null}
+            onClick={() => m !== mode && choose(m)}
+          >
+            {t(`hallScreen.modes.${m}`)}
+          </Button>
+        ))}
+      </div>
+      {error ? <Callout tone="danger">{t('common.error')}</Callout> : <p className="gc-body-s gc-hall-switch__hint">{t('hallScreen.hint')}</p>}
+    </section>
   )
 }
