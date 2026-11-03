@@ -1,5 +1,5 @@
 # Contract: Stage multipliers
-Status: building
+Status: on-dev
 Base: 2313a40f60
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be60817aa0e2f5c5b11029f9
