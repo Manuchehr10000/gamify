@@ -63,7 +63,7 @@ export function Moderate() {
   const items = queue?.items.filter((i) => !decided.has(i.id)) ?? []
   const oldest = queue?.oldest_seconds ?? null
   return (
-    <Screen theme="label" wide>
+    <Screen theme="light" wide>
       <header className="gc-moderate-head">
         <h1 className="gc-moderate-head__name gc-display-m">{queue?.moderator ?? t('staff.moderatorTitle')}</h1>
         <Checkbox checked={top20} onChange={setTop20}>{t('moderate.top20')}</Checkbox>

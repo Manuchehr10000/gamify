@@ -4,7 +4,7 @@ import { api, ApiError, tokens } from '../api'
 import { TextInput } from './console/staff'
 import { Button, Card, Icon, Screen } from './console/ui'
 
-// The one login card of every staff and admin page, in the light Label look
+// The one login card of every staff and admin page, in the skin's light theme
 export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand' | 'moderator'; onLogin: (token: string) => void }) {
   const { t } = useTranslation()
   const [secret, setSecret] = useState('')
@@ -32,7 +32,7 @@ export function StaffLogin({ role, onLogin }: { role: 'desk' | 'admin' | 'stand'
   }
 
   return (
-    <Screen theme="label" center>
+    <Screen theme="light" center>
       <Card className="gc-staff-login">
         <form onSubmit={submit} className="gc-staff-login__form" noValidate aria-busy={busy || undefined}>
           <div className="gc-staff-login__head">

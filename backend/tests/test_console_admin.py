@@ -242,8 +242,11 @@ def test_every_control_shows_a_thick_focus_ring():
 
 
 def test_the_browser_bar_is_light():
-    assert '<ConsoleTheme theme="label" />' in ADMIN
-    assert "color-scheme: light" in rule(CSS, 'html[data-theme="label"],\nhtml[data-theme="label"] body')
+    # In every skin the admin pages take its light theme (piece 27)
+    assert '<ConsoleTheme theme="light" />' in ADMIN
+    assert "color-scheme: light" in rule(CSS, 'html[data-theme],\nhtml[data-theme] body')
+    dark = re.search(r"html:is\(([^)]*)\) body \{\s*color-scheme: dark;", CSS).group(1)
+    assert not any(t in dark for t in ("label", "parchment", "station", "suzani"))
 
 
 # lucide-react is gone

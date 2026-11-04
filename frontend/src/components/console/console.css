@@ -1,7 +1,7 @@
-/* Gamify Console, the 80s game-console look, ported from the design system (Console skin only): the dark Console
-   theme for guests and the hall, the light Label theme (cream cartridge label) for staff. Every value is a token set
-   on the element with data-theme: Screen puts it on <html> while a console screen is open, so the screens not yet in
-   the look keep their own. */
+/* Gamify Console, ported from the design system in its four skins (skin.ts): each has a dark theme for guests
+   and the hall (Console, Brass, Orbit, Lapis) and a light one for staff (Label, Parchment, Station, Suzani). Every
+   value is a token set on the element with data-theme: Screen puts the event skin's theme on <html> while a console
+   screen is open, so the screens not yet in the look keep their own. */
 
 [data-theme="console"] {
   --ground: #110e0c;
@@ -41,6 +41,8 @@
   --shadow-screen: inset 0 0 0 2px #000000;
   --on-danger: #1d0602;
   --glow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
+  --radius-0: 0;
+  --radius-1: 2px;
 }
 
 /* Label: the same console in cream plastic, for staff on a phone or at a desk in a bright room */
@@ -83,13 +85,267 @@
   --shadow-screen: inset 0 0 0 2px #7a6754;
   /* Nothing glows on a printed label */
   --glow: none;
-}
-
-/* Shape, space, type and textures: one set for both themes */
-[data-theme="console"], [data-theme="label"] {
   --radius-0: 0;
   --radius-1: 2px;
+}
 
+/* Steampunk: Brass (dark, for guests and the hall) and Parchment (light, for staff): Victorian brass and gaslight */
+[data-theme="brass"] {
+  --ground: #17110b;
+  --surface: #241a11;
+  --surface-raised: #31241a;
+  --surface-sunken: #0e0a06;
+  --line: #4a3826;
+  --border: #a88a5e;
+  --ink: #f3e6c8;
+  --ink-muted: #c4ad85;
+  --stripe-red: #b4592b;
+  --stripe-orange: #c79a3a;
+  --stripe-amber: #e3c77a;
+  --wood-dark: #3a1c10;
+  --wood: #6b3420;
+  --wood-light: #8e4a2c;
+  --primary: #d27a45;
+  --primary-pressed: #c46c3a;
+  --on-primary: #1a0c05;
+  --primary-ink: #e8a070;
+  --coin: #e2bd55;
+  --on-coin: #1a1206;
+  --coin-ink: #ecc965;
+  --xp: #8fa8e0;
+  --on-xp: #0b1226;
+  --xp-ink: #aec2f2;
+  --success: #4fb39a;
+  --success-ink: #74d3bb;
+  --warning: #e3a93a;
+  --warning-ink: #e8b34a;
+  --danger: #e0553a;
+  --on-danger: #1d0602;
+  --danger-ink: #f08a6e;
+  --focus: #f2d68a;
+  --shadow-ink: #000000;
+  --shadow-raised: 3px 3px 0 #000000, inset 0 1px 0 rgba(243,214,138,0.28);
+  --shadow-pressed: 1px 1px 0 #000000;
+  --shadow-screen: inset 0 0 0 2px #000000, inset 0 0 18px rgba(0,0,0,0.6);
+  --radius-0: 3px;
+  --radius-1: 2px;
+  --glow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
+}
+
+[data-theme="parchment"] {
+  --ground: #efe4cc;
+  --surface: #f8f0dc;
+  --surface-raised: #fffaeb;
+  --surface-sunken: #e3d3b2;
+  --line: #cdb98f;
+  --border: #7d6440;
+  --ink: #22170c;
+  --ink-muted: #5b4630;
+  --stripe-red: #b4592b;
+  --stripe-orange: #c79a3a;
+  --stripe-amber: #e3c77a;
+  --wood-dark: #3a1c10;
+  --wood: #6b3420;
+  --wood-light: #8e4a2c;
+  --primary: #d27a45;
+  --primary-pressed: #c46c3a;
+  --on-primary: #1a0c05;
+  --primary-ink: #9a4416;
+  --coin: #e2bd55;
+  --on-coin: #1a1206;
+  --coin-ink: #7d5a00;
+  --xp: #3f5fae;
+  --on-xp: #ffffff;
+  --xp-ink: #34509a;
+  --success: #1d7a63;
+  --success-ink: #176a56;
+  --warning: #e3a93a;
+  --warning-ink: #855400;
+  --danger: #b8381f;
+  --on-danger: #ffffff;
+  --danger-ink: #a5301a;
+  --focus: #34509a;
+  --shadow-ink: #22170c;
+  --shadow-raised: 3px 3px 0 #22170c, inset 0 1px 0 rgba(255,250,235,0.6);
+  --shadow-pressed: 1px 1px 0 #22170c;
+  --shadow-screen: inset 0 0 0 2px #7d6440, inset 0 0 14px rgba(125,100,64,0.25);
+  --radius-0: 3px;
+  --radius-1: 2px;
+  --glow: none;
+}
+
+/* Space age: Orbit (dark) and Station (light): white modules and deep space, after the late-60s film look */
+[data-theme="orbit"] {
+  --ground: #050608;
+  --surface: #101318;
+  --surface-raised: #1a1f27;
+  --surface-sunken: #000000;
+  --line: #262c36;
+  --border: #8a93a3;
+  --ink: #eef2f7;
+  --ink-muted: #a9b2c0;
+  --stripe-red: #d8332b;
+  --stripe-orange: #e8ecf2;
+  --stripe-amber: #6f7a8a;
+  --wood-dark: #2a3039;
+  --wood: #4a525e;
+  --wood-light: #9aa3b0;
+  --primary: #e8edf3;
+  --primary-pressed: #c3cad4;
+  --on-primary: #05070a;
+  --primary-ink: #8fc7ff;
+  --coin: #e9c46a;
+  --on-coin: #1a1206;
+  --coin-ink: #f0cf72;
+  --xp: #4fd0ff;
+  --on-xp: #001826;
+  --xp-ink: #7fdcff;
+  --success: #3ecf8e;
+  --success-ink: #6fe3ab;
+  --warning: #f2b33d;
+  --warning-ink: #f5bf55;
+  --danger: #ff4a3d;
+  --on-danger: #1d0402;
+  --danger-ink: #ff8378;
+  --focus: #8fc7ff;
+  --shadow-ink: #000000;
+  --shadow-raised: 0 0 0 1px #2b3240, 0 8px 24px rgba(0,0,0,0.7);
+  --shadow-pressed: 0 0 0 1px #2b3240;
+  --shadow-screen: inset 0 0 0 2px #000000, inset 0 0 28px rgba(79,208,255,0.14);
+  --radius-0: 12px;
+  --radius-1: 6px;
+  --glow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
+}
+
+[data-theme="station"] {
+  --ground: #e9ecf0;
+  --surface: #f7f8fa;
+  --surface-raised: #ffffff;
+  --surface-sunken: #dfe3e8;
+  --line: #c9cfd7;
+  --border: #6b7480;
+  --ink: #0d1117;
+  --ink-muted: #4a5260;
+  --stripe-red: #d8332b;
+  --stripe-orange: #e8ecf2;
+  --stripe-amber: #6f7a8a;
+  --wood-dark: #2a3039;
+  --wood: #4a525e;
+  --wood-light: #9aa3b0;
+  --primary: #12161c;
+  --primary-pressed: #2c333d;
+  --on-primary: #ffffff;
+  --primary-ink: #1769b5;
+  --coin: #e9c46a;
+  --on-coin: #1a1206;
+  --coin-ink: #7a5a00;
+  --xp: #1769b5;
+  --on-xp: #ffffff;
+  --xp-ink: #155fa3;
+  --success: #127a50;
+  --success-ink: #10704a;
+  --warning: #f2b33d;
+  --warning-ink: #855400;
+  --danger: #c72a20;
+  --on-danger: #ffffff;
+  --danger-ink: #b3241b;
+  --focus: #1769b5;
+  --shadow-ink: #0d1117;
+  --shadow-raised: 0 0 0 1px #c9cfd7, 0 6px 18px rgba(13,17,23,0.14);
+  --shadow-pressed: 0 0 0 1px #c9cfd7;
+  --shadow-screen: inset 0 0 0 2px #6b7480, inset 0 0 20px rgba(23,105,181,0.10);
+  --radius-0: 12px;
+  --radius-1: 6px;
+  --glow: none;
+}
+
+/* Tajik ornament: Lapis (dark) and Suzani (light): lapis lazuli, suzani embroidery, the flag's red, white and green */
+[data-theme="lapis"] {
+  --ground: #0c1530;
+  --surface: #142150;
+  --surface-raised: #1c2b60;
+  --surface-sunken: #070d20;
+  --line: #2c3d78;
+  --border: #9aa6cf;
+  --ink: #f6efe0;
+  --ink-muted: #c9c4dc;
+  --stripe-red: #c8293a;
+  --stripe-orange: #f0e6cc;
+  --stripe-amber: #1f8a4c;
+  --wood-dark: #7a1424;
+  --wood: #b52235;
+  --wood-light: #e2b341;
+  --primary: #2fb5a8;
+  --primary-pressed: #23968b;
+  --on-primary: #031a18;
+  --primary-ink: #5fd3c6;
+  --coin: #e9be4a;
+  --on-coin: #1a1206;
+  --coin-ink: #f1cc64;
+  --xp: #ef7f9a;
+  --on-xp: #2a0610;
+  --xp-ink: #f5a3b7;
+  --success: #48c26e;
+  --success-ink: #74d894;
+  --warning: #f0a83a;
+  --warning-ink: #f2b350;
+  --danger: #ff5a4a;
+  --on-danger: #1d0402;
+  --danger-ink: #ff8a7c;
+  --focus: #f1cc64;
+  --shadow-ink: #000000;
+  --shadow-raised: 3px 3px 0 #000000;
+  --shadow-pressed: 1px 1px 0 #000000;
+  --shadow-screen: inset 0 0 0 2px #000000, inset 0 0 0 4px #7a1424;
+  --radius-0: 6px;
+  --radius-1: 3px;
+  --glow: 0 0 8px color-mix(in srgb, currentColor 55%, transparent);
+}
+
+[data-theme="suzani"] {
+  --ground: #f3ead7;
+  --surface: #fbf5e8;
+  --surface-raised: #fffbf2;
+  --surface-sunken: #e8dcc3;
+  --line: #d6c6a6;
+  --border: #7a6448;
+  --ink: #1c1410;
+  --ink-muted: #5a4636;
+  --stripe-red: #c8293a;
+  --stripe-orange: #f0e6cc;
+  --stripe-amber: #1f8a4c;
+  --wood-dark: #7a1424;
+  --wood: #b52235;
+  --wood-light: #e2b341;
+  --primary: #1f4fa0;
+  --primary-pressed: #183f80;
+  --on-primary: #ffffff;
+  --primary-ink: #1f4fa0;
+  --coin: #e9be4a;
+  --on-coin: #1a1206;
+  --coin-ink: #7d5a00;
+  --xp: #6b3a8f;
+  --on-xp: #ffffff;
+  --xp-ink: #5e3280;
+  --success: #1c7a45;
+  --success-ink: #186b3c;
+  --warning: #e8a73a;
+  --warning-ink: #855400;
+  --danger: #b8261d;
+  --on-danger: #ffffff;
+  --danger-ink: #a52119;
+  --focus: #1f4fa0;
+  --shadow-ink: #1c1410;
+  --shadow-raised: 3px 3px 0 #1c1410;
+  --shadow-pressed: 1px 1px 0 #1c1410;
+  --shadow-screen: inset 0 0 0 2px #7a6448, inset 0 0 0 4px #e8dcc3;
+  --radius-0: 6px;
+  --radius-1: 3px;
+  --glow: none;
+}
+
+/* Space and size: one set for every theme */
+[data-theme] {
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -104,28 +360,82 @@
   --stripe-h: 4px;
   --content-max: 448px;
   --admin-max: 1200px;
+}
 
-  --font-display: "Press Start 2P", "Exo 2", ui-monospace, monospace; /* Press Start 2P has no ҳ: Exo 2 draws it */
+/* Each skin's faces, display sizes and textures, on the element with data-theme, so a nested theme (a skin preview
+   on the settings page) wins over the page around it. A face missing a Tajik letter (Press Start 2P, Old Standard TT
+   and Philosopher have no ҳ) is followed by the same skin's text face, which draws it. */
+[data-theme="console"], [data-theme="label"] {
+  --font-display: "Press Start 2P", "Exo 2", ui-monospace, monospace;
   --font-score: "Pixelify Sans", "Press Start 2P", "Exo 2", ui-monospace, monospace;
   --font-sans: "Exo 2", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-
+  --display-weight: 400; --display-case: none;
+  --display-xl-size: 32px; --display-xl-lh: 44px;
+  --display-l-size: 20px; --display-l-lh: 30px;
+  --display-m-size: 14px; --display-m-lh: 22px;
+  --display-s-size: 10px; --display-s-lh: 16px; --display-s-ls: 0.04em;
   --ground-bg: repeating-linear-gradient(0deg, var(--line) 0 1px, transparent 1px 6px), var(--ground);
   --trim-bg: repeating-linear-gradient(90deg, var(--wood) 0 10px, var(--wood-dark) 10px 12px, var(--wood) 12px 22px, var(--wood-light) 22px 23px, var(--wood) 23px 31px);
 }
+/* Steampunk: engraved small caps, a mahogany trim with brass rivets, a riveted plate ground */
+[data-theme="brass"], [data-theme="parchment"] {
+  --font-display: "Cormorant SC", "Old Standard TT", Georgia, serif;
+  --font-score: "Old Standard TT", "PT Serif", Georgia, serif;
+  --font-sans: "PT Serif", Georgia, "Times New Roman", serif;
+  --font-mono: "PT Mono", ui-monospace, Menlo, monospace;
+  --display-weight: 700; --display-case: none;
+  --display-xl-size: 48px; --display-xl-lh: 52px;
+  --display-l-size: 30px; --display-l-lh: 34px;
+  --display-m-size: 22px; --display-m-lh: 26px;
+  --display-s-size: 13px; --display-s-lh: 16px; --display-s-ls: 0.08em;
+  --ground-bg: radial-gradient(circle at 12px 12px, var(--line) 0 2.5px, transparent 3px) 0 0 / 48px 48px, repeating-linear-gradient(0deg, transparent 0 47px, var(--line) 47px 48px), var(--ground);
+  --trim-bg: radial-gradient(circle, var(--stripe-amber) 0 2px, var(--stripe-orange) 2px 3px, var(--wood-dark) 3px 3.6px, transparent 4px) center / 20px 20px, repeating-linear-gradient(90deg, var(--wood) 0 14px, var(--wood-dark) 14px 15px, var(--wood) 15px 27px, var(--wood-light) 27px 28px);
+}
+/* Space age: wide techno capitals, brushed aluminium trim, a star field (Orbit) or panel seams (Station) */
+[data-theme="orbit"] {
+  --ground-bg: radial-gradient(1px 1px at 23px 37px, var(--ink-muted) 99%, transparent) 0 0 / 180px 180px, radial-gradient(1px 1px at 97px 11px, var(--border) 99%, transparent) 0 0 / 180px 180px, radial-gradient(1.5px 1.5px at 151px 89px, var(--ink) 99%, transparent) 0 0 / 180px 180px, radial-gradient(1px 1px at 61px 131px, var(--border) 99%, transparent) 0 0 / 180px 180px, radial-gradient(1px 1px at 131px 163px, var(--ink-muted) 99%, transparent) 0 0 / 180px 180px, var(--ground);
+}
+[data-theme="station"] {
+  --ground-bg: linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 64px, linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 160px 100%, var(--ground);
+}
+[data-theme="orbit"], [data-theme="station"] {
+  --font-display: "Tektur", "Montserrat", system-ui, sans-serif;
+  --font-score: "Tektur", "Montserrat", system-ui, sans-serif;
+  --font-sans: "Montserrat", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --display-weight: 600; --display-case: uppercase;
+  --display-xl-size: 40px; --display-xl-lh: 48px;
+  --display-l-size: 24px; --display-l-lh: 30px;
+  --display-m-size: 17px; --display-m-lh: 24px;
+  --display-s-size: 11px; --display-s-lh: 16px; --display-s-ls: 0.18em;
+  --trim-bg: repeating-linear-gradient(90deg, var(--wood) 0 2px, var(--wood-light) 2px 3px, var(--wood) 3px 6px, var(--wood-dark) 6px 7px);
+}
+/* Tajik ornament: a girih lattice ground, a madder band of gold rosettes, a calligraphic display face */
+[data-theme="lapis"], [data-theme="suzani"] {
+  --font-display: "Philosopher", "Noto Sans", system-ui, sans-serif;
+  --font-score: "Philosopher", "Noto Sans", system-ui, sans-serif;
+  --font-sans: "Noto Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "PT Mono", ui-monospace, Menlo, monospace;
+  --display-weight: 700; --display-case: none;
+  --display-xl-size: 46px; --display-xl-lh: 52px;
+  --display-l-size: 28px; --display-l-lh: 34px;
+  --display-m-size: 20px; --display-m-lh: 26px;
+  --display-s-size: 13px; --display-s-lh: 16px; --display-s-ls: 0.06em;
+  --ground-bg: repeating-linear-gradient(45deg, var(--line) 0 1px, transparent 1px 16px), repeating-linear-gradient(-45deg, var(--line) 0 1px, transparent 1px 16px), var(--ground);
+  --trim-bg: radial-gradient(circle, var(--wood-light) 0 2.5px, var(--wood-dark) 3px 4px, var(--wood-light) 4.5px 5.5px, transparent 6px) center / 22px 22px, conic-gradient(from 45deg, var(--wood) 25%, var(--wood-dark) 0 50%, var(--wood) 0 75%, var(--wood-dark) 0) center / 11px 11px;
+}
 
 /* The page behind the screen and the browser bar: dark ground, also when the page is pulled past its end */
-html[data-theme="console"],
-html[data-theme="console"] body {
-  background: var(--ground);
-  color: var(--ink);
-  color-scheme: dark;
-}
-html[data-theme="label"],
-html[data-theme="label"] body {
+html[data-theme],
+html[data-theme] body {
   background: var(--ground);
   color: var(--ink);
   color-scheme: light;
+}
+html:is([data-theme="console"], [data-theme="brass"], [data-theme="orbit"], [data-theme="lapis"]),
+html:is([data-theme="console"], [data-theme="brass"], [data-theme="orbit"], [data-theme="lapis"]) body {
+  color-scheme: dark;
 }
 
 .gc-root, .gc-root * { box-sizing: border-box; }
@@ -142,11 +452,13 @@ html[data-theme="label"] body {
 .gc-num { font-variant-numeric: tabular-nums; }
 
 /* Type */
-.gc-display-l { font-family: var(--font-display); font-size: 20px; line-height: 30px; font-weight: 400; }
+/* The display scale is the skin's: each sets its sizes, weight and case on the data-theme element */
+.gc-display-xl, .gc-display-l, .gc-display-m, .gc-display-s { font-family: var(--font-display); font-weight: var(--display-weight); text-transform: var(--display-case); }
+.gc-display-l { font-size: var(--display-l-size); line-height: var(--display-l-lh); }
 /* The bitmap face is about 1em a letter: on the narrowest phones a long word still fits the column */
-@media (max-width: 359px) { .gc-display-l { font-size: 16px; line-height: 26px; } }
-.gc-display-m { font-family: var(--font-display); font-size: 14px; line-height: 22px; font-weight: 400; }
-.gc-display-s { font-family: var(--font-display); font-size: 10px; line-height: 16px; font-weight: 400; letter-spacing: 0.04em; }
+@media (max-width: 359px) { .gc-display-l { font-size: calc(var(--display-l-size) * 0.8); line-height: calc(var(--display-l-lh) * 0.87); } }
+.gc-display-m { font-size: var(--display-m-size); line-height: var(--display-m-lh); }
+.gc-display-s { font-size: var(--display-s-size); line-height: var(--display-s-lh); letter-spacing: var(--display-s-ls); }
 .gc-score-xl { font-family: var(--font-score); font-size: 64px; line-height: 64px; font-weight: 700; }
 @media (max-width: 374px) { .gc-score-xl { font-size: 48px; line-height: 52px; } }
 .gc-score-l { font-family: var(--font-score); font-size: 36px; line-height: 40px; font-weight: 700; }
@@ -571,10 +883,10 @@ html[data-theme="label"] body {
 /* Empty list text under a section heading */
 .gc-empty { margin: 0; padding: var(--space-6) 0; text-align: center; color: var(--ink-muted); }
 
-/* Staff and hall (Label theme on staff phones, the dark board on the hall screen) */
+/* Staff and hall (the light theme on staff phones, the dark board on the hall screen) */
 
-.gc-display-xl { font-family: var(--font-display); font-size: 32px; line-height: 44px; font-weight: 400; }
-@media (max-width: 767px) { .gc-display-xl { font-size: 20px; line-height: 30px; } }
+.gc-display-xl { font-size: var(--display-xl-size); line-height: var(--display-xl-lh); }
+@media (max-width: 767px) { .gc-display-xl { font-size: var(--display-l-size); line-height: var(--display-l-lh); } }
 
 /* The penalty switch: red, and spelled out in words */
 .gc-button--danger { background: var(--danger); color: var(--on-danger); }
@@ -629,7 +941,7 @@ html[data-theme="label"] body {
 /* QR card: the code on a light quiet zone in both themes, so scanners read it */
 .gc-qr-card { display: flex; flex-direction: column; align-items: center; gap: var(--space-4); min-width: 0; margin: 0; padding: var(--space-6) var(--space-4); text-align: center; background: var(--surface); color: var(--ink); border: var(--border-w) solid var(--border); border-radius: var(--radius-0); box-shadow: var(--shadow-raised); }
 .gc-qr-card__quiet { width: 100%; max-width: 320px; padding: var(--space-4); background: var(--ink); border: var(--border-w) solid var(--shadow-ink); border-radius: var(--radius-0); }
-[data-theme="label"] .gc-qr-card__quiet { background: var(--surface-raised); }
+:is([data-theme="label"], [data-theme="parchment"], [data-theme="station"], [data-theme="suzani"]) .gc-qr-card__quiet { background: var(--surface-raised); }
 .gc-qr-card__quiet > svg { display: block; width: 100%; max-width: 280px; height: auto; margin: 0 auto; shape-rendering: crispEdges; }
 .gc-qr-card__text { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; max-width: 100%; }
 .gc-qr-card__title { margin: 0; font-weight: 700; overflow-wrap: anywhere; }
@@ -750,7 +1062,7 @@ html[data-theme="label"] body {
   .gc-hall-board__empty { font-size: max(var(--hall-min-font), clamp(32px, 3vw, 56px)); }
 }
 
-/* Admin pages (Label theme): the shared menu, tables that turn into cards on a phone, uploads, the stage plan */
+/* Admin pages (the light theme): the shared menu, tables that turn into cards on a phone, uploads, the stage plan */
 
 /* Admin shell: from 768px a 240px side menu with woodgrain trim on its right edge; below it a top bar whose row of
    sections scrolls sideways, the trim under it. Only the menu scrolls sideways: the page column clips. */
@@ -876,7 +1188,7 @@ html[data-theme="label"] body {
   .gc-data-table__th { position: static; background: none; }
   .gc-qr-sheet { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .gc-qr-card { break-inside: avoid; page-break-inside: avoid; background: none; box-shadow: none; color: var(--shadow-ink); border: var(--border-w) dashed var(--shadow-ink); padding: var(--space-4); }
-  .gc-qr-card__quiet, [data-theme="label"] .gc-qr-card__quiet { background: none; border: 0; padding: var(--space-2); }
+  .gc-qr-card__quiet, :is([data-theme="label"], [data-theme="parchment"], [data-theme="station"], [data-theme="suzani"]) .gc-qr-card__quiet { background: none; border: 0; padding: var(--space-2); }
   .gc-qr-card__subtitle, .gc-qr-card__caption { color: var(--shadow-ink); }
 }
 

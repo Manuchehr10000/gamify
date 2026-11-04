@@ -279,7 +279,7 @@ export function Hall() {
 
   const style = { '--hall-min-font': `${hall?.min_font_px ?? 40}px` } as CSSProperties
   return (
-    <Shell theme="console" className="gc-hall-board gc-wood">
+    <Shell theme="dark" className="gc-hall-board gc-wood">
       <div className={`gc-hall-board__screen ${view === 'air' ? 'gc-hall-board__screen--air' : ''}`} style={style}>
         <header className="gc-hall-board__titles">
           <p className="gc-hall-board__event">{t('hall.forum')}</p>

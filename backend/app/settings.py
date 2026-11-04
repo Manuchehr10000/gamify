@@ -26,6 +26,12 @@ class Spec:
     text: str | None = None
     # A text setting holding a date (YYYY-MM-DD) or blank
     date: bool = False
+    # A text setting holding one of these ids
+    choices: tuple[str, ...] | None = None
+
+
+# The event's look: each skin has a dark theme for guests and the hall and a light one for staff and admins
+SKINS = ("console", "steampunk", "space", "ornament")
 
 
 def _text(default: str) -> Spec:
@@ -75,6 +81,8 @@ SETTINGS: dict[str, Spec] = {
     # The day partners' photo links stop working (and piece 22 deletes the photos); blank: photos.delete_date's
     # default, the last stage's end + 30 days
     "photo_delete_date": Spec(Decimal(0), Decimal(0), Decimal(10), text="", date=True),
+    # The skin every page shows; saving it always asks first, as it changes every screen at once
+    "skin": Spec(Decimal(0), Decimal(1), Decimal(20), text=SKINS[0], choices=SKINS),
 }
 
 # Raised by every admin save; phones and screens poll it and reload when it moves
@@ -105,6 +113,10 @@ def number(db: DbSession, key: str) -> int:
 def text(db: DbSession, key: str) -> str:
     """A text setting's value, read fresh."""
     return db.scalar(select(Setting.text_value).where(Setting.key == key)) or ""
+
+
+def skin(db: DbSession) -> str:
+    return text(db, "skin") or SKINS[0]
 
 
 def bump(db: DbSession) -> None:

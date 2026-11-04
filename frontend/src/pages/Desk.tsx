@@ -54,7 +54,7 @@ export function Desk() {
 
   if (shown) {
     return (
-      <Screen theme="label">
+      <Screen theme="light">
         <QrCard title={`${shown.first_name} ${shown.last_name}`} subtitle={shown.company} caption={t('desk.scan')}>
           <QRCodeSVG value={shown.link} size={280} marginSize={2} />
         </QrCard>
@@ -75,7 +75,7 @@ export function Desk() {
       />
     )
     return (
-      <Screen theme="label">
+      <Screen theme="light">
         <PageHeader title={t('desk.addWalkIn')} />
         <Card>
           <form onSubmit={addWalkIn} className="gc-staff-login__form">
@@ -94,7 +94,7 @@ export function Desk() {
 
   const searching = query.trim().length >= 2
   return (
-    <Screen theme="label">
+    <Screen theme="light">
       <PageHeader title={t('staff.deskTitle')} />
       <TextInput label={t('desk.search')} value={query} onChange={setQuery} autoFocus />
       {error && <Callout tone="danger">{error}</Callout>}

@@ -26,12 +26,14 @@ def logo(partner_id: int, db: DbSession = Depends(get_db)) -> Response:
 
 class Version(BaseModel):
     version: int
+    # The event's skin, so pages that poll the version also switch their look
+    skin: str
 
 
 @router.get("/version")
 def config_version(db: DbSession = Depends(get_db)) -> Version:
     """Moves on every admin save: phones and screens poll it every 10 seconds and reload when it moves."""
-    return Version(version=settings.version(db))
+    return Version(version=settings.version(db), skin=settings.skin(db))
 
 
 @router.get("/photos/{token}")

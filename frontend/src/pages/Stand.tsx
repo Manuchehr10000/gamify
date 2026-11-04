@@ -54,12 +54,12 @@ export function Stand() {
 
   if (!token) return <StaffLogin role="stand" onLogin={setToken} />
 
-  if (state.kind === 'loading') return <Screen theme="label" center><Loading /></Screen>
-  if (state.kind === 'message') return <Screen theme="label" center><MessageCard icon="alert" title={state.text} /></Screen>
+  if (state.kind === 'loading') return <Screen theme="light" center><Loading /></Screen>
+  if (state.kind === 'message') return <Screen theme="light" center><MessageCard icon="alert" title={state.text} /></Screen>
 
   const { handover, issuedNow } = state
   return (
-    <Screen theme="label" center>
+    <Screen theme="light" center>
       <Card className="gc-handover">
         <span className="gc-prize-card__partner gc-body-s">
           <Icon name="star" size={16} />

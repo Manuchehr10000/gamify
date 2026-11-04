@@ -1,9 +1,10 @@
 import { useLayoutEffect, type MouseEventHandler, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { useConfigVersion } from '../../version'
 import { glyph, splitNumber, type IconName } from './glyphs'
+import { THEMES, useSkin, useSkinFonts, type Shade } from './skin'
 import './console.css'
-import './fonts.css'
 
 // A pixel icon in currentColor, always beside a word; alone it needs a label
 export function Icon({ name, size = 24, label }: { name: IconName; size?: number; label?: string }) {
@@ -35,13 +36,16 @@ export function Spinner({ size = 20, label }: { size?: number; label?: string })
 
 const THEME_COLOR = 'meta[name="theme-color"]'
 
-type Theme = 'console' | 'label'
-
-// Puts the page in the Console look while a console screen is open: the theme on <html> (so the ground shows
-// past the page's ends), the browser bar in the ground's colour (dark for guests and the hall, light for staff),
-// the pixel tab icon and content drawn up to the notch (the screen pads itself clear of it). Everything goes back
-// on leaving, so other screens keep their look.
-function useConsoleShell(theme: Theme) {
+// Puts the page in the event skin's look while a console screen is open: the skin's dark or light theme on <html>
+// (so the ground shows past the page's ends), the browser bar in the ground's colour (dark for guests and the hall,
+// light for staff), the pixel tab icon and content drawn up to the notch (the screen pads itself clear of it).
+// It follows the skin the version poll reports, and loads only that skin's faces. Everything goes back on leaving,
+// so other screens keep their look.
+function useConsoleShell(shade: Shade) {
+  const skin = useSkin()
+  const theme = THEMES[skin][shade]
+  useConfigVersion()
+  useSkinFonts(skin)
   useLayoutEffect(() => {
     const root = document.documentElement
     root.dataset.theme = theme
@@ -75,20 +79,20 @@ function useConsoleShell(theme: Theme) {
 }
 
 // The console theme for a page that draws its own frame (the admin menu sits beside its <main>, not in it)
-export function ConsoleTheme({ theme }: { theme: Theme }) {
+export function ConsoleTheme({ theme }: { theme: Shade }) {
   useConsoleShell(theme)
   return null
 }
 
 // The page's one <main> in a console theme; Screen for the phone column, the hall board on its own
-export function Shell({ theme, className, children }: { theme: Theme; className: string; children: ReactNode }) {
+export function Shell({ theme, className, children }: { theme: Shade; className: string; children: ReactNode }) {
   useConsoleShell(theme)
   return <main className={`gc-root ${className}`}>{children}</main>
 }
 
-// theme: label (light) on staff screens; wide: the moderation grid; center: one card mid-screen
-export function Screen({ children, theme = 'console', wide, center }:
-  { children: ReactNode; theme?: Theme; wide?: boolean; center?: boolean }) {
+// theme: light on staff screens; wide: the moderation grid; center: one card mid-screen
+export function Screen({ children, theme = 'dark', wide, center }:
+  { children: ReactNode; theme?: Shade; wide?: boolean; center?: boolean }) {
   return (
     <Shell theme={theme} className={`gc-screen gc-ribs ${wide ? 'gc-screen--wide' : ''} ${center ? 'gc-screen--center' : ''}`}>
       <div className="gc-screen__col">{children}</div>

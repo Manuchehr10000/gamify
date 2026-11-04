@@ -9,18 +9,30 @@ async function keepApp() {
   const page = await fetch('/', { cache: 'no-store' })
   const html = await page.clone().text()
   const files = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1])
-  // The Console fonts are named in the stylesheet, not the page: keep them too, so the titles, numbers and text
-  // keep their faces with the network off even when the first visit fetched them before this worker existed
-  for (const css of files.filter((f) => f.endsWith('.css'))) {
-    const text = await (await fetch(css)).text()
-    files.push(...[...text.matchAll(/url\((\/assets\/[^)]+\.woff2)\)/g)].map((m) => m[1]))
-  }
   await cache.put('/', page)
   await cache.addAll(files)
 }
 
+// The skin's fonts are named in its own stylesheet, which the page loads for the event's skin only: the page names
+// it here (src/components/console/skin.ts) and this keeps it with its fonts, so the titles, numbers and text keep
+// their faces with the network off even when the first visit fetched them before this worker existed
+async function keepFonts(sheets) {
+  const cache = await caches.open(CACHE)
+  const files = []
+  for (const css of sheets.filter((f) => /^\/assets\/[^/]+\.css$/.test(f))) {
+    const text = await ((await cache.match(css)) ?? (await fetch(css))).text()
+    files.push(css, ...[...text.matchAll(/url\((\/assets\/[^)]+\.woff2)\)/g)].map((m) => m[1]))
+  }
+  const missing = []
+  for (const f of new Set(files)) if (!(await cache.match(f))) missing.push(f)
+  await cache.addAll(missing)
+}
+
 self.addEventListener('install', (e) => e.waitUntil(keepApp().then(() => self.skipWaiting())))
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()))
+self.addEventListener('message', (e) => {
+  if (Array.isArray(e.data?.keep)) e.waitUntil(keepFonts(e.data.keep).catch(() => {}))
+})
 
 self.addEventListener('fetch', (e) => {
   const req = e.request

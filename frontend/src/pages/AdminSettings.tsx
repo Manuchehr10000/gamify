@@ -7,6 +7,8 @@ import type { TFunction } from 'i18next'
 import { confirmed, usePhotoDeletion } from '../admin'
 import { api, ApiError, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
+import { THEMES, usePreviewFonts, type Skin } from '../components/console/skin'
+import { Card as ConsoleCard, Stripe } from '../components/console/ui'
 import { Button, Card, Input } from '../components/ui'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
@@ -30,9 +32,11 @@ type Field = {
 }
 type Row = { id: number; version: number; values: Record<string, Value>; extra: Record<string, Value> }
 type List = { fields: Field[]; rows: Row[] }
-// text: a text setting's value (min and max are then its length); null for a number
+// text: a text setting's value (min and max are then its length); null for a number. choices: the ids a choice
+// setting (the skin) takes
 type Setting = {
-  key: string; value: number; min: number; max: number; effect: Field['effect']; integer: boolean; text: string | null; version: number
+  key: string; value: number; min: number; max: number; effect: Field['effect']; integer: boolean; text: string | null
+  choices: string[] | null; version: number
 }
 // The push switch and texts show on the «Push» tab, not with the other settings
 const isPush = (key: string) => key.startsWith('push_')
@@ -482,7 +486,7 @@ function Settings({ token, loggedOut, dateLocked }: TabProps & { dateLocked: boo
   async function save(s: Setting) {
     setError('')
     setSaved('')
-    // The one text setting here is a date (YYYY-MM-DD) or blank; the server checks it
+    // A text setting here is a date (YYYY-MM-DD) or blank, or the skin's id; the server checks it
     let value: string | number = drafts[s.key] ?? ''
     if (s.text === null) {
       const n = Number(value.replace(',', '.'))
@@ -515,8 +519,16 @@ function Settings({ token, loggedOut, dateLocked }: TabProps & { dateLocked: boo
         return (
         <div key={s.key} className="flex flex-col gap-1 border-b border-slate-100 pb-4 last:border-0 last:pb-0">
           <span className="text-sm font-medium">{label(s.key)}</span>
+          {s.choices && (
+            <SkinChoice
+              name={s.key}
+              choices={s.choices as Skin[]}
+              value={drafts[s.key] ?? ''}
+              onChange={(v) => setDrafts((d) => ({ ...d, [s.key]: v }))}
+            />
+          )}
           <div className="flex items-center gap-3">
-            <Input
+            {!s.choices && <Input
               type={s.text === null ? 'number' : 'date'}
               className="max-w-40"
               min={s.text === null ? s.min : undefined}
@@ -525,7 +537,7 @@ function Settings({ token, loggedOut, dateLocked }: TabProps & { dateLocked: boo
               value={drafts[s.key] ?? ''}
               onChange={(e) => setDrafts((d) => ({ ...d, [s.key]: e.target.value }))}
               disabled={locked}
-            />
+            />}
             <Button variant="outline" onClick={() => save(s)} disabled={locked || drafts[s.key] === draft(s)}>
               {t('settingsAdmin.save')}
             </Button>
@@ -534,9 +546,11 @@ function Settings({ token, loggedOut, dateLocked }: TabProps & { dateLocked: boo
           <span className="text-xs text-slate-500">
             {locked
               ? t('settingsAdmin.errors.photo_date_locked')
-              : s.text === null
-                ? `${s.min}–${s.max} · ${t(`settingsAdmin.effect.${s.effect}`)}`
-                : `${t('settingsAdmin.dateBlank')} · ${t(`settingsAdmin.effect.${s.effect}`)}`}
+              : s.choices
+                ? t(`settingsAdmin.effect.${s.effect}`)
+                : s.text === null
+                  ? `${s.min}–${s.max} · ${t(`settingsAdmin.effect.${s.effect}`)}`
+                  : `${t('settingsAdmin.dateBlank')} · ${t(`settingsAdmin.effect.${s.effect}`)}`}
           </span>
         </div>
         )
@@ -615,6 +629,45 @@ function PushSettings({ token, loggedOut }: TabProps) {
   )
 }
 
+// The event's skin, one per event: each choice shows the same card in that skin's guest theme, in its own faces
+function SkinChoice({ name, choices, value, onChange }:
+  { name: string; choices: Skin[]; value: string; onChange: (value: string) => void }) {
+  const { t } = useTranslation()
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {choices.map((skin) => (
+        <label
+          key={skin}
+          className={`flex cursor-pointer flex-col gap-2 rounded-lg p-2 ring-2 ${value === skin ? 'ring-emerald-600' : 'ring-slate-200'}`}
+        >
+          <span className="flex items-center gap-2 text-sm font-medium">
+            <input type="radio" name={name} value={skin} checked={value === skin} onChange={() => onChange(skin)} />
+            {t(`settingsAdmin.choices.${name}.${skin}`)}
+          </span>
+          <SkinPreview skin={skin} />
+        </label>
+      ))}
+    </div>
+  )
+}
+
+function SkinPreview({ skin }: { skin: Skin }) {
+  const { t } = useTranslation()
+  usePreviewFonts(skin)
+  return (
+    <div data-theme={THEMES[skin].dark} className="gc-root gc-ribs flex flex-col gap-3 p-3" aria-hidden>
+      <ConsoleCard>
+        <span className="gc-display-m">{t(`settingsAdmin.choices.skin.${skin}`)}</span>
+        <Stripe />
+        <span className="gc-button gc-button--primary gc-button--md gc-label">
+          <span className="gc-button__text">{t('task.do')}</span>
+        </span>
+      </ConsoleCard>
+      <div className="gc-wood h-3" />
+    </div>
+  )
+}
+
 const LOG_KINDS = ['stages', 'tasks', 'prizes', 'questions', 'levels', 'partners', 'staff', 'settings', 'rating', 'guests', 'push', 'badges']
 
 function Log({ token, loggedOut }: TabProps) {
@@ -645,6 +698,12 @@ function Log({ token, loggedOut }: TabProps) {
     return t(`settingsAdmin.fields.${e.kind}.${e.field}`, {
       defaultValue: t(`settingsAdmin.log.extraFields.${e.field}`, { defaultValue: e.field }),
     })
+  }
+
+  // A skin change reads «Консоль → Стимпанк», not its ids
+  function logValue(e: Event, v: string | null): string {
+    if (v === null) return ''
+    return e.kind === 'settings' && e.item === 'skin' ? t(`settingsAdmin.choices.skin.${v}`, { defaultValue: v }) : v
   }
 
   const set = (k: keyof typeof filter) => (v: string) => setFilter((f) => ({ ...f, [k]: v }))
@@ -708,8 +767,8 @@ function Log({ token, loggedOut }: TabProps) {
                       <td className="px-3 py-2">{t(`settingsAdmin.log.kinds.${e.kind}`, { defaultValue: e.kind })}</td>
                       <td className="max-w-xs truncate px-3 py-2">{e.item}</td>
                       <td className="px-3 py-2">{fieldName(e)}</td>
-                      <td className="max-w-xs truncate px-3 py-2 text-slate-500">{e.old_value ?? ''}</td>
-                      <td className="max-w-xs truncate px-3 py-2">{e.new_value ?? ''}</td>
+                      <td className="max-w-xs truncate px-3 py-2 text-slate-500">{logValue(e, e.old_value)}</td>
+                      <td className="max-w-xs truncate px-3 py-2">{logValue(e, e.new_value)}</td>
                       <td className="px-3 py-2">{t(`settingsAdmin.log.sources.${e.source}`)}</td>
                     </tr>
                   ))}

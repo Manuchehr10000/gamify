@@ -223,6 +223,8 @@ class SettingOut(BaseModel):
     integer: bool
     # A text setting's value (min and max are then its length); None for a number
     text: str | None
+    # The ids a choice setting (the skin) takes; None for the others
+    choices: list[str] | None
     version: int
 
 
@@ -230,7 +232,7 @@ def _setting_out(s: Setting) -> SettingOut:
     spec = settings.SETTINGS[s.key]
     return SettingOut(key=s.key, value=float(s.value), min=float(s.min_value), max=float(s.max_value),
                       effect=s.effect, integer=spec.integer, text=s.text_value if spec.text is not None else None,
-                      version=s.version)
+                      choices=list(spec.choices) if spec.choices else None, version=s.version)
 
 
 @router.get("/settings")
@@ -250,7 +252,7 @@ def save_setting(key: str, value: str | float = Body(), version: int = Body(), c
         db.rollback()
         raise refuse(STALE, status=409)
     if spec.text is not None:
-        return _save_text(db, admin, s, value)
+        return _save_text(db, admin, s, value, confirm)
     try:
         new = Decimal(str(value).replace(",", ".")).normalize()
     except InvalidOperation:
@@ -289,10 +291,13 @@ def save_setting(key: str, value: str | float = Body(), version: int = Body(), c
     return _setting_out(s)
 
 
-def _save_text(db: DbSession, admin: Staff, s: Setting, value: str | float) -> SettingOut:
-    """A text setting (a push text, or a date kept as YYYY-MM-DD): its length is checked against the limits, a date
-    must be one; it applies from now on."""
+def _save_text(db: DbSession, admin: Staff, s: Setting, value: str | float, confirm: bool) -> SettingOut:
+    """A text setting (a push text, a date kept as YYYY-MM-DD, or the skin): its length is checked against the limits,
+    a date must be one and a choice one of its ids; it applies from now on."""
     new = value.strip() if isinstance(value, str) else None
+    choices = settings.SETTINGS[s.key].choices
+    if choices and new not in choices:
+        raise refuse("bad_value", field=s.key)
     # Once admins are warned (7 days before), the deletion date stays as announced
     if s.key == "photo_delete_date" and photos.locked(db):
         db.rollback()
@@ -312,6 +317,9 @@ def _save_text(db: DbSession, admin: Staff, s: Setting, value: str | float) -> S
     if new == s.text_value:
         db.rollback()
         return _setting_out(s)
+    if choices:
+        # A new skin switches every phone, stand and the hall screen within seconds, game running or not
+        _confirm(db, [{"code": "skin"}], confirm)
     changes.record(db, admin, "settings", None, s.key, "value", s.text_value, new)
     s.text_value = new
     _flush(db)

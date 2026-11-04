@@ -15,14 +15,14 @@ const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: '/admin/tasks/qr', label: 'qrSheet.title', icon: 'qr' },
 ]
 
-// The admin page frame in the light Label look: the menu (a side menu with woodgrain trim from 768px, a top bar that
+// The admin page frame in the skin's light theme: the menu (a side menu with woodgrain trim from 768px, a top bar that
 // scrolls sideways below it), one title with its actions, then the page. Printing leaves only the page content.
 export function AdminShell({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
   const { t } = useTranslation()
   const deletion = usePhotoDeletion().notice
   return (
     <div className="gc-root gc-admin-shell gc-ribs">
-      <ConsoleTheme theme="label" />
+      <ConsoleTheme theme="light" />
       <header className="gc-admin-shell__bar">
         <div className="gc-admin-shell__trim gc-wood" aria-hidden />
         <nav className="gc-admin-shell__nav" aria-label={t('admin.nav')}>
