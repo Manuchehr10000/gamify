@@ -216,6 +216,7 @@ class Submission(Base):
     __table_args__ = (
         Index("submissions_guest_task", "guest_id", "task_id", unique=True, postgresql_where=text("status <> 'retake'")),
         Index("submissions_unchecked", "created_at", postgresql_where=text("status = ''")),
+        Index("submissions_photo_token", "photo_token", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -234,6 +235,8 @@ class Submission(Base):
     # The phone's key for this send (its claim's ID), repeated on its retries: a late retry of one sent back is not
     # a new send
     upload: Mapped[str] = mapped_column(String(64), default="")
+    # The photo's link in the partner report (/api/photos/{token}): random, never the ID; None for a text
+    photo_token: Mapped[str | None] = mapped_column(String(64))
 
 
 class Claim(Base):

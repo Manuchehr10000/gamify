@@ -290,8 +290,14 @@ def save_setting(key: str, value: str | float = Body(), version: int = Body(), c
 
 
 def _save_text(db: DbSession, admin: Staff, s: Setting, value: str | float) -> SettingOut:
-    """A text setting (a push text): its length is checked against the limits; it applies from now on."""
+    """A text setting (a push text, or a date kept as YYYY-MM-DD): its length is checked against the limits, a date
+    must be one; it applies from now on."""
     new = value.strip() if isinstance(value, str) else None
+    if settings.SETTINGS[s.key].date and new:
+        try:
+            new = date.fromisoformat(new).isoformat()
+        except ValueError:
+            raise refuse("bad_value", field=s.key) from None
     if new is None or not s.min_value <= len(new) <= s.max_value:
         raise refuse("length", field=s.key, min=int(s.min_value), max=int(s.max_value))
     if new == s.text_value:

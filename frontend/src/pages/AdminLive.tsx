@@ -27,6 +27,8 @@ type Live = {
 
 // A guest whose stored totals differ from the sum of their score events
 type Mismatch = { name: string; points: number; points_sum: number; coins: number; coins_sum: number }
+// The partner picker reads the settings list of partners
+type PartnerRow = { id: number; values: { name: string } }
 
 const POLL_MS = 30_000
 
@@ -38,6 +40,8 @@ export function AdminLive() {
   const [error, setError] = useState(false)
   const [mismatches, setMismatches] = useState<Mismatch[] | null>(null)
   const [checking, setChecking] = useState(false)
+  const [partners, setPartners] = useState<PartnerRow[]>([])
+  const [picked, setPicked] = useState('')
 
   const fail = useCallback((err: unknown) => {
     if (err instanceof ApiError && err.status === 401) {
@@ -67,7 +71,19 @@ export function AdminLive() {
     }
   }, [token, fail])
 
+  useEffect(() => {
+    if (!token) return
+    api<{ rows: PartnerRow[] }>('/api/admin/lists/partners', { token }).then((l) => setPartners(l.rows)).catch(fail)
+  }, [token, fail])
+
   if (!token) return <StaffLogin role="admin" onLogin={setToken} />
+
+  // One partner's Excel file: totals, hours and photo links
+  function partnerReport() {
+    const p = partners.find((r) => String(r.id) === picked)
+    if (!p || !token) return
+    download(`/api/admin/partners/${p.id}/report`, token, `${p.values.name}.xlsx`).catch(fail)
+  }
 
   function checkBalance() {
     setChecking(true)
@@ -83,9 +99,24 @@ export function AdminLive() {
     <AdminShell
       title={t('live.title')}
       actions={(
-        <Button variant="outline" icon="download" block={false} onClick={() => download('/api/admin/partners/export', token, 'partners.csv').catch(fail)}>
-          {t('live.report')}
-        </Button>
+        <>
+          <Button variant="outline" icon="download" block={false} onClick={() => download('/api/admin/partners/export', token, 'partners.csv').catch(fail)}>
+            {t('live.report')}
+          </Button>
+          <select
+            className="gc-text-input__field"
+            style={{ width: 'auto', maxWidth: '100%' }}
+            aria-label={t('live.partnerReport')}
+            value={picked}
+            onChange={(e) => setPicked(e.target.value)}
+          >
+            <option value="">{t('live.pickPartner')}</option>
+            {partners.map((p) => <option key={p.id} value={p.id}>{p.values.name}</option>)}
+          </select>
+          <Button variant="outline" icon="download" block={false} disabled={!picked} onClick={partnerReport}>
+            {t('live.partnerReport')}
+          </Button>
+        </>
       )}
     >
       <Card>

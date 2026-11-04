@@ -1,3 +1,4 @@
+import secrets
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
@@ -63,7 +64,8 @@ def _pay(db: DbSession, guest: Guest, t: Task, c: Claim, photo: bytes | None = N
     added = ledger.write(db, guest.id, task_reason(t.id), "task", t.points, t.coins, multiplier=c.multiplier,
                          stage_id=c.stage_id) is not None
     if added:
-        db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, thumb=thumb, text=c.text, upload=c.id))
+        db.add(Submission(guest_id=guest.id, task_id=t.id, photo=photo, thumb=thumb, text=c.text, upload=c.id,
+                          photo_token=secrets.token_urlsafe(24) if photo is not None else None))
         db.flush()
         badges.sync(db, [guest.id], actor=guest.id)
     c.state = "done"

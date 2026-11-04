@@ -24,6 +24,8 @@ class Spec:
     live: bool = False
     # A text setting: its default text; min and max are then its length
     text: str | None = None
+    # A text setting holding a date (YYYY-MM-DD) or blank
+    date: bool = False
 
 
 def _text(default: str) -> Spec:
@@ -70,6 +72,9 @@ SETTINGS: dict[str, Spec] = {
     "push_text_quiz_open": _text("Квиз открыт: 5 минут"),
     "push_text_market": _text("Маркет открыт — обменяйте монеты на призы"),
     "push_text_one_off": _text("Сообщение организаторов"),
+    # The day partners' photo links stop working (and piece 22 deletes the photos); blank: photos.delete_date's
+    # default, the last stage's end + 30 days
+    "photo_delete_date": Spec(Decimal(0), Decimal(0), Decimal(10), text="", date=True),
 }
 
 # Raised by every admin save; phones and screens poll it and reload when it moves

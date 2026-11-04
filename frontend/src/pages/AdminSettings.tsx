@@ -36,6 +36,8 @@ type Setting = {
 }
 // The push switch and texts show on the «Push» tab, not with the other settings
 const isPush = (key: string) => key.startsWith('push_')
+// What the form field starts with: the number, or a text setting's text (the photo deletion date)
+const draft = (s: Setting) => (s.text === null ? String(s.value) : s.text)
 type Event = {
   id: number
   created_at: string
@@ -461,7 +463,7 @@ function Settings({ token, loggedOut }: TabProps) {
     api<Setting[]>('/api/admin/settings', { token }).then((all) => {
       const r = all.filter((s) => !isPush(s.key))
       setRows(r)
-      setDrafts(Object.fromEntries(r.map((s) => [s.key, String(s.value)])))
+      setDrafts(Object.fromEntries(r.map((s) => [s.key, draft(s)])))
     }).catch(fail)
   }, [token, fail])
 
@@ -470,14 +472,19 @@ function Settings({ token, loggedOut }: TabProps) {
   async function save(s: Setting) {
     setError('')
     setSaved('')
-    const n = Number((drafts[s.key] ?? '').replace(',', '.'))
-    if (drafts[s.key] === '' || Number.isNaN(n) || n < s.min || n > s.max || (s.integer && !Number.isInteger(n))) {
-      setError(t('settingsAdmin.errors.out_of_range', { field: label(s.key), min: s.min, max: s.max }))
-      return
+    // The one text setting here is a date (YYYY-MM-DD) or blank; the server checks it
+    let value: string | number = drafts[s.key] ?? ''
+    if (s.text === null) {
+      const n = Number(value.replace(',', '.'))
+      if (value === '' || Number.isNaN(n) || n < s.min || n > s.max || (s.integer && !Number.isInteger(n))) {
+        setError(t('settingsAdmin.errors.out_of_range', { field: label(s.key), min: s.min, max: s.max }))
+        return
+      }
+      value = n
     }
     try {
       const done = await confirmed(t, (yes) => api(`/api/admin/settings/${s.key}${yes ? '?confirm=true' : ''}`, {
-        token, method: 'PUT', json: { value: n, version: s.version },
+        token, method: 'PUT', json: { value, version: s.version },
       }))
       if (done !== null) {
         setSaved(s.key)
@@ -497,20 +504,24 @@ function Settings({ token, loggedOut }: TabProps) {
           <span className="text-sm font-medium">{label(s.key)}</span>
           <div className="flex items-center gap-3">
             <Input
-              type="number"
+              type={s.text === null ? 'number' : 'date'}
               className="max-w-40"
-              min={s.min}
-              max={s.max}
+              min={s.text === null ? s.min : undefined}
+              max={s.text === null ? s.max : undefined}
               step={s.integer ? 1 : 0.1}
               value={drafts[s.key] ?? ''}
               onChange={(e) => setDrafts((d) => ({ ...d, [s.key]: e.target.value }))}
             />
-            <Button variant="outline" onClick={() => save(s)} disabled={drafts[s.key] === String(s.value)}>
+            <Button variant="outline" onClick={() => save(s)} disabled={drafts[s.key] === draft(s)}>
               {t('settingsAdmin.save')}
             </Button>
             {saved === s.key && <span className="text-sm text-emerald-700">{t('settingsAdmin.saved')}</span>}
           </div>
-          <span className="text-xs text-slate-500">{`${s.min}–${s.max} · ${t(`settingsAdmin.effect.${s.effect}`)}`}</span>
+          <span className="text-xs text-slate-500">
+            {s.text === null
+              ? `${s.min}–${s.max} · ${t(`settingsAdmin.effect.${s.effect}`)}`
+              : `${t('settingsAdmin.dateBlank')} · ${t(`settingsAdmin.effect.${s.effect}`)}`}
+          </span>
         </div>
       ))}
     </Card>
