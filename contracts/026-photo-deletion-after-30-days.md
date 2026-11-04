@@ -1,5 +1,5 @@
 # Contract: Photo deletion after 30 days
-Status: building
+Status: on-dev
 Base: 2435c4ecd2
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be60813fbfb2c684ffc79bf4
