@@ -1,5 +1,5 @@
 # Contract: Skin choice for the event
-Status: building
+Status: on-dev
 Base: e5b78d5722
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40dc62b4be6081b49442f2a569c4c85d
