@@ -1,5 +1,5 @@
 # Contract: Partner report with photo links
-Status: building
+Status: on-dev
 Base: a38bb0e8ad
 Approved: 2026-11-03 by Manu
 Tracker: https://app.notion.com/p/40cc62b4be6081fda9add91977790015
