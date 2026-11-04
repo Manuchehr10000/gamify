@@ -203,7 +203,8 @@ class Contract:
             if re.match(r"^\s*\**(Screens|Endpoints|Tables)\**\s*:", line, re.I):
                 die(f"contract {self.name}: the count after `{line.strip().split(':')[0]}:` must be a number")
             b = re.match(r"^\s*[-*]\s+(.+?)\s*$", line)
-            item = re.sub(r"[`*]", "", b.group(1)).strip() if b else ""
+            # Drop code and bold marks only: a lone `*` is a catch-all route, a real item
+            item = re.sub(r"`|\*\*", "", b.group(1)).strip() if b else ""
             if b and current and item and not PLACEHOLDER_RE.fullmatch(item):
                 self.size[current][1].append(item)
         missing = [k for k in ("screens", "endpoints", "tables") if k not in self.size]

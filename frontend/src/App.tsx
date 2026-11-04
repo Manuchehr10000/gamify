@@ -1,4 +1,4 @@
-import { Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes } from 'react-router-dom'
 import { AdminGuests } from './pages/AdminGuests'
 import { AdminLive } from './pages/AdminLive'
 import { AdminSettings } from './pages/AdminSettings'
@@ -37,6 +37,8 @@ export default function App() {
       <Route path="/stand/:code" element={<Stand />} />
       <Route path="/moderate" element={<Moderate />} />
       <Route path="/hall" element={<Hall />} />
+      {/* The bare address and any unknown one open the guest app; replace keeps Back off the empty page */}
+      <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>
   )
 }
