@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api, ApiError, tokens } from '../api'
 import type { ShelfBadge } from '../badges'
-import { HomeScreenGuide } from '../components/console/game'
+import { DeletePhoto, HomeScreenGuide } from '../components/console/game'
 import { BadgeTile, SectionHeading } from '../components/console/rewards'
 import { Amount, Button, Card, Loading, MessageCard, PageHeader, Screen, StatusChip } from '../components/console/ui'
 import { needsHomeScreen, useLoginInAddress } from '../push'
@@ -18,6 +18,11 @@ type Entry = {
   bonus: number
   // A moderator rejected it and took its points and coins back
   rejected: boolean
+  // The guest deleted its photo before a decision: withdrawn, its points and coins taken back
+  withdrawn: boolean
+  // The task's photo the guest may delete, and whether it still waits for a moderator
+  photo_id: number | null
+  photo_undecided: boolean
   at: string
 }
 type ProfileData = {
@@ -95,7 +100,7 @@ export function Profile() {
       ) : (
         <ul className="gc-list-group">
           {profile.history.map((e, i) => (
-            <li key={i}><HistoryRow entry={e} /></li>
+            <li key={i}><HistoryRow entry={e} onDeleted={load} /></li>
           ))}
         </ul>
       )}
@@ -105,10 +110,10 @@ export function Profile() {
 
 // What happened and what it earned or cost; a purchase reads «Покупка в маркете» and «−30 монет» (the API sends
 // the coins spent below zero). No time: the history shows none
-function HistoryRow({ entry: e }: { entry: Entry }) {
+function HistoryRow({ entry: e, onDeleted }: { entry: Entry; onDeleted: () => void }) {
   const { t } = useTranslation()
   return (
-    <div className={`gc-history-row ${e.rejected ? 'gc-history-row--rejected' : ''}`}>
+    <div className={`gc-history-row ${e.rejected || e.withdrawn ? 'gc-history-row--rejected' : ''}`}>
       <p className="gc-history-row__title gc-body">{e.kind === 'arrival' ? t('profile.arrival') : e.text}</p>
       {e.kind === 'buy' ? (
         <p className="gc-history-row__line">
@@ -121,7 +126,11 @@ function HistoryRow({ entry: e }: { entry: Entry }) {
           {e.coins !== 0 && <Amount kind="coins" count={e.coins} size="s" signed />}
           {e.bonus > 0 && <span className="gc-history-row__bonus gc-body-s">{t('profile.bonus', { count: e.bonus })}</span>}
           {e.rejected && <StatusChip tone="danger" icon="x">{t('profile.rejected')}</StatusChip>}
+          {e.withdrawn && <StatusChip tone="muted" icon="x">{t('profile.withdrawn')}</StatusChip>}
         </p>
+      )}
+      {e.photo_id !== null && (
+        <DeletePhoto key={e.photo_id} photoId={e.photo_id} undecided={e.photo_undecided} onDeleted={onDeleted} />
       )}
     </div>
   )

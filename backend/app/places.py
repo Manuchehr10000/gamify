@@ -1,6 +1,7 @@
 """Task limits: a task with «Лимит» N can be done by N guests in all. A guest holds a place in it with
-- a photo or text task: an open claim (piece 14) still in time, or a submission not rejected with a penalty
-  («Отклонить — переснять» keeps the place, so that guest may send again even when the task is full);
+- a photo or text task: an open claim (piece 14) still in time, or a submission not rejected with a penalty nor
+  withdrawn by the guest («Отклонить — переснять» keeps the place, so that guest may send again even when the task
+  is full);
 - a quiz: an attempt, taken at «Начать» so nobody is cut off mid-timer;
 - a QR, link or market task: having done it.
 A place is checked and taken in one locked step (take), so two guests can't both take the last one."""
@@ -13,6 +14,9 @@ from app import ledger, stages
 from app.models import Claim, QuizAttempt, ScoreEvent, Submission, Task
 
 SUBMIT_METHODS = {"photo", "text", "photo_text"}
+# A submission rejected with a penalty, or withdrawn by the guest: its award stands (the task stays closed) but it
+# counts for nothing: no place in the limit, no badge, no completion
+CLOSED = ("penalty", "withdrawn")
 
 
 def holders(db: DbSession, tasks: Iterable[Task]) -> dict[int, set[int]]:
@@ -26,12 +30,12 @@ def holders(db: DbSession, tasks: Iterable[Task]) -> dict[int, set[int]]:
     if submit:
         pairs += db.execute(select(Claim.task_id, Claim.guest_id).where(
             Claim.task_id.in_(submit), Claim.state == "open", Claim.expires_at > stages.now())).all()
-        # A penalty is final (the task stays closed): it frees the place even if a retake came before it
+        # A penalty or a withdrawal is final (the task stays closed): it frees the place even if a retake came before
         penalty = aliased(Submission)
         pairs += db.execute(select(Submission.task_id, Submission.guest_id).where(
-            Submission.task_id.in_(submit), Submission.status != "penalty",
+            Submission.task_id.in_(submit), Submission.status.not_in(CLOSED),
             ~exists().where(and_(penalty.task_id == Submission.task_id, penalty.guest_id == Submission.guest_id,
-                                 penalty.status == "penalty")))).all()
+                                 penalty.status.in_(CLOSED))))).all()
     if quiz:
         pairs += db.execute(select(QuizAttempt.task_id, QuizAttempt.guest_id)
                             .where(QuizAttempt.task_id.in_(quiz))).all()

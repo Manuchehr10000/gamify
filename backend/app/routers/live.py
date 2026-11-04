@@ -1,7 +1,7 @@
 import csv
 import io
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, exists, func, or_, select, union
 from sqlalchemy.orm import Session as DbSession
 
-from app import config, ledger, photos, push, rating, settings, stages
+from app import config, ledger, photos, places, push, rating, settings, stages
 from app.auth import require_role
 from app.db import get_db
 from app.models import (Guest, LogoShow, Partner, Prize, Redemption, ScoreEvent, Session, Stage, Submission,
@@ -24,10 +24,10 @@ router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_role("admi
 
 def completions():
     """(guest_id, task_id) for every task a guest has done. A task sent back for a retake has its award reversed;
-    a submission rejected with a penalty keeps its award, so it is left out here."""
+    a submission rejected with a penalty, or withdrawn by the guest, keeps its award, so it is left out here."""
     # Kept as text: the task's ID after «task:», compared with the ID written out, never cast
     task_id = func.substr(ScoreEvent.reason, 6)
-    penalized = exists().where(Submission.guest_id == ScoreEvent.guest_id, Submission.status == "penalty",
+    penalized = exists().where(Submission.guest_id == ScoreEvent.guest_id, Submission.status.in_(places.CLOSED),
                                cast(Submission.task_id, String) == task_id)
     return (select(ScoreEvent.guest_id.label("guest_id"), task_id.label("task_id"), ScoreEvent.created_at.label("at"))
             .where(ScoreEvent.reason.like("task:%"), ledger.standing(), ~penalized).subquery())
@@ -267,6 +267,21 @@ def partner_report(partner_id: int, db: DbSession = Depends(get_db)) -> Response
     # The name is set by the page; a Cyrillic header would not pass
     return Response(out.getvalue(), media_type=XLSX,
                     headers={"Content-Disposition": f'attachment; filename="partner-{p.id}.xlsx"'})
+
+
+class PhotoDeletion(BaseModel):
+    # The day every photo is deleted; None with no stages and no date set
+    date: date | None
+    # Photos still kept
+    count: int
+    # From 7 days before: the banner shows on the admin pages and the date can't be changed
+    locked: bool
+
+
+@router.get("/photo-deletion")
+def photo_deletion(db: DbSession = Depends(get_db)) -> PhotoDeletion:
+    """The admin pages' banner: «1 240 фото будут удалены 15 января», live."""
+    return PhotoDeletion(date=photos.delete_date(db), count=photos.remaining(db), locked=photos.locked(db))
 
 
 class Mismatch(BaseModel):

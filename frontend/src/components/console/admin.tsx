@@ -1,10 +1,11 @@
 import { useId, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { NavLink } from 'react-router-dom'
+import { usePhotoDeletion } from '../../admin'
 import { hhmm, type Stage } from '../../feed'
 import type { IconName } from './glyphs'
 import { InlineConfirm } from './rewards'
-import { Button, ConsoleTheme, Icon, Spinner } from './ui'
+import { Button, Callout, ConsoleTheme, Icon, Spinner } from './ui'
 
 // Every admin page, in the menu's order
 const NAV: { to: string; label: string; icon: IconName }[] = [
@@ -18,6 +19,7 @@ const NAV: { to: string; label: string; icon: IconName }[] = [
 // scrolls sideways below it), one title with its actions, then the page. Printing leaves only the page content.
 export function AdminShell({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
   const { t } = useTranslation()
+  const deletion = usePhotoDeletion().notice
   return (
     <div className="gc-root gc-admin-shell gc-ribs">
       <ConsoleTheme theme="label" />
@@ -47,6 +49,7 @@ export function AdminShell({ title, actions, children }: { title: string; action
             <h1 className="gc-admin-shell__title gc-display-l">{title}</h1>
             {actions && <div className="gc-admin-shell__actions">{actions}</div>}
           </div>
+          {deletion && <Callout tone="warning" icon="alert">{deletion}</Callout>}
           <div className="gc-admin-shell__body">{children}</div>
         </div>
       </main>

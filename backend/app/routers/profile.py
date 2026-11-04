@@ -10,7 +10,7 @@ from app.auth import current_guest
 from app.db import get_db
 from app.models import Guest, Prize, ScoreEvent, Submission, Task
 from app.routers.badge import ARRIVAL
-from app.routers.feed import totals
+from app.routers.feed import photos, totals
 from app.routers.market import local
 from app.routers.quiz import settle
 
@@ -28,6 +28,11 @@ class Entry(BaseModel):
     bonus: int = 0
     # A moderator rejected it: its points and coins were taken back
     rejected: bool = False
+    # The guest deleted its photo before a decision: withdrawn, its points and coins taken back
+    withdrawn: bool = False
+    # A task's photo the guest may delete (their latest that still has one), and whether it waits for a moderator
+    photo_id: int | None = None
+    photo_undecided: bool = False
     at: datetime
 
 
@@ -67,20 +72,26 @@ def profile(guest: Guest = Depends(current_guest), db: DbSession = Depends(get_d
     events = list(db.scalars(select(ScoreEvent).where(ScoreEvent.guest_id == guest.id, ledger.standing())
                              .order_by(ScoreEvent.created_at.desc(), ScoreEvent.id.desc())))
     ids = {kind: {int(e.reason.split(":")[1]) for e in events if e.reason.startswith(kind + ":")}
-           for kind in ("task", "bonus", "penalty", "buy")}
+           for kind in ("task", "bonus", "penalty", "withdraw", "buy")}
     # Rows hidden from the file since stay in the history
     tasks = dict(db.execute(select(Task.id, Task.text).where(Task.id.in_(ids["task"]))).all())
     prizes = dict(db.execute(select(Prize.id, Prize.name).where(Prize.id.in_(ids["buy"]))).all())
     # A moderator's decision is keyed by the submission; it belongs to the submission's task
     of_task = dict(db.execute(select(Submission.id, Submission.task_id)
-                              .where(Submission.id.in_(ids["bonus"] | ids["penalty"]))).all())
+                              .where(Submission.id.in_(ids["bonus"] | ids["penalty"] | ids["withdraw"]))).all())
+    kept = photos(db, guest.id)
+    # Tasks whose submission the guest withdrew by deleting its photo
+    withdrawals = {of_task.get(i) for i in ids["withdraw"]}
     entries: dict[str, Entry] = {}
     history: list[Entry] = []
     for e in events:
         kind, _, ref = e.reason.partition(":")
         if kind == "task":
+            photo_id, photo_undecided = kept.get(int(ref), (None, False))
+            withdrawn = int(ref) in withdrawals
             entries[e.reason] = Entry(kind="task", text=tasks.get(int(ref), ""), points=e.points, coins=e.coins,
-                                      at=local(e.created_at))
+                                      at=local(e.created_at), withdrawn=withdrawn, photo_id=photo_id,
+                                      photo_undecided=photo_undecided)
             history.append(entries[e.reason])
         elif kind == "buy":
             history.append(Entry(kind="buy", text=prizes.get(int(ref), ""), points=e.points, coins=e.coins,

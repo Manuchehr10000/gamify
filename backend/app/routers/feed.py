@@ -54,8 +54,13 @@ class TaskOut(BaseModel):
     timer_seconds: int | None = None
     # A quiz with «Требует» whose hall QR the guest hasn't scanned yet
     locked: bool = False
-    # A moderator's word on the guest's submission: retake (send again) · penalty (rejected, task closed) · ""
+    # A moderator's word on the guest's submission: retake (send again) · penalty (rejected, task closed) ·
+    # withdrawn (the guest deleted the photo before a decision: task closed, its points taken back) · ""
     review: str = ""
+    # The guest's latest submission that still has a photo, for «Удалить фото»; None without one
+    photo_id: int | None = None
+    # That submission waits for a moderator: deleting its photo withdraws it (the confirmation says so)
+    photo_undecided: bool = False
 
 
 class FeedPush(BaseModel):
@@ -109,8 +114,8 @@ def _done(db: DbSession, guest: Guest) -> set[str]:
     return ledger.done(db, guest.id)
 
 
-# What the guest is told about a decision; accepted and bonus need no word
-REVIEWS = {"retake", "penalty"}
+# What the guest is told about a decision or their own withdrawal; accepted and bonus need no word
+REVIEWS = {"retake", "penalty", "withdrawn"}
 
 
 def _reviews(db: DbSession, guest: Guest) -> dict[int, str]:
@@ -118,6 +123,14 @@ def _reviews(db: DbSession, guest: Guest) -> dict[int, str]:
     rows = db.execute(select(Submission.task_id, Submission.status).where(Submission.guest_id == guest.id)
                       .order_by(Submission.id))
     return {task_id: status for task_id, status in rows}
+
+
+def photos(db: DbSession, guest_id: int) -> dict[int, tuple[int, bool]]:
+    """Each task's latest submission of the guest's that still has a photo: (its ID, undecided). Once that photo is
+    deleted, an older one (sent back for a retake) is next."""
+    rows = db.execute(select(Submission.task_id, Submission.id, Submission.status)
+                      .where(Submission.guest_id == guest_id, Submission.photo.is_not(None)).order_by(Submission.id))
+    return {task_id: (sid, status == "") for task_id, sid, status in rows}
 
 
 def partners(db: DbSession) -> dict[int, Partner]:
@@ -135,6 +148,8 @@ class View:
     stage_id: int | None
     # Tasks whose places are all taken by others
     full: set[int]
+    # Each task's photo the guest may delete: (submission ID, undecided)
+    photos: dict[int, tuple[int, bool]]
 
     def done_task(self, t: Task) -> bool:
         return task_reason(t.id) in self.done
@@ -152,7 +167,7 @@ class View:
 def view(db: DbSession, guest: Guest, tasks: list[Task]) -> View:
     d = stages.day(db)
     return View(_done(db, guest), _reviews(db, guest), partners(db), d.current.id if d.current else None,
-                places.full(db, guest.id, tasks))
+                places.full(db, guest.id, tasks), photos(db, guest.id))
 
 
 def _state(t: Task, v: View) -> str:
@@ -164,13 +179,14 @@ def _state(t: Task, v: View) -> str:
 def _out(t: Task, v: View) -> TaskOut:
     review = v.reviews.get(t.id, "")
     partner = v.by_id.get(t.partner_id)
+    photo_id, photo_undecided = v.photos.get(t.id, (None, False))
     return TaskOut(id=t.id, type=t.type, text=t.text, points=t.points, coins=t.coins,
                    partner_name=partner.name if partner else "", done=v.done_task(t), state=_state(t, v),
                    method=t.method, link=t.link,
                    window_end=t.window_end.astimezone(EVENT_TZ) if t.window_end else None,
                    timer_seconds=t.timer_seconds,
                    locked=t.requires_task_id is not None and task_reason(t.requires_task_id) not in v.done,
-                   review=review if review in REVIEWS else "")
+                   review=review if review in REVIEWS else "", photo_id=photo_id, photo_undecided=photo_undecided)
 
 
 def task_out(db: DbSession, guest: Guest, t: Task) -> TaskOut:

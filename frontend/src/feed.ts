@@ -21,8 +21,12 @@ export type Task = {
   timer_seconds: number | null
   // A quiz whose hall QR («Требует») the guest hasn't scanned yet
   locked: boolean
-  // A moderator's word: retake (send again) · penalty (rejected, task closed) · ''
-  review: '' | 'retake' | 'penalty'
+  // A moderator's word: retake (send again) · penalty (rejected, task closed) · withdrawn (the guest deleted the
+  // photo before a decision: task closed, its points taken back) · ''
+  review: '' | 'retake' | 'penalty' | 'withdrawn'
+  // The guest's photo for «Удалить фото», and whether it still waits for a moderator; a saved copy may have neither
+  photo_id?: number | null
+  photo_undecided?: boolean
 }
 export type Feed = {
   points: number

@@ -19,6 +19,9 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rst
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 # The Cloudflare Worker's shared secret for POST /api/jobs/run; unset: the job endpoint refuses every call
 JOBS_SECRET = os.environ.get("JOBS_SECRET", "")
+# How many days Neon's restore history (point-in-time restore) keeps old data: the photo deletion job logs the day
+# the photos leave it too. Infrastructure, not a game setting
+NEON_RESTORE_DAYS = int(os.environ.get("NEON_RESTORE_DAYS") or "7")
 # Web push (VAPID): the public key goes to phones in /api/me, the private key signs each push, the subject is a
 # mailto: or https: address the push services can reach. Any one unset: phones are never asked and nothing is sent
 VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")

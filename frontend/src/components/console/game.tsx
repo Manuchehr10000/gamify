@@ -1,9 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { api, tokens } from '../../api'
 import { hhmm, multiplierMark, type Award, type Feed, type Stage, type Task } from '../../feed'
 import type { FeedPush } from '../../push'
 import { splitNumber, typeIcon, type IconName } from './glyphs'
+import { InlineConfirm } from './rewards'
 import { Amount, Button, Callout, Icon, Stripe } from './ui'
 
 // The top of the feed: the level and how far the next one is, the points and coins; it opens the profile
@@ -104,6 +106,47 @@ export function ReviewNote({ task }: { task: Task }) {
   if (task.review === 'retake' && !task.done) return <Callout tone="warning" icon="retry">{t('review.retake')}</Callout>
   if (task.review === 'penalty') return <Callout tone="danger">{t('review.penalty')}</Callout>
   return null
+}
+
+// «Удалить фото» on the task page and in the profile, with an in-card confirmation. An undecided photo's
+// confirmation says the task will be withdrawn and its points and coins taken back; the server decides by the
+// submission's status at that moment
+export function DeletePhoto({ photoId, undecided, onDeleted }:
+  { photoId: number; undecided: boolean; onDeleted: () => void }) {
+  const { t } = useTranslation()
+  const [asking, setAsking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
+
+  async function remove() {
+    setBusy(true)
+    setError(false)
+    try {
+      await api(`/api/submissions/${photoId}/photo`, { token: tokens.get('guest'), method: 'DELETE' })
+      setAsking(false)
+      onDeleted()
+    } catch {
+      setError(true)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {asking ? (
+        <InlineConfirm
+          question={t(undecided ? 'photo.confirmUndecided' : 'photo.confirm')}
+          busy={busy}
+          onConfirm={() => void remove()}
+          onCancel={() => setAsking(false)}
+        />
+      ) : (
+        <Button variant="outline" icon="x" onClick={() => setAsking(true)}>{t('photo.delete')}</Button>
+      )}
+      {error && <Callout tone="danger">{t('common.error')}</Callout>}
+    </div>
+  )
 }
 
 export function StageBanner({ stage, onClose }: { stage: Stage; onClose: () => void }) {

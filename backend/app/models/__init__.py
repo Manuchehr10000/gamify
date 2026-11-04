@@ -77,8 +77,8 @@ class ScoreEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     guest_id: Mapped[int] = mapped_column(ForeignKey("guests.id", ondelete="CASCADE"))
-    # What it is for: task:{id}, bonus:{submission}, retake:{submission}, penalty:{submission}, buy:{prize},
-    # forum_arrival. One open award per reason per guest: opening the link again or on a second phone adds nothing
+    # What it is for: task:{id}, bonus:{submission}, retake:{submission}, penalty:{submission},
+    # withdraw:{submission}, buy:{prize}, forum_arrival. One open award per reason per guest: opening the link again or on a second phone adds nothing
     reason: Mapped[str] = mapped_column(String(32))
     # arrival, task, bonus, retake, penalty, buy, speed, badge or withdraw
     action: Mapped[str] = mapped_column(String(16))
@@ -228,7 +228,8 @@ class Submission(Base):
     thumb: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
     text: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    # "" waiting for a moderator · accepted · bonus · retake (task reopened) · penalty (task closed, no points)
+    # "" waiting for a moderator · accepted · bonus · retake (task reopened) · penalty (task closed, no points) ·
+    # withdrawn (the guest deleted the photo before a decision: task closed, no points)
     status: Mapped[str] = mapped_column(String(16), default="")
     moderator: Mapped[str] = mapped_column(String(100), default="")
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

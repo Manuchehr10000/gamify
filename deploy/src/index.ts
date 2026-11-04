@@ -12,6 +12,7 @@ interface Env {
   VAPID_PUBLIC_KEY: string
   VAPID_PRIVATE_KEY: string
   VAPID_SUBJECT: string
+  NEON_RESTORE_DAYS: string
 }
 
 // Runs the FastAPI backend (deploy/Dockerfile). Static assets serve the frontend;
@@ -34,6 +35,8 @@ export class Backend extends Container<Env> {
       VAPID_PUBLIC_KEY: env.VAPID_PUBLIC_KEY,
       VAPID_PRIVATE_KEY: env.VAPID_PRIVATE_KEY,
       VAPID_SUBJECT: env.VAPID_SUBJECT,
+      // Days Neon's restore history keeps old data (wrangler.jsonc vars): the photo deletion log's last date
+      NEON_RESTORE_DAYS: env.NEON_RESTORE_DAYS,
       // App and API share one address, so badge links and CORS both point at it
       PUBLIC_BASE_URL: env.APP_URL,
       FRONTEND_URL: env.APP_URL,

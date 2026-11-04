@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from sqlalchemy import String, cast, delete, exists, func, select, update
 from sqlalchemy.orm import Session as DbSession
 
-from app import ledger, stages
+from app import ledger, places, stages
 from app.models import Badge, BadgeAward, Guest, Partner, QuizAttempt, ScoreEvent, Submission, Task
 from app.task_file import kind_keys
 
@@ -31,8 +31,9 @@ def _matches(b: Badge, keys: set[str], type_: str, method: str, partner: int | N
 
 
 def _rejected():
-    """The award's submission was rejected by a moderator: it never counts towards a badge."""
-    return exists().where(Submission.guest_id == ScoreEvent.guest_id, Submission.status == "penalty",
+    """The award's submission was rejected by a moderator, or withdrawn by the guest: it never counts towards a
+    badge."""
+    return exists().where(Submission.guest_id == ScoreEvent.guest_id, Submission.status.in_(places.CLOSED),
                           cast(Submission.task_id, String) == func.split_part(ScoreEvent.reason, ":", 2))
 
 

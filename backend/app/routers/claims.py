@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
-from app import badges, claims, ledger, photos, places, settings, stages
+from app import badges, claims, ledger, levels, photos, places, settings, stages
 from app.auth import current_guest
 from app.db import get_db
 from app.models import Claim, Guest, Submission, Task
@@ -155,3 +155,41 @@ def files(claim_id: str = Path(pattern=CLAIM_ID), photo: UploadFile = File(), th
     if c.state != "open" or claims.expired(c):
         return _repeat(db, guest, t, c)
     return _pay(db, guest, t, c, photo_data, thumb_data)
+
+
+class Deleted(BaseModel):
+    # deleted: the photo is gone, points and coins stay as the moderator left them · withdrawn: it was undecided, so
+    # the submission is withdrawn, its points and coins taken back and its place in the task's limit freed
+    result: str
+    task: TaskOut
+
+
+@router.delete("/api/submissions/{submission_id}/photo")
+def delete_photo(submission_id: int, guest: Guest = Depends(current_guest),
+                 db: DbSession = Depends(get_db)) -> Deleted:
+    """The guest deletes their own photo. Checked under the submission's lock, as a moderator's decision is: a
+    decision made while the guest was confirming is never lost, and decides which of the two this is."""
+    s = db.scalar(select(Submission).where(Submission.id == submission_id).with_for_update())
+    # Another guest's submission is unknown here, as if it didn't exist
+    if s is None or s.guest_id != guest.id or not db.scalar(
+            select(Submission.photo.is_not(None)).where(Submission.id == s.id)):
+        raise HTTPException(404, "photo_not_found")
+    result = "deleted"
+    if s.status == "":
+        result = "withdrawn"
+        # Guests a withdrawal may move in or out of a «Первые N» badge are locked first, in id order, as a rejection
+        touched = sorted({s.guest_id, *badges.first_n_guests(db, s.task_id)})
+        db.execute(select(Guest.id).where(Guest.id.in_(touched)).order_by(Guest.id).with_for_update())
+        award = ledger.award(db, s.guest_id, task_reason(s.task_id))
+        if award:
+            # As a penalty: the award stays, so the task stays closed; this takes its points and coins back. Coins
+            # may go below zero if they were spent
+            ledger.take_back(db, award, f"withdraw:{s.id}", "withdraw", reverse=False)
+        s.status = "withdrawn"
+        db.flush()
+        levels.dropped(db, s.guest_id)
+        badges.sync(db, touched, actor=s.guest_id)
+    # The photo and its thumbnail go; the text, the submission and its points rows stay. Its partner link goes too
+    s.photo, s.thumb, s.photo_token = None, None, None
+    db.commit()
+    return Deleted(result=result, task=task_out(db, guest, db.get(Task, s.task_id)))

@@ -26,7 +26,9 @@
       ],
       "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] },
       // The job runner: one call a minute to POST /api/jobs/run (keeps the container awake all day)
-      "triggers": { "crons": ["* * * * *"] }
+      "triggers": { "crons": ["* * * * *"] },
+      // Days Neon's restore history keeps old data (not a secret): the photo deletion log's last date
+      "vars": { "NEON_RESTORE_DAYS": "7" }
     },
     // main branch → production (the Live URL)
     "production": {
@@ -41,7 +43,8 @@
         }
       ],
       "durable_objects": { "bindings": [{ "name": "BACKEND", "class_name": "Backend" }] },
-      "triggers": { "crons": ["* * * * *"] }
+      "triggers": { "crons": ["* * * * *"] },
+      "vars": { "NEON_RESTORE_DAYS": "7" }
     }
   }
 }

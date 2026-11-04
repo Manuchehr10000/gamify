@@ -5,15 +5,16 @@ from collections.abc import Callable
 from sqlalchemy import text, update
 from sqlalchemy.orm import Session as DbSession
 
-from app import claims, push, stages
+from app import claims, photos, push, stages
 from app.db import SessionLocal
 from app.models import JobRun
 
-# (name, job) in the order they run. A later piece appends its job here: photo deletion
+# (name, job) in the order they run
 # Each job returns a short note of what it did, kept in the run log
 JOBS: list[tuple[str, Callable[[DbSession], str]]] = [
     ("lapsed_claims", claims.lapse),
     ("push", push.run),
+    (photos.JOB, photos.delete_job),
 ]
 
 # One run at a time: a run that finds the previous one still going is logged as skipped

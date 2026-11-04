@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { api, ApiError, tokens } from '../api'
-import { ResultCard, Reward, ReviewNote, TaskTypeTag } from '../components/console/game'
+import { DeletePhoto, ResultCard, Reward, ReviewNote, TaskTypeTag } from '../components/console/game'
 import { Button, Callout, Card, Checkbox, Icon, Loading, MessageCard, PageHeader, Screen, Spinner } from '../components/console/ui'
 import { cache, type Award, type Task } from '../feed'
 import { forgetUpload, isWaiting, prepare, send, useUpload, type Upload } from '../uploads'
@@ -19,6 +19,8 @@ function Action({ task, onAward }: { task: Task; onAward: (a: Award) => void }) 
   const upload = useUpload(task.id)
 
   if (task.done && task.review === 'penalty') return <ReviewNote task={task} />
+  // The guest deleted the photo before a decision: in place of the state label, as a penalty's note
+  if (task.done && task.review === 'withdrawn') return <Callout tone="locked" icon="x">{t('review.withdrawn')}</Callout>
   // A finished quiz opens its result
   if (task.done && task.method === 'quiz') {
     return <Button to={`/app/quiz/${task.id}`} variant="outline" icon="check">{t('quiz.seeResult')}</Button>
@@ -272,6 +274,9 @@ export function TaskDetail() {
         <p className="gc-body-l m-0 whitespace-pre-line [overflow-wrap:anywhere]">{task.text}</p>
         <Reward task={task} size="m" />
         <Action task={task} onAward={setAward} />
+        {task.photo_id != null && (
+          <DeletePhoto key={task.photo_id} photoId={task.photo_id} undecided={!!task.photo_undecided} onDeleted={load} />
+        )}
       </Card>
     </Screen>
   )

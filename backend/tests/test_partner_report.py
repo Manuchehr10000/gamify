@@ -188,16 +188,22 @@ def test_a_photo_link_shows_the_photo_until_the_deletion_date(client, admin, clo
     # Default: the last stage ends 13.12.2026 → links work through 11.01.2027
     monkeypatch.setattr(stages, "now", lambda: datetime(2027, 1, 11, 23, 59, tzinfo=DUSHANBE))
     assert open_photo(client, link).status_code == 200
-    monkeypatch.setattr(stages, "now", lambda: datetime(2027, 1, 12, 0, 0, tzinfo=DUSHANBE))
+    after = lambda: monkeypatch.setattr(  # noqa: E731
+        stages, "now", lambda: datetime(2027, 1, 12, 0, 0, tzinfo=DUSHANBE))
+    after()
     assert open_photo(client, link).status_code == 404
-    # The admin's date wins, checked on every open
+    # The admin's date wins, checked on every open. It is set during the forum: from 7 days before it, it is locked
+    clock("12:00")
     assert set_date(client, admin, "2027-02-01").status_code == 200
+    after()
     assert open_photo(client, link).status_code == 200
+    clock("12:00")
     assert set_date(client, admin, "2027-01-12").status_code == 200
+    after()
     assert open_photo(client, link).status_code == 404
     # A made-up token, or the submission's ID, opens nothing
-    assert set_date(client, admin, "").status_code == 200
     clock("12:00")
+    assert set_date(client, admin, "").status_code == 200
     assert open_photo(client, "/api/photos/nope").status_code == 404
     assert open_photo(client, f"/api/photos/{submission_ids()[0]}").status_code == 404
 

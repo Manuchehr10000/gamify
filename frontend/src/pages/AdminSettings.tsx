@@ -4,7 +4,7 @@ import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { z } from 'zod'
 import type { TFunction } from 'i18next'
-import { confirmed } from '../admin'
+import { confirmed, usePhotoDeletion } from '../admin'
 import { api, ApiError, download, tokens } from '../api'
 import { StaffLogin } from '../components/StaffLogin'
 import { Button, Card, Input } from '../components/ui'
@@ -81,7 +81,6 @@ function errorText(t: TFunction, err: unknown, label: (field: string) => string)
 }
 
 export function AdminSettings() {
-  const { t } = useTranslation()
   const [token, setToken] = useState(tokens.get('admin'))
   const [tab, setTab] = useState<Tab>('tasks')
 
@@ -91,11 +90,22 @@ export function AdminSettings() {
   }, [])
 
   if (!token) return <StaffLogin role="admin" onLogin={setToken} />
+  return <SettingsPage token={token} tab={tab} setTab={setTab} loggedOut={loggedOut} />
+}
+
+function SettingsPage({ token, tab, setTab, loggedOut }:
+  { token: string; tab: Tab; setTab: (tab: Tab) => void; loggedOut: () => void }) {
+  const { t } = useTranslation()
+  // The same notice as the other admin pages: once it shows, the deletion date is locked
+  const { notice: deletion, locked: dateLocked } = usePhotoDeletion()
 
   return (
     <main className="min-h-dvh bg-slate-50 px-4 py-8 text-slate-900">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
         <h1 className="text-xl font-semibold">{t('settingsAdmin.title')}</h1>
+        {deletion && (
+          <p role="status" className="rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 ring-1 ring-amber-200">{deletion}</p>
+        )}
         <nav className="flex flex-wrap gap-2">
           {TABS.map((k) => (
             <button
@@ -107,7 +117,7 @@ export function AdminSettings() {
             </button>
           ))}
         </nav>
-        {tab === 'settings' && <Settings token={token} loggedOut={loggedOut} />}
+        {tab === 'settings' && <Settings token={token} loggedOut={loggedOut} dateLocked={dateLocked} />}
         {tab === 'push' && <PushSettings token={token} loggedOut={loggedOut} />}
         {tab === 'log' && <Log token={token} loggedOut={loggedOut} />}
         {tab !== 'settings' && tab !== 'log' && tab !== 'push' && <ListTab key={tab} kind={tab} token={token} loggedOut={loggedOut} />}
@@ -450,7 +460,7 @@ function LogoUpload({ token, partner, onDone, loggedOut }: TabProps & { partner:
   )
 }
 
-function Settings({ token, loggedOut }: TabProps) {
+function Settings({ token, loggedOut, dateLocked }: TabProps & { dateLocked: boolean }) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<Setting[] | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -499,7 +509,10 @@ function Settings({ token, loggedOut }: TabProps) {
   return (
     <Card className="flex flex-col gap-4">
       {error && <p className="text-sm text-red-600">{error}</p>}
-      {rows.map((s) => (
+      {rows.map((s) => {
+        // From the banner on, the photo deletion date stays as announced
+        const locked = dateLocked && s.key === 'photo_delete_date'
+        return (
         <div key={s.key} className="flex flex-col gap-1 border-b border-slate-100 pb-4 last:border-0 last:pb-0">
           <span className="text-sm font-medium">{label(s.key)}</span>
           <div className="flex items-center gap-3">
@@ -511,19 +524,23 @@ function Settings({ token, loggedOut }: TabProps) {
               step={s.integer ? 1 : 0.1}
               value={drafts[s.key] ?? ''}
               onChange={(e) => setDrafts((d) => ({ ...d, [s.key]: e.target.value }))}
+              disabled={locked}
             />
-            <Button variant="outline" onClick={() => save(s)} disabled={drafts[s.key] === draft(s)}>
+            <Button variant="outline" onClick={() => save(s)} disabled={locked || drafts[s.key] === draft(s)}>
               {t('settingsAdmin.save')}
             </Button>
             {saved === s.key && <span className="text-sm text-emerald-700">{t('settingsAdmin.saved')}</span>}
           </div>
           <span className="text-xs text-slate-500">
-            {s.text === null
-              ? `${s.min}–${s.max} · ${t(`settingsAdmin.effect.${s.effect}`)}`
-              : `${t('settingsAdmin.dateBlank')} · ${t(`settingsAdmin.effect.${s.effect}`)}`}
+            {locked
+              ? t('settingsAdmin.errors.photo_date_locked')
+              : s.text === null
+                ? `${s.min}–${s.max} · ${t(`settingsAdmin.effect.${s.effect}`)}`
+                : `${t('settingsAdmin.dateBlank')} · ${t(`settingsAdmin.effect.${s.effect}`)}`}
           </span>
         </div>
-      ))}
+        )
+      })}
     </Card>
   )
 }

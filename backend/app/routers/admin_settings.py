@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.orm import Session as DbSession
 
-from app import badges, changes, settings, stages
+from app import badges, changes, photos, settings, stages
 from app.admin_lists import KINDS, Kind, parse, refuse, row_out, schema, set_secret
 from app.auth import require_role
 from app.db import get_db
@@ -293,11 +293,20 @@ def _save_text(db: DbSession, admin: Staff, s: Setting, value: str | float) -> S
     """A text setting (a push text, or a date kept as YYYY-MM-DD): its length is checked against the limits, a date
     must be one; it applies from now on."""
     new = value.strip() if isinstance(value, str) else None
+    # Once admins are warned (7 days before), the deletion date stays as announced
+    if s.key == "photo_delete_date" and photos.locked(db):
+        db.rollback()
+        raise refuse("photo_date_locked", status=409)
     if settings.SETTINGS[s.key].date and new:
         try:
             new = date.fromisoformat(new).isoformat()
         except ValueError:
             raise refuse("bad_value", field=s.key) from None
+    # A new date, or a blank one falling back to the stages' default, leaves admins their 7 days' warning
+    if s.key == "photo_delete_date" and new is not None and photos.too_soon(
+            date.fromisoformat(new) if new else photos.default_date(db)):
+        db.rollback()
+        raise refuse("photo_date_too_soon", status=409)
     if new is None or not s.min_value <= len(new) <= s.max_value:
         raise refuse("length", field=s.key, min=int(s.min_value), max=int(s.max_value))
     if new == s.text_value:
