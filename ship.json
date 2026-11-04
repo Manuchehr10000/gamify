@@ -74,7 +74,7 @@
       "zod"
     ]
   },
-  "track": "railway",
+  "track": "cloudflare",
   "tracker": {
     "page": "https://app.notion.com/p/404c62b4be608118a813c030e979c548",
     "database": "https://app.notion.com/p/e7f458ff7abf4e4fb0da189f661a915b",
