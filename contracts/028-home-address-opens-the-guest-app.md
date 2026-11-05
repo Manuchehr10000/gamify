@@ -1,5 +1,5 @@
 # Contract: Home address opens the guest app
-Status: building
+Status: on-dev
 Base: 4307cf23fb
 Approved: 2026-11-04 by Manu
 Tracker: https://app.notion.com/p/40ec62b4be6081f58fc3f0aefb8dd77e
