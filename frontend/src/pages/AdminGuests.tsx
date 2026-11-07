@@ -76,7 +76,7 @@ export function AdminGuests() {
 
   return (
     <AdminShell
-      title={t('staff.adminTitle')}
+      title={t('staff.guestsTitle')}
       actions={(
         <Button variant="outline" icon="download" block={false} onClick={() => download('/api/admin/guests/export', token, 'guests.csv').catch(fail)}>
           {t('admin.download')}

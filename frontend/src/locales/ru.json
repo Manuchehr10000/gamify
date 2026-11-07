@@ -15,7 +15,8 @@
   },
   "staff": {
     "deskTitle": "Стойка регистрации",
-    "adminTitle": "Список гостей",
+    "adminTitle": "Администратор",
+    "guestsTitle": "Список гостей",
     "pin": "PIN-код",
     "password": "Пароль",
     "enter": "Войти",

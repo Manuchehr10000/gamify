@@ -87,7 +87,7 @@ def test_from_768px_the_menu_is_a_side_menu_with_woodgrain_trim():
 def test_the_menu_lists_every_admin_page_and_names_itself_for_screen_readers():
     links = re.findall(r"\{ to: '([^']+)', label: '([^']+)'", ADMIN)
     assert links == [
-        ("/admin/live", "live.title"), ("/admin/tasks", "tasksAdmin.title"), ("/admin/guests", "staff.adminTitle"),
+        ("/admin/live", "live.title"), ("/admin/tasks", "tasksAdmin.title"), ("/admin/guests", "staff.guestsTitle"),
         ("/admin/tasks/qr", "qrSheet.title")]
     labels = [RU[a][b] for _, key in links for a, b in [key.split(".")]]
     assert labels == ["Живые цифры", "Задания и этапы", "Список гостей", "QR-коды заданий"]
