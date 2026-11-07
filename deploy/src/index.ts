@@ -48,6 +48,23 @@ export class Backend extends Container<Env> {
 // before the request reaches the app (the runtime marks this retryable). Seen in wrangler dev
 // on the request after each badge redirect.
 const DROPPED = 'Error proxying request to container'
+// What it answers when the connection is lost mid-request («Network connection lost», e.g. the container restarted).
+// The app may already have run the request, so it is sent again only where a second run changes nothing: reads, and
+// the POSTs below, which answer a repeat from what the first one saved. Not here: /api/market/{id}/buy (a repeat says
+// already_bought), /api/scan and /api/tasks/{id}/complete (a repeat says already instead of the points), /api/feed/next
+// (moves the rotation twice) and every staff or admin write
+const DISCONNECTED = 'Container suddenly disconnected'
+const REPEATABLE_POSTS = [
+  /^\/api\/tasks\/\d+\/claim$/, // keyed by the claim id the phone made
+  /^\/api\/claims\/[^/]+\/files$/, // a repeat for the same claim pays nothing twice
+  /^\/api\/quiz\/\d+\/(start|answer|finish)$/, // one attempt per guest; a taken answer or a finished quiz is kept
+  /^\/api\/submissions\/\d+\/decision$/, // a decided submission answers already
+]
+
+function repeatable(method: string, path: string): boolean {
+  if (method === 'GET' || method === 'HEAD') return true
+  return method === 'POST' && REPEATABLE_POSTS.some((re) => re.test(path))
+}
 
 export default {
   async fetch(request: Request, env: Env) {
@@ -65,8 +82,12 @@ export default {
     const res = await container.fetch(request.clone())
     if (res.status !== 500) return res
     const body = await res.text()
-    if (!body.startsWith(DROPPED)) return new Response(body, res)
-    return container.fetch(request)
+    if (body.startsWith(DROPPED)) return container.fetch(request)
+    if (body.startsWith(DISCONNECTED) && repeatable(request.method, path)) {
+      console.warn(`retried after a lost connection: ${request.method} ${path}`)
+      return container.fetch(request)
+    }
+    return new Response(body, res)
   },
 
   // The cron in wrangler.jsonc, every minute: the backend runs each registered job and logs it in job_runs
