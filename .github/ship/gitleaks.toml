@@ -1,0 +1,7 @@
+# Ship kit: the rules the secret scan uses (D67). Written by /mg-ship-kit:setup and owned by the kit: don't edit it.
+# gitleaks' own default rules, with nothing switched off. The scan always passes this file, so a .gitleaks.toml in
+# the project is never read. A false alarm is cleared only by the owner, through `ship_check.py secret-allow` (D68).
+title = "Ship kit"
+
+[extend]
+useDefault = true
