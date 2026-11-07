@@ -1,6 +1,7 @@
 # Ship kit: the check GitHub runs on every push to dev and main, before anything deploys.
 # Written by /mg-ship-kit:setup and owned by the kit: don't edit it here. Rerun /mg-ship-kit:setup to update it.
-# dev:  the building piece passes the CTO check (size, stack, leftovers), and no code arrives outside a piece.
+# every push: no secret in the commits since the last pass (gitleaks, D67); other branches: ship-secrets.yml.
+# dev:  the building piece passes the CTO check (size, stack, leftovers) and its security review, and no code arrives outside a piece.
 # main: every piece has the client's verdict, the commit came through dev, and the check passed there.
 # Deploys wait for it: Railway's "Wait for CI", or your devops' deploy (see .github/ship/README.md).
 name: Ship check
@@ -30,6 +31,13 @@ jobs:
       - name: Find the backend and frontend
         id: dirs
         run: python3 .github/ship/ship_check.py ci-env >> "$GITHUB_OUTPUT"
+
+      - name: Install gitleaks (the version the kit pins, checked against its published checksum)
+        run: |
+          v=8.30.1
+          curl -sSfL -o /tmp/gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
 
       - name: Install vulture (the version the kit pins; install the same one locally)
         if: steps.dirs.outputs.python_dir != ''

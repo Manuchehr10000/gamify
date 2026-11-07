@@ -9,6 +9,13 @@ Subcommands (run from the project root, or pass --root):
   ci-env      print the backend and frontend folders for the CI workflow
   ci-install  copy the CI workflow, this script and the deploy notes into .github/
   pickup      save a contract taken from the tracker as contracts/NNN-name.md, status building
+  split       save the sub-contracts Claude wrote for a chain head as draft contracts, checked against the head
+  go          the owner read the split: every draft sub-piece becomes ready, in build order
+  chain-next  pick up the next ready sub-piece of a chain (status building)
+  chain-sync  move a head to on-dev once every sub-piece is on dev, or to dropped once every one is dropped
+  chain-status list a chain: its head and each sub-piece with its state
+  ci-wait     wait for GitHub's Ship check on a commit pushed to dev: 0 passed · 1 failed or timed out · 2 can't ask
+  set-tracker store a tracker row's URL in a contract (Code writes the rows of a chain's sub-pieces)
   check       run size + stack + leftovers against the building contract and print one screen
   size        count screens, endpoints and tables built since the contract's base commit
   stack       compare dependency files and new imports against the stack list
@@ -22,11 +29,27 @@ Subcommands (run from the project root, or pass --root):
   copy-mark   record that the tracker's copy now matches the repo file
   copy-render print the exact Notion text for a contract's tracker copy
   env-check   exit 1 when a commit carries an env file (.env, .env.*; the example files are allowed)
+  secret-scan  scan new commits for secrets with gitleaks: the push gate (every branch) and GitHub run it (D67–D70)
+  secret-allow the owner's one-line clearing of a false alarm, written to .gitleaksignore (D68)
+  lesson      record what stops a fixed bug next time: a test, a CLAUDE.md fact or a kit issue (D78)
+  review-plan  the security review's scope (risky files, decided here), spend level, models and the reviewer's diff
+  review-skip  write the skip note for a piece that changed no risky file
+  review-write save the review from the checker's JSON, stamped with the code as it is now
+  review-waive the owner's one-line waiver of a finding
+  review-status the piece's Security line, and whether the review lets it reach dev
+  review-waivers the waived findings not yet released: the release note lists them
 
+The security review (D66): every piece with code needs contracts/reviews/<contract>.md, stamped with the code it
+reviewed; the gate and GitHub refuse a missing or stale one, and an open critical or major finding.
 A contract moves draft/ready → building → on-dev → done, or → dropped.
+A chain (D61): one head contract from chat (`Chain: head`), split by Claude Code into sub-contracts (`Head: <name>`)
+that build one after another. The head is picked up like a piece, the split is saved as draft sub-pieces, the owner's
+"go" makes them ready, and each sub-piece then goes building → on-dev with the usual check and push. The head owns
+no code itself: it moves to on-dev when every sub-piece is on dev, and the client's one verdict on the head closes
+them all. A head that is building or on dev blocks release like any piece.
 Exit codes: 0 pass · 1 fail · 2 usage, contract or tool error · 3 no contract building (and product code changed).
 copy-check exit codes: 0 in-sync · 10 refresh · 11 no-record · 12 hand-edited.
-Only python3 is required. vulture and knip are needed for `leftovers`.
+Only python3 is required. vulture and knip are needed for `leftovers`; gitleaks 8 for `secret-scan` (every push).
 
 ship.json folders: python_dir / node_dir are null (none), "." (the project root) or a subfolder.
 """
@@ -45,13 +68,14 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-KIT_VERSION = "0.4.0"  # keep equal to plugins/mg-ship-kit/.claude-plugin/plugin.json
+KIT_VERSION = "0.12.0"  # keep equal to plugins/mg-ship-kit/.claude-plugin/plugin.json
 CONFIG = "ship.json"
 CONTRACTS = "contracts"
 SYNC_FILE = "notion-sync.json"  # in .ship/ (git-ignored): hash of the repo text last copied to the tracker
@@ -65,16 +89,32 @@ READY_TRACKS = ("devops", "railway")  # cloudflare needs its own stack list, siz
 CI_WORKFLOW = ".github/workflows/ship-check.yml"
 CI_SCRIPT = ".github/ship/ship_check.py"
 CI_NOTES = ".github/ship/README.md"
-CLOUD_SETTINGS = ".claude/settings.json"  # declares the plugin so cloud sessions on this repo load it (D59)
-BOOKKEEPING_FILES = ("ship.json", "CLAUDE.md", ".gitignore", CLOUD_SETTINGS)
-KIT_REPO = "mgac-consulting/ship-kit"  # where the plugin's marketplace lives; keep equal to the install lines
+CLOUD_SETTINGS = ".claude/settings.json"  # declared the plugin for cloud sessions (D59); setup now takes the kit out (D65)
+SECRETS_WORKFLOW = ".github/workflows/ship-secrets.yml"  # the secret scan on every other branch (D70)
+CI_GITLEAKS_CONFIG = ".github/ship/gitleaks.toml"
+GITLEAKS_IGNORE = ".gitleaksignore"  # the owner's allowed false alarms, one fingerprint each (D68)
+GITLEAKS_VERSION = "8.30.1"  # keep equal to the pin in templates/ci/*.yml and the kit's own test workflow
+GITLEAKS_HINT = (f"install gitleaks {GITLEAKS_VERSION} once on this machine: `brew install gitleaks` on a Mac, or "
+                 f"the file for your system from https://github.com/gitleaks/gitleaks/releases/tag/v{GITLEAKS_VERSION}, "
+                 "put on your PATH")
+ALLOW_MARK = "# allowed "  # the line secret-allow writes above each fingerprint
+BOOKKEEPING_FILES = ("ship.json", "CLAUDE.md", ".gitignore", CLOUD_SETTINGS, GITLEAKS_IGNORE)
 KIT_MARKETPLACE = "ship-kit"  # the name in .claude-plugin/marketplace.json
-KIT_PLUGIN = "mg-ship-kit@ship-kit"
-KIT_PLUGIN_OLD = "ship@ship-kit"  # the plugin's name before 0.4.0; setup removes it from the settings
 ENV_EXAMPLES = (".env.example", ".env.sample", ".env.template")  # env files that hold no secrets: these may be committed
 GITIGNORE_ENV = [".env", ".env.*"] + [f"!{n}" for n in ENV_EXAMPLES]  # the lines setup adds to .gitignore
-# The words line that opens a contract's body; its four labels follow the Backlog's Source (ship-spec).
-WORDS_LABEL_RE = re.compile(r"^\**(client['’]s words|from my notes on the client|users['’] words|owner['’]s words)\b", re.I)
+# The words line that opens a contract's body; its four labels follow the Backlog's Source (ship-spec). A chain's
+# sub-piece opens with "From the head:" instead, since it traces to the head contract, not to the client (D61).
+WORDS_LABEL_RE = re.compile(r"^\**(client['’]s words|from my notes on the client|users['’] words|owner['’]s words|from the head)\b", re.I)
+HEADER_KEYS = ("Status", "Base", "Approved", "Tracker", "Removing", "Chain", "Head", "Lesson")  # the lines above a contract's body
+GO_PENDING = "pending: the owner's go on the chain"  # a sub-piece's Approved line between the split and the go
+MAX_SUBS = 6  # a chain is two to six sub-pieces; more is two chains
+CI_NEVER_STARTED_S = 180  # ci-wait gives up this soon when no run of the check exists at all for the commit
+SECRET_FIX = ("Take the key out of the code (read it from an environment file) and take it out of these commits "
+              "before pushing: for the last commit, fix it and `git commit --amend`; for older ones, `git reset --soft "
+              "<the commit before them>` and commit again. If the key was ever pushed anywhere, replace it at its "
+              "source: it's exposed. If it's not a secret (a test value, an example), only the owner may clear it: on "
+              "their one-line yes, run `ship_check.py secret-allow <fingerprint> --by <owner> --why \"<their words>\"`. "
+              f"Never edit {GITLEAKS_IGNORE} by hand, and a `gitleaks:allow` comment clears nothing.")
 ENV_FIX = ("Secrets never go in git (D4). Take the file out of git but keep it on disk (`git rm --cached <file>`), "
            "check that .gitignore has the env lines (setup adds them), commit, then push again. If it ever held a real "
            "password or key, change it: git history keeps the old file.")
@@ -169,8 +209,19 @@ class Contract:
         self.approved = self._field("Approved") or ""
         self.tracker = self._field("Tracker") or ""
         self.removing = self._field("Removing") or ""
+        self.fixes = (self._field("Fixes") or "").strip()  # a bug fix: what broke, as the client said it (D77)
+        self.lesson = (self._field("Lesson") or "").strip()  # what stops it next time (D78)
+        self.is_head = (self._field("Chain") or "").strip().lower() == "head"  # a chain's head contract (D61)
+        self.head = (self._field("Head") or "").strip()  # a sub-piece: the name of its head contract
+        if self.is_head and self.head:
+            die(f"contract {self.name}: a contract can't be both a chain head and a sub-piece")
         self.size: dict[str, tuple[int, list[str]]] = {}
         self._parse_size()
+
+    @property
+    def kind(self) -> str:
+        """'piece', 'head' or 'sub' — for messages."""
+        return "head" if self.is_head else ("sub" if self.head else "piece")
 
     def _field(self, key: str) -> str | None:
         return field(self.text, key)
@@ -188,6 +239,11 @@ class Contract:
                 text = re.sub(r"^Status:.*$", lambda m, k=key, v=val: f"{m.group(0)}\n{k}: {v}", text, count=1, flags=re.M)
         self.path.write_text(text, encoding="utf-8")
         self.text, self.status = text, status
+        self.base = self._field("Base") or ""
+        self.approved = self._field("Approved") or ""
+        self.tracker = self._field("Tracker") or ""
+        self.removing = self._field("Removing") or ""
+        self.lesson = (self._field("Lesson") or "").strip()
 
     def _parse_size(self) -> None:
         sec = re.search(r"^#{1,4}\s*Size\s*$(.*?)(?=^#{1,4}\s|\Z)", self.text, re.M | re.S)
@@ -217,9 +273,27 @@ class Contract:
             return
         if not self.base or PLACEHOLDER_RE.search(self.base):
             die(f"contract {self.name}: `Base:` must be the commit the piece starts from")
-        if not self.approved or PLACEHOLDER_RE.search(self.approved):
+        if not is_approval(self.approved):
             die(f"contract {self.name}: `Approved:` must carry the date and the owner's name — "
                 "a contract is building only after the owner approved it in one line")
+
+    def count_problems(self) -> list[str]:
+        """Where a count and its named items disagree, or an endpoint lacks its method. A chain splits by the
+        names, so a head (and each sub-piece) must name every item it counts."""
+        out = []
+        for kind in ("screens", "endpoints", "tables"):
+            n, items = self.size[kind]
+            if n != len(items):
+                out.append(f"{kind}: counts {n} but names {len(items)}")
+            if kind == "endpoints":
+                out += [f"endpoint {it} has no method (METHOD /path)" for it in items if not norm_endpoint(it)[0]]
+        return out
+
+
+def is_approval(text: str) -> bool:
+    """A real `Approved:` line: not empty, not a placeholder, not the kit's own 'pending the go' marker."""
+    t = (text or "").strip()
+    return bool(t) and not PLACEHOLDER_RE.search(t) and not t.lower().startswith("pending")
 
 
 def contracts_dir(root: Path) -> Path:
@@ -238,6 +312,21 @@ def list_contracts(root: Path) -> list[Contract]:
     return out
 
 
+def building_pieces(cs: list[Contract]) -> list[Contract]:
+    """The contracts that own code right now: building, and not a chain head (a head never owns code itself)."""
+    return [c for c in cs if c.status == "building" and not c.is_head]
+
+
+def open_heads(cs: list[Contract]) -> list[Contract]:
+    """Chain heads whose chain is still running: picked up, not yet on dev."""
+    return [c for c in cs if c.is_head and c.status == "building"]
+
+
+def subs_of(cs: list[Contract], head: Contract) -> list[Contract]:
+    """A head's sub-pieces, in build order (the order they were saved in)."""
+    return [c for c in cs if c.head == head.name]
+
+
 def active_contract(root: Path, name: str | None) -> Contract | None:
     cs = list_contracts(root)
     if name:
@@ -246,7 +335,7 @@ def active_contract(root: Path, name: str | None) -> Contract | None:
                 c.check_ready()
                 return c
         die(f"contract {name!r} not found in {CONTRACTS}/")
-    building = [c for c in cs if c.status == "building"]
+    building = building_pieces(cs)
     if not building:
         return None
     if len(building) > 1:
@@ -884,7 +973,8 @@ def cmd_setup(args) -> int:
         shutil.copy(tpl / "CLAUDE.md", cm)
         print("created CLAUDE.md from the template — fill the <placeholders>")
     else:
-        print("CLAUDE.md exists; left untouched. Compare it with the kit template by hand.")
+        for line in clean_claude_md(cm):
+            print(line)
         if re.search(r"/ship:(setup|next|cto-check|done|drop)\b", cm.read_text()):
             print("WARNING: CLAUDE.md names the old commands (/ship:…). The plugin is mg-ship-kit since 0.4.0: change "
                   "them to /mg-ship-kit:…, or a session will look for commands that don't exist.")
@@ -896,10 +986,33 @@ def cmd_setup(args) -> int:
             print(f"{name}: needed once {cfg[side]}/ exists → {hint}")
             continue
         print(f"{name}: {'found' if find_tool(root, cfg, name) else 'MISSING → ' + hint}")
+    gl = find_gitleaks()
+    print(f"gitleaks: found ({gitleaks_version(gl) or 'unknown version'})" if gl else
+          f"gitleaks: MISSING → every push is refused until it's installed (D67). {GITLEAKS_HINT}")
+    if gl and not cfg.get("secrets_history") and git_out(root, "rev-parse", "HEAD"):
+        # D69: once per project, the whole history; it reports and never blocks
+        code, found, note = scan_secrets(root, None)
+        if code in (0, 1):
+            report_scan(code, found, note, "the whole history (once, at setup)")
+            if code == 1:
+                print("History is reported, not blocked (D69): replace each key above at its source if it was ever "
+                      "pushed. New commits are scanned on every push.")
+            cfg["secrets_history"] = f"{dt.date.today().isoformat()}: {len(found)} found"
+            save_config(root, cfg)
+        else:
+            print(f"secret scan of the history: {note}")
+    elif not gl:
+        print("secret scan of the history: waits for gitleaks; rerun setup once it's installed.")
     changed = install_ci(root)
     print(f"CI: the Ship check runs on GitHub on every push to dev and main ({CI_WORKFLOW}); "
           + (f"wrote {', '.join(changed)}" if changed else "files up to date") + f" (kit {KIT_VERSION})")
-    print(install_cloud_settings(root))
+    print(drop_plugin_declaration(root))
+    note = local_install_note(Path.home())
+    if note:
+        print(note)
+    if cfg.get("kit_line") != KIT_VERSION:
+        print(f"Kit line: the project page's Facts must say `Kit: mg-ship-kit {KIT_VERSION}` → write it, then run "
+              "`kit-mark` (ship-spec compares it with its own version before each job)")
     track = cfg.get("track")
     print(f"track: {track}" if track else
           "track: not set → read the Track line in the project page's Facts and rerun setup with --track")
@@ -923,7 +1036,8 @@ def cmd_link(args) -> int:
 
 
 # ---------------------------------------------------------------- report
-def print_report(c: Contract, size: dict | None, stack: dict | None, left: dict | None, ci: bool = False) -> str:
+def print_report(c: Contract, size: dict | None, stack: dict | None, left: dict | None, ci: bool = False,
+                 security: list[str] | None = None, lesson: str | None | bool = False) -> str:
     lines = [f"Ship CTO check · contract {c.name} · base {c.base[:10]} · {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}"]
     overall = "PASS"
     if size:
@@ -964,6 +1078,16 @@ def print_report(c: Contract, size: dict | None, stack: dict | None, left: dict 
             if len(r["findings"]) > 15:
                 lines.append(f"  … {len(r['findings']) - 15} more")
         overall = "FAIL" if left["status"] == "FAIL" else overall
+    if security is not None:  # the gate and GitHub only: /mg-ship-kit:cto-check runs the review after this check
+        if security:
+            lines.append(f"SECURITY   FAIL  {len(security)} to settle")
+            lines += [f"  {p}" for p in security]
+            overall = "FAIL"
+        else:
+            lines.append("SECURITY   PASS")
+    if c.fixes and lesson is not False:  # D78: a bug fix passes only with the lesson that stops it next time
+        lines.append(f"LESSON     {'FAIL' if lesson else 'PASS'}  " + (lesson or c.lesson))
+        overall = "FAIL" if lesson else overall
     if overall == "PASS":
         lines.append("RESULT: PASS — the piece may reach dev." if ci else
                      "RESULT: PASS — the piece may reach dev. Propose CLAUDE.md edits now (D33).")
@@ -982,9 +1106,17 @@ def cmd_check(args) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root)
     c = active_contract(root, args.contract)
+    if c and c.is_head:
+        die(f"{c.name} is a chain head: it owns no code, so there is nothing to check on it. The check runs on "
+            "its sub-pieces, one at a time (/mg-ship-kit:chain).", 2)
     if not c:
-        print("ship: no contract is building (none with `Status: building` in contracts/). "
-              "Pick up the next Ready piece with /mg-ship-kit:next.", file=sys.stderr)
+        heads = open_heads(list_contracts(root))
+        if heads:
+            print(f"ship: no piece is building. Chain {heads[0].name} is open: pick up its next sub-piece with "
+                  "/mg-ship-kit:chain.", file=sys.stderr)
+        else:
+            print("ship: no contract is building (none with `Status: building` in contracts/). "
+                  "Pick up the next Ready piece with /mg-ship-kit:next.", file=sys.stderr)
         return 3
     what = args.what
     size = count_size(root, cfg, c) if what in ("check", "size") else None
@@ -993,7 +1125,8 @@ def cmd_check(args) -> int:
     if args.json:
         print(json.dumps({"contract": c.name, "size": size, "stack": stack, "leftovers": left}, indent=2))
         return 1 if "FAIL" in [x["status"] for x in (size, stack, left) if x] else 0
-    return 0 if print_report(c, size, stack, left) == "PASS" else 1
+    lesson = lesson_problem(root, c, None) if what == "check" else False
+    return 0 if print_report(c, size, stack, left, lesson=lesson) == "PASS" else 1
 
 
 def cmd_stack_only(args) -> int:
@@ -1044,49 +1177,527 @@ def cmd_pickup(args) -> int:
     root = Path(args.root).resolve()
     load_config(root)
     cs = list_contracts(root)
-    busy = [c for c in cs if c.status == "building"]
+    busy = building_pieces(cs)
     if busy:
         die(f"{busy[0].name} is still building. One piece at a time: push it to dev (/mg-ship-kit:cto-check) "
             "or drop it before picking up the next.", 2)
+    heads = open_heads(cs)
+    if heads:
+        die(f"chain {heads[0].name} is open (split, or building its sub-pieces). Finish it with /mg-ship-kit:chain, "
+            "or drop it, before picking up another piece.", 2)
     head = git_out(root, "rev-parse", "--short=10", "HEAD")
     if not head:
         die("no commit yet. Make a first commit, then pick up the piece.")
     raw = notion_to_plain(Path(args.file).read_text(encoding="utf-8"))
+    if field(raw, "Head"):
+        die("this row is a chain's sub-piece (it has a `Head:` line). Sub-pieces are picked up by their chain "
+            "(/mg-ship-kit:chain), never on their own.", 1)
+    name, approved, body = contract_parts(raw, args.name)
+    is_head = (field(raw, "Chain") or "").strip().lower() == "head"
+    path = new_contract_path(root, name)
+    header = [f"# Contract: {name}", "Status: building", f"Base: {head}", f"Approved: {approved}"]
+    if is_head:
+        header.append("Chain: head")
+    if args.tracker:
+        header.append(f"Tracker: {args.tracker}")
+    path.write_text("\n".join(header) + "\n\n" + body, encoding="utf-8")
+    try:
+        c = Contract(path)
+        c.check_ready()
+        if is_head and c.count_problems():
+            die("a chain head must name every item it counts, since the split goes by the names: " +
+                "; ".join(c.count_problems()) + ". Fix the row in chat, then pick it up.", 1)
+        reuse = reuse_lines(c.text)
+        if c.is_head and c.fixes:
+            die("a chain head can't carry a Fixes line: a bug fix is a piece, and its lesson rides with it (D77). "
+                "Spec the fix as a piece in chat.", 1)
+    except SystemExit:
+        path.unlink(missing_ok=True)
+        raise
+    added = adopt_packages(root, reuse)
+    print(f"saved {path.relative_to(root)} · Status: building · Base: {head}"
+          + (" · a chain head: split it next (/mg-ship-kit:chain)" if is_head else ""))
+    if reuse:
+        print(f"reuse (D73): {sum(1 for r in reuse if r['verdict'] == 'adopt')} adopted, "
+              f"{sum(1 for r in reuse if r['verdict'] == 'build')} to build"
+              + (f"; added to the stack list in {CONFIG}: {', '.join(added)}. Commit {CONFIG} with the contract."
+                 if added else "."))
+    return 0
+
+
+# ---------------------------------------------------------------- lessons (D76–D79)
+KIT_REPO = "mgac-consulting/ship-kit"
+KIT_ISSUE_RE = re.compile(rf"^https://github\.com/{re.escape(KIT_REPO)}/issues/\d+/?$")
+LESSON_HOW = ("Ask \"what stops this next time?\" and record one answer with `ship_check.py lesson --contract <name>`: "
+              "--test <a test file this piece adds or changes>, --fact \"<the exact CLAUDE.md line, on the owner's "
+              "yes>\", or --kit <the link of a `lesson` issue on " + KIT_REPO + ">")
+
+
+def claude_md_lines(root: Path, ref: str | None = "HEAD") -> set[str]:
+    """CLAUDE.md's lines, list markers dropped: at a commit, or (ref None) as the file is on disk."""
+    if ref is None:
+        p = root / "CLAUDE.md"
+        text = p.read_text(encoding="utf-8", errors="replace") if p.exists() else ""
+    else:
+        r = sh(["git", "show", f"{ref}:CLAUDE.md"], cwd=root)
+        text = r.stdout if r.returncode == 0 else ""
+    return {re.sub(r"^\s*[-*]\s+", "", l).strip() for l in text.splitlines() if l.strip()}
+
+
+def piece_changed(root: Path, c: Contract, ref: str | None = "HEAD") -> set[str]:
+    """Files this piece changed since its Base: up to a commit, or (ref None) in the working tree, new files too."""
+    if not c.base:
+        return set()
+    if ref is not None:
+        return set(git_out(root, "diff", "--name-only", c.base, ref).split())
+    return set(git_out(root, "diff", "--name-only", c.base).split()) | \
+        set(git_out(root, "ls-files", "--others", "--exclude-standard").split())
+
+
+def check_lesson(root: Path, c: Contract, kind: str, value: str, ref: str | None = "HEAD") -> str | None:
+    """None when the lesson holds, else what's wrong with it."""
+    if kind == "test":
+        if not is_test_file(value):
+            return f"{value} isn't a test file (test_*.py, *_test.py, *.test.*, *.spec.*, or under tests/)"
+        if value not in piece_changed(root, c, ref):
+            return f"{value} isn't among this piece's changes: the lesson is a test this fix adds or changes"
+        return None
+    if kind == "fact":
+        line = re.sub(r"^\s*[-*]\s+", "", value).strip()
+        if not line:
+            return "the fact is empty"
+        return None if line in claude_md_lines(root, ref) else f"CLAUDE.md doesn't hold the line {line!r}"
+    if kind == "kit":
+        return None if KIT_ISSUE_RE.match(value) else f"{value!r} isn't the link of an issue on {KIT_REPO}"
+    return f"unknown kind {kind!r}: test, fact or kit"
+
+
+def lesson_problem(root: Path, c: Contract, ref: str | None = "HEAD") -> str | None:
+    """A contract with a Fixes line passes only when its Lesson line holds (D78). None when fine or not a fix."""
+    if not c.fixes:
+        return None
+    if not c.lesson:
+        return f"this piece fixes a bug (\"{c.fixes}\") and has no Lesson line (D78). {LESSON_HOW}."
+    kind, _, value = c.lesson.partition(" ")
+    err = check_lesson(root, c, kind.lower(), value.strip(), ref)
+    return f"Lesson: {err}. {LESSON_HOW}." if err else None
+
+
+def cmd_lesson(args) -> int:
+    """Record what stops a fixed bug next time (D76–D79), after checking it holds."""
+    root = Path(args.root).resolve()
+    c = find_contract(root, args.contract, ("building",), "building")
+    if not c.fixes:
+        die(f"{c.name} has no Fixes line: a lesson belongs to a bug fix (D77).")
+    picked = [(k, v) for k, v in (("test", args.test), ("fact", args.fact), ("kit", args.kit)) if v]
+    if len(picked) != 1:
+        die("give exactly one of --test, --fact, --kit.")
+    kind, value = picked[0][0], " ".join(picked[0][1].split())
+    err = check_lesson(root, c, kind, value, None)
+    if err:
+        die(f"not recorded: {err}.", 1)
+    c.set_status(c.status, {"Lesson": f"{kind} {value}"})
+    print(f"{c.name}: Lesson: {kind} {value}. Commit the contract with the fix.")
+    return 0
+
+
+# ---------------------------------------------------------------- the reuse block (D73, D74)
+REUSE_ADOPT_RE = re.compile(r"^(?P<cap>[^:]+?):\s*adopt\s+(?P<pkg>[A-Za-z0-9@][\w.@/-]*)\s*\(\s*(?P<side>python|node)\s*,"
+                            r"\s*(?P<lic>[^)]+?)\s*\)\s*(?:[—–-]+\s*ok:\s*(?P<ok>.+))?$", re.I)
+REUSE_BUILD_RE = re.compile(r"^(?P<cap>[^:]+?):\s*build\b\s*(?:[—–-]+\s*(?P<why>.+))?$", re.I)
+
+
+def licence_key(lic: str) -> str:
+    """'MIT License' → 'mit', 'Apache 2.0' → 'apache-2.0', 'BSD 3-Clause' → 'bsd-3-clause'."""
+    s = re.sub(r"\b(license|licence)\b", "", lic.lower())
+    return re.sub(r"[\s_]+", "-", s.strip()).strip("-")
+
+
+def permissive_licences() -> set[str]:
+    return {licence_key(x) for x in json.loads((kit_root() / "reference" / "licences.json").read_text())["permissive"]}
+
+
+def reuse_lines(text: str) -> list[dict]:
+    """The contract's `## Reuse` block, checked: each line adopts a package (python or node, with its licence) or
+    says build. A licence that isn't on the kit's permissive list needs the owner's words (`— ok: <reason>`)."""
+    sec = re.search(r"^#{1,4}\s*Reuse\s*$(.*?)(?=^#{1,4}\s|\Z)", text, re.M | re.S)
+    if not sec:
+        return []
+    ok_list, out, problems = permissive_licences(), [], []
+    for line in sec.group(1).splitlines():
+        b = re.match(r"^\s*[-*]\s+(.+?)\s*$", line)
+        if not b:
+            continue
+        item = re.sub(r"`|\*\*", "", b.group(1)).strip()
+        if PLACEHOLDER_RE.search(item):  # the template's example line: no package name has <…>
+            continue
+        m = REUSE_ADOPT_RE.match(item)
+        if m:
+            lic, ok = m.group("lic").strip(), (m.group("ok") or "").strip()
+            alts = [licence_key(x) for x in re.split(r"\s+or\s+|\s*/\s*", lic, flags=re.I) if x.strip()]
+            if not any(k in ok_list for k in alts) and not ok:  # a dual licence passes when either side does
+                problems.append(f"{m.group('pkg')} is under {lic}, which isn't on the kit's permissive list: it needs "
+                                "the owner's words on its line (\"— ok: <reason>\")")
+            out.append({"verdict": "adopt", "capability": m.group("cap").strip(), "package": m.group("pkg").lower(),
+                        "side": m.group("side").lower(), "licence": lic, "ok": ok})
+            continue
+        m = REUSE_BUILD_RE.match(item)
+        if m:
+            out.append({"verdict": "build", "capability": m.group("cap").strip(), "why": (m.group("why") or "").strip()})
+            continue
+        problems.append(f"can't read the Reuse line {item!r}: write \"<capability>: adopt <package> (python|node, "
+                        "<licence>)\" or \"<capability>: build — <why>\"")
+    if problems:
+        die("the contract's Reuse block (D73, D74): " + "; ".join(problems) + ". Fix the row in chat, then pick it "
+            "up.", 1)
+    return out
+
+
+def adopt_packages(root: Path, reuse: list[dict]) -> list[str]:
+    """Approving the contract approved its adopted packages (D73): add them to the stack list."""
+    cfg = load_config(root)
+    added = []
+    for r in reuse:
+        if r["verdict"] != "adopt":
+            continue
+        lst = cfg.setdefault("stack", {}).setdefault(r["side"], [])
+        if r["package"] not in lst:
+            lst.append(r["package"])
+            lst.sort()
+            added.append(f"{r['package']} ({r['side']})")
+    if added:
+        save_config(root, cfg)
+    return added
+
+
+def contract_parts(raw: str, name: str | None = None, need_approval: bool = True) -> tuple[str, str, str]:
+    """(name, Approved line, body) of a contract's plain text, the header lines and any banner dropped."""
     m = re.search(r"^#\s*Contract:\s*(.+?)\s*$", raw, re.M)
-    name = (args.name or (m.group(1) if m else "")).strip()
+    name = (name or (m.group(1) if m else "")).strip()
     if not name:
         die("the piece has no name: pass --name \"<piece>\" (the tracker row's title)")
     approved = (field(raw, "Approved") or "").strip()
-    if not approved or PLACEHOLDER_RE.search(approved):
+    if need_approval and not is_approval(approved):
         die("the tracker row has no `Approved: <date> by <owner>` line. A piece is Ready only after the owner "
             "approved its contract in one line; fix the row in chat, then pick it up.", 1)
-    # body = everything after the header lines; drop the banner and any header the row carried
     body_lines, in_header = [], True
+    header_re = re.compile(r"^\**(" + "|".join(HEADER_KEYS) + r")\**:")
     for line in raw.splitlines():
         s = line.strip()
         if BANNER_MARK.lower() in s.lower():
             continue
         if in_header and (s.startswith("## ") or WORDS_LABEL_RE.match(s)):
             in_header = False
-        if in_header and (re.match(r"^#\s*Contract:", s) or re.match(r"^\**(Status|Base|Approved|Tracker|Removing)\**:", s) or not s):
+        if in_header and (re.match(r"^#\s*Contract:", s) or header_re.match(s) or not s):
             continue
         body_lines.append(line)
-    body = "\n".join(body_lines).strip() + "\n"
+    return name, approved, "\n".join(body_lines).strip() + "\n"
+
+
+def new_contract_path(root: Path, name: str) -> Path:
     nums = [int(p.name[:3]) for p in contracts_dir(root).glob("[0-9][0-9][0-9]-*.md")]
     num = (max(nums) + 1) if nums else 1
     contracts_dir(root).mkdir(exist_ok=True)
-    path = contracts_dir(root) / f"{num:03d}-{slugify(name)}.md"
-    header = [f"# Contract: {name}", "Status: building", f"Base: {head}", f"Approved: {approved}"]
-    if args.tracker:
-        header.append(f"Tracker: {args.tracker}")
-    path.write_text("\n".join(header) + "\n\n" + body, encoding="utf-8")
+    return contracts_dir(root) / f"{num:03d}-{slugify(name)}.md"
+
+
+# ---------------------------------------------------------------- chains (D61)
+def head_named(root: Path, name: str | None, what: str) -> tuple[Contract, list[Contract]]:
+    """The head contract named, or the only open one, with its sub-pieces."""
+    cs = list_contracts(root)
+    if name:
+        hits = [c for c in cs if c.name == name or c.path.name == name or c.name.startswith(name)]
+        if not hits:
+            die(f"contract {name!r} not found in {CONTRACTS}/")
+        if not hits[0].is_head:
+            die(f"{hits[0].name} is not a chain head (no `Chain: head` line).")
+        return hits[0], subs_of(cs, hits[0])
+    heads = open_heads(cs)
+    if not heads:
+        die(f"no chain is open (no head contract is building), so there is nothing to {what}. "
+            "Pick a head up first: /mg-ship-kit:chain.", 3)
+    if len(heads) > 1:
+        die(f"several chains are open ({', '.join(c.name for c in heads)}): pass --head <name>.")
+    return heads[0], subs_of(cs, heads[0])
+
+
+def partition_problems(head: Contract, subs: list[tuple[str, Contract]]) -> list[str]:
+    """The split must cover the head exactly: every named item in the head's Size goes to one sub-piece, no
+    sub-piece names an item the head doesn't, and the counts add up. That is what 'a sub-piece traces to the
+    head' means mechanically."""
+    problems = []
+    for label, s in subs:
+        problems += [f"{label}: {p}" for p in s.count_problems()]
+    for kind in ("screens", "endpoints", "tables"):
+        head_n, head_items = head.size[kind]
+        free = list(head_items)
+        total = 0
+        for label, s in subs:
+            n, items = s.size[kind]
+            total += n
+            for it in items:
+                hit = next((d for d in free if match_pair(kind, it, d, exact=True)), None)
+                if hit is None:
+                    taken = any(match_pair(kind, it, d, exact=True) for d in head_items)
+                    problems.append(f"{label}: {kind[:-1]} {it} is " + ("already in another sub-piece" if taken else
+                                                                         f"not in the head's Size list"))
+                else:
+                    free.remove(hit)
+        for d in free:
+            problems.append(f"{kind[:-1]} {d} is in the head's Size list but in no sub-piece")
+        if total != head_n:
+            problems.append(f"{kind}: the sub-pieces count {total}, the head counts {head_n}")
+    return problems
+
+
+def cmd_split(args) -> int:
+    """Save the sub-contracts Claude wrote for a head as draft contracts, checked against the head (the split stop)."""
+    root = Path(args.root).resolve()
+    load_config(root)
+    head, subs = head_named(root, args.head, "split")
+    if head.status != "building":
+        die(f"{head.name} is {head.status}; a head is split right after pickup, while it is building.", 1)
+    if subs:
+        die(f"{head.name} is already split into {len(subs)} sub-pieces ({', '.join(c.name for c in subs)}). "
+            "To split it differently, drop the chain first.", 1)
+    if not 2 <= len(args.files) <= MAX_SUBS:
+        die(f"a chain is two to {MAX_SUBS} sub-pieces ({len(args.files)} given). One piece is just a piece; more than "
+            f"{MAX_SUBS} is two chains: spec it as such in chat.", 1)
+    written: list[Path] = []
+    parsed: list[tuple[str, Contract]] = []
+    names: set[str] = set()
     try:
-        Contract(path).check_ready()
-    except SystemExit:
-        path.unlink(missing_ok=True)
+        for f in args.files:
+            p = Path(f)
+            if not p.is_file():
+                die(f"{f}: not a file")
+            name, _, body = contract_parts(p.read_text(encoding="utf-8"), need_approval=False)
+            if name.lower() in names:
+                die(f"two sub-pieces are named {name!r}; names must differ.")
+            names.add(name.lower())
+            m = re.search(r"^#{1,4}\s*How to check it\s*$\s*\n\s*[-*]\s+(\S.*?)\s*$", body, re.M | re.I)
+            if not m or PLACEHOLDER_RE.fullmatch(m.group(1).strip()):
+                die(f"{name}: no `## How to check it` line. Each sub-piece needs at least one check the chain can "
+                    "halt on.", 1)
+            path = new_contract_path(root, name)
+            header = [f"# Contract: {name}", "Status: draft", f"Head: {head.name}", f"Approved: {GO_PENDING}"]
+            path.write_text("\n".join(header) + "\n\n" + body, encoding="utf-8")
+            written.append(path)
+            parsed.append((name, Contract(path)))
+        problems = partition_problems(head, parsed)
+        if problems:
+            die(f"the split doesn't match the head {head.name}:\n  " + "\n  ".join(problems) +
+                "\nFix the sub-contracts and split again. A sub-piece names only what the head names, each item once.", 1)
+    except BaseException:  # a refused split, or any error on the way: leave nothing behind
+        for p in written:
+            p.unlink(missing_ok=True)
         raise
-    print(f"saved {path.relative_to(root)} · Status: building · Base: {head}")
+    print(f"split {head.name} into {len(written)} draft sub-pieces, in build order:")
+    for i, p in enumerate(written, 1):
+        print(f"  {i}. {p.relative_to(root)}")
+    print("Nothing builds yet: the owner reads the sub-pieces and says go (`go --head`).")
     return 0
+
+
+def cmd_go(args) -> int:
+    """The owner read the split: every draft sub-piece becomes ready."""
+    root = Path(args.root).resolve()
+    load_config(root)
+    head, subs = head_named(root, args.head, "start")
+    if head.status != "building":
+        die(f"{head.name} is {head.status}; the go belongs to a chain that is building.", 1)
+    drafts = [c for c in subs if c.status == "draft"]
+    if not subs:
+        die(f"{head.name} isn't split yet. Split it first.", 1)
+    if not drafts:
+        die(f"{head.name}: every sub-piece is past the go already.", 1)
+    owner = re.sub(r"^.*?\bby\s+", "", head.approved).strip() or head.approved
+    stamp = f"{dt.date.today().isoformat()} by {owner}, go on chain {head.name}"
+    for c in drafts:
+        c.set_status("ready", {"Approved": stamp})
+    print(f"go: {len(drafts)} sub-pieces of {head.name} are ready, in this order: " + ", ".join(c.name for c in drafts))
+    return 0
+
+
+def cmd_chain_next(args) -> int:
+    """Pick up the next ready sub-piece of a chain: building, from this commit. Once a sub-piece of the chain is
+    on dev, the next one starts only when GitHub's check is green on origin/dev (D61's second halt), or when the
+    owner said so in their own words (--green)."""
+    root = Path(args.root).resolve()
+    load_config(root)
+    head, subs = head_named(root, args.head, "continue")
+    cs = list_contracts(root)
+    busy = building_pieces(cs)
+    if busy:
+        die(f"{busy[0].name} is still building. One piece at a time: push it to dev (/mg-ship-kit:cto-check) "
+            "or drop it, then continue the chain.", 2)
+    if not subs:
+        die(f"{head.name} isn't split yet. Split it first.", 1)
+    if any(c.status == "draft" for c in subs):
+        die(f"{head.name} waits for the owner's go: they read the sub-pieces, then `go --head {head.name}`.", 1)
+    ready = [c for c in subs if c.status == "ready"]
+    if not ready:
+        return cmd_chain_sync(args)
+    if any(c.status in ("on-dev", "done") for c in subs) and not args.green:
+        dev = "refs/remotes/origin/dev"
+        if not is_commit(root, dev):
+            die("origin/dev not found, so the last sub-piece's check can't be confirmed. Fetch, then continue.", 2)
+        rc = wait_for_ci(root, rev(root, dev), args.timeout, args.poll)
+        if rc != 0:
+            print(f"the chain halts before its next sub-piece: GitHub's check on origin/dev isn't green. When the "
+                  "Actions tab shows green, continue with `chain-next --green` (the owner's word).")
+            return rc
+    c = ready[0]
+    base = git_out(root, "rev-parse", "--short=10", "HEAD")
+    try:
+        c.set_status("building", {"Base": base})
+        c.check_ready()
+    except SystemExit:
+        c.set_status("ready", {"Base": None})
+        raise
+    left = len(ready) - 1
+    print(f"{c.name}: Status: building · Base: {base} · sub-piece of {head.name} · {left} more after this one")
+    return 0
+
+
+def chain_state(head: Contract, subs: list[Contract]) -> tuple[str | None, str]:
+    """What the head should be, from its sub-pieces, with the reason: 'on-dev' once every sub-piece is on dev or
+    done; 'dropped' once every one is dropped; else None (still building). A dropped sub-piece among built ones
+    holds the head back, since its items are in the head's Size but won't be built — unless the owner approved a
+    head contract change that took those items out, which the head's Size list shows."""
+    if not subs:
+        return None, "not split yet"
+    if all(c.status == "dropped" for c in subs):
+        return "dropped", "every sub-piece was dropped"
+    open_ = [c for c in subs if c.status not in ("on-dev", "done", "dropped")]
+    if open_:
+        return None, "waiting on " + ", ".join(f"{c.name} ({c.status})" for c in open_)
+    orphans = []
+    for c in subs:
+        if c.status != "dropped":
+            continue
+        for kind in ("screens", "endpoints", "tables"):
+            for it in c.size[kind][1]:
+                if any(match_pair(kind, it, d, exact=True) for d in head.size[kind][1]):
+                    orphans.append(f"{kind[:-1]} {it} ({c.name}, dropped)")
+    if orphans:
+        return None, ("these items are in the head's Size but their sub-piece was dropped, so the feature is not "
+                      "what the head promises: " + ", ".join(orphans) + ". Either the owner approves a head contract "
+                      "change that takes them out (one line), or the rest of the chain is dropped too.")
+    return "on-dev", "every sub-piece is on dev"
+
+
+def cmd_chain_sync(args) -> int:
+    """Move the head with its sub-pieces: on-dev when all are on dev, dropped when all are dropped."""
+    root = Path(args.root).resolve()
+    head, subs = head_named(root, getattr(args, "head", None), "sync")
+    want, why = chain_state(head, subs)
+    moved = move_head(head, want)
+    if not moved:
+        print(f"{head.name}: {head.status} · {why}")
+    return 0
+
+
+def move_head(head: Contract, want: str | None) -> bool:
+    """Set the head to what its sub-pieces say, if that is a move. Prints the move."""
+    if want == "on-dev" and head.status == "building":
+        head.set_status("on-dev")
+        print(f"{head.name}: Status: on-dev — the chain is on dev. The client tests the whole feature there; "
+              "one verdict closes it: /mg-ship-kit:done on the head.")
+        return True
+    if want == "dropped" and head.status in ("building", "on-dev"):
+        head.set_status("dropped")
+        print(f"{head.name}: Status: dropped — every sub-piece was dropped.")
+        return True
+    return False
+
+
+def cmd_chain_status(args) -> int:
+    root = Path(args.root).resolve()
+    cs = list_contracts(root)
+    heads = [c for c in cs if c.is_head]
+    if args.head:
+        head, _ = head_named(root, args.head, "list")
+        heads = [head]
+    if args.json:
+        print(json.dumps([{"head": h.name, "status": h.status, "subs": [{"contract": c.name, "status": c.status,
+                                                                          "tracker": c.tracker} for c in subs_of(cs, h)]}
+                          for h in heads], indent=2))
+        return 0
+    if not heads:
+        print("no chains")
+    for h in heads:
+        print(f"{h.name:40} {h.status:10} head")
+        for c in subs_of(cs, h):
+            print(f"  {c.name:38} {c.status:10} {c.tracker or '(no tracker row)'}")
+    return 0
+
+
+def cmd_set_tracker(args) -> int:
+    root = Path(args.root).resolve()
+    c = find_contract(root, args.contract, ("building", "on-dev"), "stamp")
+    c.set_status(c.status, {"Tracker": args.tracker})
+    print(f"{c.name}: Tracker: {args.tracker}")
+    return 0
+
+
+def github_from_gh(root: Path) -> GitHub | str:
+    """A GitHub client for a session outside Actions, from the gh CLI's login; or one line on why there is none."""
+    if shutil.which("gh") is None:
+        return "`gh` isn't installed"
+    tok = sh(["gh", "auth", "token"], cwd=root)
+    if tok.returncode != 0 or not tok.stdout.strip():
+        return "`gh` isn't logged in (`gh auth login`)"
+    repo = sh(["gh", "repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"], cwd=root)
+    if repo.returncode != 0 or not repo.stdout.strip():
+        return ("`gh` can't tell which GitHub repo this is (no GitHub remote, or several: `gh repo set-default`)")
+    gh = GitHub(offline=True)
+    gh.token, gh.repo = tok.stdout.strip(), repo.stdout.strip()
+    return gh
+
+
+def wait_for_ci(root: Path, sha: str, timeout: int, poll: int) -> int:
+    """0 once GitHub's Ship check passed on sha as a push to dev · 1 red, or not green in time · 2 can't ask."""
+    gh = github_from_gh(root)
+    if isinstance(gh, str):
+        print(f"can't ask GitHub whether the check passed: {gh}. Look at the repo's Actions tab yourself; "
+              "the chain waits.")
+        return 2
+    start, deadline = time.time(), time.time() + timeout
+    print(f"waiting for the Ship check on {sha[:10]} (dev) …")
+    while True:
+        try:
+            v = gh.verdict(sha)
+        except SystemExit:
+            print("GitHub didn't answer (network, or the token lacks access to this repo's Actions). The chain "
+                  "waits; run ci-wait again, or look at the Actions tab.")
+            return 2
+        if v == "passed":
+            print(f"the Ship check passed on {sha[:10]} on dev.")
+            return 0
+        if v == "failed":
+            print(f"the Ship check failed on {sha[:10]} on dev: red. The chain halts here. Read the run's log on the "
+                  "Actions tab, fix it, push again.")
+            return 1
+        now = time.time()
+        if v == "none" and now - start >= min(timeout, CI_NEVER_STARTED_S):
+            print(f"no run of the Ship check exists for {sha[:10]} on dev after {int(now - start)}s. Is "
+                  f"{CI_WORKFLOW} on dev, and are Actions on for this repo? The chain halts here.")
+            return 1
+        if now >= deadline:
+            print(f"still running after {timeout}s. The chain halts here: check the Actions tab, then run ci-wait "
+                  "again when it's green.")
+            return 1
+        time.sleep(poll)
+
+
+def cmd_ci_wait(args) -> int:
+    """Wait for GitHub's Ship check on a commit pushed to dev. A chain starts its next sub-piece only on green."""
+    root = Path(args.root).resolve()
+    sha = rev(root, args.sha) if is_commit(root, args.sha) else ""
+    if not sha:
+        die(f"{args.sha!r} is not a commit here")
+    return wait_for_ci(root, sha, args.timeout, args.poll)
 
 
 def is_bookkeeping(f: str, cfg: dict | None = None) -> bool:
@@ -1128,6 +1739,165 @@ def cmd_env_check(args) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- the secret scan (D67–D70)
+def find_gitleaks() -> str | None:
+    return shutil.which("gitleaks")
+
+
+def gitleaks_version(tool: str) -> str:
+    r = sh([tool, "version"])
+    return r.stdout.strip().lstrip("v") if r.returncode == 0 else ""
+
+
+def gitleaks_config() -> Path:
+    """The kit's gitleaks rules: gitleaks' own defaults, nothing taken out. Passed every time, so a .gitleaks.toml in
+    the project (which could switch rules off) is never read. The CI copy sits next to the CI copy of this script."""
+    here = Path(__file__).resolve().parent / "gitleaks.toml"
+    return here if here.exists() else kit_root() / "templates" / "ci" / "gitleaks.toml"
+
+
+def allow_problems(root: Path) -> list[str]:
+    """Lines of .gitleaksignore that secret-allow didn't write: each fingerprint sits under its '# allowed' line."""
+    p = root / GITLEAKS_IGNORE
+    if not p.exists():
+        return []
+    bad, prev = [], ""
+    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        s = line.strip()
+        if s and not s.startswith("#") and not prev.startswith(ALLOW_MARK):
+            bad.append(s)
+        prev = s
+    return bad
+
+
+def scan_secrets(root: Path, log_opts: list[str] | None) -> tuple[int, list[dict], str]:
+    """Run gitleaks on the commits `git log <log_opts>` lists (None: the whole history).
+    Returns (0 clean · 1 found · 2 can't scan, findings, note). Inline `gitleaks:allow` comments are ignored and the
+    kit's rules are used, so only the owner's .gitleaksignore entries clear a finding (D68)."""
+    tool = find_gitleaks()
+    if not tool:
+        return 2, [], f"gitleaks not found, so the secret scan can't run and nothing is pushed (D67). {GITLEAKS_HINT}."
+    ver = gitleaks_version(tool)
+    if not ver.startswith("8."):
+        return 2, [], f"gitleaks {ver or '(unknown version)'} found; the kit needs 8.x. {GITLEAKS_HINT}."
+    bad = allow_problems(root)
+    if bad:
+        return 2, [], (f"{GITLEAKS_IGNORE} has lines secret-allow didn't write: {short_list(bad, 3)}. Only the owner "
+                       "clears a finding, through `ship_check.py secret-allow`: remove those lines.")
+    if log_opts is not None and not log_opts:
+        return 0, [], "no new commits"
+    with tempfile.TemporaryDirectory() as td:
+        report = Path(td) / "report.json"
+        cmd = [tool, "git", "--no-banner", "--no-color", "--redact", "--ignore-gitleaks-allow", "--log-level", "error",
+               "--config", str(gitleaks_config()), "--report-format", "json", "--report-path", str(report),
+               "--exit-code", "1"]
+        if log_opts:
+            cmd += ["--log-opts", " ".join(log_opts)]
+        r = sh(cmd + ["."], cwd=root)
+        if r.returncode not in (0, 1):
+            return 2, [], f"gitleaks failed (exit {r.returncode}): {(r.stderr or r.stdout).strip()[:300]}"
+        try:
+            found = json.loads(report.read_text()) if report.exists() else []
+        except ValueError:
+            return 2, [], "gitleaks wrote a report this script can't read."
+    if r.returncode == 1 and not found:
+        return 2, [], "gitleaks reported leaks but listed none."
+    return (1 if found else 0), found, ""
+
+
+def secret_lines(found: list[dict], n: int = 10) -> list[str]:
+    out = [f"  {f.get('File')}:{f.get('StartLine')} · {f.get('RuleID')} · commit {str(f.get('Commit', ''))[:10]} · "
+           f"fingerprint {f.get('Fingerprint')}" for f in found[:n]]
+    if len(found) > n:
+        out.append(f"  … and {len(found) - n} more")
+    return out
+
+
+def new_commits(root: Path, tip: str, exclude: list[str]) -> list[str] | None:
+    """`git log` arguments for the commits in tip that aren't in any excluded ref, nor before setup (ci_since, as
+    first written: older history is reported once at setup and never blocks, D69). [] when there's nothing new."""
+    nots = [e for e in exclude if e == "--remotes" or is_commit(root, e)]
+    s = locked_ci_since(root)
+    if s and is_commit(root, s):
+        nots.append(rev(root, s))
+    opts = [tip] + (["--not"] + nots if nots else [])
+    r = sh(["git", "rev-list", "--count", *opts], cwd=root)
+    if r.returncode != 0:
+        return None
+    return opts if r.stdout.strip() != "0" else []
+
+
+def ci_scan_range(root: Path, branch: str, before: str, after: str) -> list[str] | None:
+    """The commits a GitHub push brought: after minus before, or, for a new branch, minus every other branch."""
+    if before and before != ZERO_SHA and is_commit(root, before):
+        return new_commits(root, after, [before])
+    others = [r for r in git_out(root, "for-each-ref", "--format=%(refname)", "refs/remotes/origin").split()
+              if r not in (f"refs/remotes/origin/{branch}", "refs/remotes/origin/HEAD")]
+    return new_commits(root, after, others)
+
+
+def report_scan(code: int, found: list[dict], note: str, what: str) -> None:
+    if code == 0:
+        print(f"secret scan: clean ({note or what}).")
+    elif code == 1:
+        print(f"secret scan: {len(found)} possible secret(s) in {what}:")
+        for line in secret_lines(found):
+            print(line)
+        print(SECRET_FIX)
+    else:
+        print(f"secret scan: {note}")
+
+
+def cmd_secret_scan(args) -> int:
+    """Scan new commits for secrets: 0 clean · 1 found · 2 can't scan. The push gate runs it for every push (any
+    branch, D70); GitHub runs it with --ci. --history scans everything and only reports (setup runs it once)."""
+    root = Path(args.root).resolve()
+    if args.history:
+        code, found, note = scan_secrets(root, None)
+        report_scan(code, found, note, "the whole history")
+        if code == 1:
+            print("History is reported, not blocked (D69). A key already pushed is exposed: replace it at its source. "
+                  "New commits are scanned on every push.")
+        return 0 if code == 1 else code
+    if args.ci:
+        branch = args.branch or os.environ.get("GITHUB_REF_NAME", "")
+        after = args.after or os.environ.get("GITHUB_SHA", "") or "HEAD"
+        before = args.before or os.environ.get("SHIP_BEFORE", "")
+        if not is_commit(root, after):
+            die(f"{after[:10]} is not a commit here: check out with fetch-depth 0.")
+        opts, what = ci_scan_range(root, branch, before, rev(root, after)), f"the commits pushed to {branch or 'this branch'}"
+    else:
+        if not is_commit(root, args.ref):
+            die(f"{args.ref!r} is not a commit here")
+        opts, what = new_commits(root, rev(root, args.ref), ["--remotes"]), f"commits not yet on GitHub ({args.ref})"
+    if opts is None:
+        print("secret scan: git couldn't list the new commits.")
+        return 2
+    code, found, note = scan_secrets(root, opts)
+    report_scan(code, found, note, what)
+    return code
+
+
+def cmd_secret_allow(args) -> int:
+    """The owner's one-line clearing of a false alarm (D68): its fingerprint goes into .gitleaksignore under a line
+    naming the owner, the date and their words."""
+    root = Path(args.root).resolve()
+    fp, who, why = args.fingerprint.strip(), args.by.strip(), " ".join(args.why.split())
+    if not fp or fp.startswith("#") or len(fp.split(":")) < 3:
+        die("give the fingerprint exactly as the secret scan printed it (commit:file:rule:line).")
+    if not who or not why:
+        die("--by and --why are the owner's name and their words.")
+    p = root / GITLEAKS_IGNORE
+    lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+    if fp in (l.strip() for l in lines):
+        print(f"already allowed: {fp}")
+        return 0
+    lines += [f"{ALLOW_MARK}{dt.date.today().isoformat()} by {who}: {why}", fp]
+    p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"allowed: {fp}. Commit {GITLEAKS_IGNORE} with your next commit; the scan skips this finding from now on.")
+    return 0
+
+
 def cmd_ondev(args) -> int:
     """Mark the building contract on-dev once its piece is on origin/<branch>. A removal becomes dropped.
     All four must hold: the commit is on origin/<branch>; nothing outside contracts/ is uncommitted;
@@ -1155,30 +1925,69 @@ def cmd_ondev(args) -> int:
     size, stack = count_size(root, cfg, c), check_stack(root, cfg, c)
     left = check_leftovers(root, cfg, c, False)
     failed = [n for n, r in (("size", size), ("stack", stack), ("leftovers", left)) if r["status"] == "FAIL"]
+    if review_problems(root, cfg, c, "HEAD"):
+        failed.append("security review")
     if failed:
         die(f"{c.name}: the check fails now ({', '.join(failed)}), so it stays building. Run /mg-ship-kit:cto-check.", 1)
     if c.removing:
         c.set_status("dropped")
         print(f"{c.name}: Status: dropped (its code is removed from {args.branch})")
+    elif c.head:
+        c.set_status("on-dev")
+        print(f"{c.name}: Status: on-dev (a sub-piece of {c.head}; the chain goes on with its next sub-piece)")
     else:
         c.set_status("on-dev")
         print(f"{c.name}: Status: on-dev (the client tests it on {args.branch}; the next piece may start)")
+    if c.head:
+        sync_head_of(root, c)
     return 0
+
+
+def sync_head_of(root: Path, sub: Contract) -> None:
+    """After a sub-piece moved, move its head if the chain is complete, or say what holds it back."""
+    cs = list_contracts(root)
+    head = next((h for h in cs if h.is_head and h.name == sub.head), None)
+    if head is None or head.status not in ("building", "on-dev"):
+        return
+    want, why = chain_state(head, subs_of(cs, head))
+    if not move_head(head, want) and want is None and head.status == "building" and "dropped" in why:
+        print(f"{head.name} stays building: {why}")
 
 
 def cmd_done(args) -> int:
     root = Path(args.root).resolve()
+    if not args.contract:
+        # with a chain on dev, "done" means the head: its sub-pieces are on dev too, but the verdict is one
+        on_dev = [c for c in list_contracts(root) if c.status == "on-dev"]
+        heads = [c for c in on_dev if c.is_head]
+        if len(heads) == 1 and all(c.is_head or c.head == heads[0].name for c in on_dev):
+            args.contract = heads[0].name
     c = find_contract(root, args.contract, ("on-dev",), "mark done")
+    if c.head:
+        die(f"{c.name} is a sub-piece of {c.head}: the client's verdict is on the head, not on its parts. "
+            f"Run done --contract {c.head} once the whole chain is accepted.", 1)
     if c.status != "on-dev":
         die(f"{c.name} is {c.status}. Only a piece on dev, accepted by the client, can be done.", 1)
+    subs = subs_of(list_contracts(root), c) if c.is_head else []
+    if c.is_head:
+        want, why = chain_state(c, subs)
+        if want != "on-dev":
+            die(f"{c.name} can't be done: {why}. The verdict covers the whole chain, so every sub-piece must be "
+                "on dev first.", 1)
     c.set_status("done")
     print(f"{c.name}: Status: done")
+    for s in subs:
+        if s.status == "on-dev":
+            s.set_status("done")
+            print(f"{s.name}: Status: done (with the head)")
     return 0
 
 
 def cmd_drop(args) -> int:
     root = Path(args.root).resolve()
     c = find_contract(root, args.contract, ("building", "on-dev"), "drop")
+    if c.is_head:
+        return drop_head(root, c)
     if c.status in ("done", "dropped", "draft", "ready"):
         die(f"{c.name} is {c.status}; only a building or on-dev piece can be dropped.", 1)
     if c.status == "building" and c.removing:
@@ -1191,8 +2000,10 @@ def cmd_drop(args) -> int:
                 "Delete it first, then run drop again.", 1)
         c.set_status("dropped")
         print(f"{c.name}: Status: dropped (it never reached dev)")
+        if c.head:
+            sync_head_of(root, c)
         return 0
-    others = [x for x in list_contracts(root) if x.status == "building"]
+    others = building_pieces(list_contracts(root))
     if others:
         die(f"{others[0].name} is building. Push it to dev or drop it first; one piece at a time.", 1)
     head = git_out(root, "rev-parse", "--short=10", "HEAD")
@@ -1200,6 +2011,443 @@ def cmd_drop(args) -> int:
                               "Removing": f"{dt.date.today().isoformat()}, the client rejected it; built from {c.base}"})
     print(f"{c.name}: removing. Delete its code, run /mg-ship-kit:cto-check (nothing may be added), push to dev; "
           "it becomes dropped when the push lands.")
+    return 0
+
+
+def drop_head(root: Path, head: Contract) -> int:
+    """Drop a chain whose sub-pieces hold no code: the head and every sub-piece become dropped. Once a sub-piece
+    was built, the chain is dropped sub-piece by sub-piece, the last built first, and the head follows by itself."""
+    subs = subs_of(list_contracts(root), head)
+    built = [c for c in subs if c.status in ("building", "on-dev", "done")]
+    if head.status not in ("building", "on-dev"):
+        die(f"{head.name} is {head.status}; only an open or on-dev chain can be dropped.", 1)
+    if built:
+        die(f"{head.name} has built sub-pieces: {', '.join(f'{c.name} ({c.status})' for c in built)}. Drop them one "
+            "at a time, the last one first (each on-dev one becomes a removal); the head becomes dropped when the "
+            "last one does.", 1)
+    changed = [f for f in git_changes(root, head.base) if not f.startswith(CONTRACTS + "/")]
+    if changed:
+        die(f"code was written since {head.name} was picked up ({len(changed)} files, e.g. {changed[0]}), though no "
+            "sub-piece was building. Delete it first, then run drop again.", 1)
+    for c in subs:
+        if c.status != "dropped":
+            c.set_status("dropped")
+    head.set_status("dropped")
+    print(f"{head.name}: Status: dropped, with its {len(subs)} sub-pieces (nothing was built)")
+    return 0
+
+
+# ---------------------------------------------------------------- the security review (D66)
+REVIEWS = CONTRACTS + "/reviews"  # one file per piece; a subfolder, so list_contracts never reads it as a contract
+SEVERITIES = ("critical", "major", "minor")
+BLOCKING = ("critical", "major")
+FINDING_STATES = ("unchecked", "open", "fixed", "waived", "not reproduced")
+SPEND_LEVELS = ("lean", "standard", "deep")
+DEFAULT_SPEND = "standard"
+# Paths whose names say they hold login, secrets, uploads, config or the database's shape: risky in any folder.
+RISKY_NAME_RE = re.compile(r"(auth|login|logout|signin|signup|register|passw|token|jwt|oauth|session|permission|"
+                           r"role|acl|secur|crypt|secret|upload|config|settings|middleware|migration|alembic)", re.I)
+DEP_FILE_RE = re.compile(r"(^|/)(requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|Pipfile(\.lock)?|package\.json|"
+                         r"package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$")
+INFRA_FILE_RE = re.compile(r"(^|/)(Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|compose\.ya?ml|Procfile|railway\.(json|toml)|"
+                           r"nixpacks\.toml|vercel\.json|netlify\.toml|wrangler\.toml|nginx[^/]*\.conf|"
+                           r"\.env\.(example|sample|template))$", re.I)
+# Backend code that reads requests, the database, the environment or the shell. Checked on the whole file: a
+# change anywhere in a file that serves routes can open a hole in them.
+PY_RISKY = (
+    ("routes", re.compile(r"@\w+\.(get|post|put|patch|delete|api_route|websocket)\(|\bAPIRouter\(|\bFastAPI\(")),
+    ("database or SQL", re.compile(r"\.execute\(|\btext\(\s*[f\"']|\bcreate_engine\(|\bSession\b|\bselect\(|"
+                                   r"[\"'](\s*)(SELECT|INSERT|UPDATE|DELETE)\s", re.I)),
+    ("login and permissions", re.compile(r"\bDepends\(|\bSecurity\(|OAuth2|HTTPBearer|\bjwt\b|passlib|bcrypt|"
+                                         r"\bcurrent_user\b|\bpermission", re.I)),
+    ("file uploads", re.compile(r"\bUploadFile\b|\bFile\(|\bForm\(|multipart")),
+    ("config and env", re.compile(r"os\.environ|os\.getenv|\bBaseSettings\b|load_dotenv|CORSMiddleware")),
+    ("shell, eval or unsafe loading", re.compile(r"\bsubprocess\b|os\.system\(|\beval\(|\bexec\(|\bpickle\b|"
+                                                 r"yaml\.load\(|\bmarshal\b")),
+    ("outgoing requests", re.compile(r"\brequests\.(get|post|put|delete|request)\(|\bhttpx\.|urllib\.request")),
+)
+# Frontend lines that handle tokens, cookies or raw HTML. Checked on the piece's added lines only: the words are
+# common enough that a whole-file check would flag every screen.
+FE_RISKY = (
+    ("tokens and browser storage", re.compile(r"localStorage|sessionStorage|document\.cookie|\btoken\b|"
+                                              r"Authorization|password", re.I)),
+    ("raw HTML or eval", re.compile(r"dangerouslySetInnerHTML|\.innerHTML\s*=|\beval\(|new Function\(|"
+                                    r"\bv-html\b|postMessage\(")),
+)
+FINDING_RE = re.compile(r"^###\s+(F\d+)\s*·\s*(\w+)\s*·\s*(.+?)\s*$")
+
+
+def review_path(root: Path, c: Contract) -> Path:
+    return root / REVIEWS / f"{c.name}.md"
+
+
+def git_blob(root: Path, ref: str, f: str) -> str:
+    """The blob id of f at ref, or 'deleted'."""
+    return git_out(root, "rev-parse", "--verify", "--quiet", f"{ref}:{f}") or "deleted"
+
+
+def piece_files(root: Path, cfg: dict, c: Contract, ref: str | None) -> dict[str, str]:
+    """Product files the piece changed since its base, with each file's blob id. ref None reads the working tree
+    (untracked files included), which is what a review sees before the commit; ref 'HEAD' reads the commit, which
+    is what the gate and GitHub see. A clean tree gives both the same answer."""
+    if ref:
+        files = [f for f in git_out(root, "diff", "--name-only", "--no-renames", c.base, ref).splitlines() if f]
+        return {f: git_blob(root, ref, f) for f in sorted(files) if not is_bookkeeping(f, cfg)}
+    tracked = git_out(root, "diff", "--name-only", "--no-renames", c.base).splitlines()
+    untracked = [f for f in git_out(root, "ls-files", "--others", "--exclude-standard").splitlines()
+                 if not any(part in SKIP_DIRS for part in f.split("/")[:-1])]
+    files = sorted({f for f in tracked + untracked if f and not is_bookkeeping(f, cfg)})
+    present = [f for f in files if (root / f).is_file()]
+    blobs: dict[str, str] = {f: "deleted" for f in files}
+    if present:
+        r = subprocess.run(["git", "hash-object", "--stdin-paths"], cwd=root, input="\n".join(present) + "\n",
+                           text=True, capture_output=True)
+        if r.returncode != 0:
+            die(f"git hash-object failed: {r.stderr.strip()}")
+        blobs.update(dict(zip(present, r.stdout.split())))
+    return blobs
+
+
+def review_stamp(blobs: dict[str, str]) -> str:
+    """One short id for exactly this code: any change to a product file the piece touched gives a new stamp."""
+    text = "\n".join(f"{f} {b}" for f, b in sorted(blobs.items()))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def added_lines(root: Path, base: str, ref: str | None, f: str) -> list[str]:
+    """The lines a file gained since base (all of it when new)."""
+    args = ["diff", "--no-color", "--unified=0", base] + ([ref] if ref else []) + ["--", f]
+    out = git_out(root, *args)
+    if not out and not ref and (root / f).is_file() and git_out(root, "ls-files", "--", f) == "":
+        return (root / f).read_text(encoding="utf-8", errors="ignore").splitlines()  # untracked: all of it
+    return [l[1:] for l in out.splitlines() if l.startswith("+") and not l.startswith("+++")]
+
+
+def file_text(root: Path, ref: str | None, f: str) -> str:
+    if ref:
+        r = sh(["git", "show", f"{ref}:{f}"], cwd=root)
+        return r.stdout if r.returncode == 0 else ""
+    p = root / f
+    return p.read_text(encoding="utf-8", errors="ignore") if p.is_file() and p.stat().st_size < 2_000_000 else ""
+
+
+def review_scope(root: Path, cfg: dict, c: Contract, blobs: dict[str, str], ref: str | None) -> list[str]:
+    """Why this piece needs a review: one line per risky file, empty when nothing risky changed (D66). The script
+    decides, never Claude. `review_all: true` in ship.json reviews every piece with code; `review_paths` adds globs
+    (a path the list missed, added once)."""
+    py, nd = cfg.get("python_dir"), cfg.get("node_dir")
+    extra = cfg.get("review_paths", [])
+    why: list[str] = []
+    for f, blob in blobs.items():
+        reasons: list[str] = []
+        if blob == "deleted":
+            continue
+        if cfg.get("review_all"):
+            reasons.append("review_all is on")
+        if any((p.endswith("/") and f.startswith(p)) or f == p or fnmatch.fnmatch(f, p) for p in extra):
+            reasons.append("listed in review_paths")
+        if DEP_FILE_RE.search(f):
+            reasons.append("dependencies")
+        if INFRA_FILE_RE.search(f):
+            reasons.append("deploy or env config")
+        if f.lower().endswith(".sql"):
+            reasons.append("SQL")
+        if not is_test_file(f) and RISKY_NAME_RE.search(f):
+            reasons.append("its name")
+        if not is_test_file(f) and in_dir(f, py) and f.endswith(".py"):
+            text = file_text(root, ref, f)
+            reasons += [label for label, rx in PY_RISKY if rx.search(text)]
+        if not is_test_file(f) and in_dir(f, nd) and f.endswith((".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte")):
+            lines = "\n".join(added_lines(root, c.base, ref, f))
+            reasons += [label for label, rx in FE_RISKY if rx.search(lines)]
+        if reasons:
+            why.append(f"{f} ({', '.join(dict.fromkeys(reasons))})")
+    return why
+
+
+class Review:
+    """A piece's review file, contracts/reviews/<contract>.md. Written only by the script (review-write,
+    review-skip, review-waive); the gate reads it."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.stamp = field(text, "Stamp") or ""
+        self.scope = (field(text, "Scope") or "").lower()
+        self.spend = field(text, "Spend") or ""
+        self.findings: list[dict] = []
+        self.errors: list[str] = []
+        cur: dict | None = None
+        for line in text.splitlines():
+            m = FINDING_RE.match(line)
+            if m:
+                cur = {"id": m.group(1), "severity": m.group(2).lower(), "status": m.group(3).lower(),
+                       "what": "", "where": "", "proof": "", "waiver": ""}
+                if cur["severity"] not in SEVERITIES:
+                    self.errors.append(f"{cur['id']}: unknown severity {cur['severity']!r}")
+                if cur["status"] not in FINDING_STATES:
+                    self.errors.append(f"{cur['id']}: unknown status {cur['status']!r}")
+                self.findings.append(cur)
+                continue
+            k = re.match(r"^(What|Where|Proof|Waiver):\s*(.*)$", line)
+            if k and cur is not None:
+                cur[k.group(1).lower()] = k.group(2).strip()
+        if not re.fullmatch(r"[0-9a-f]{16}", self.stamp):
+            self.errors.append("no valid Stamp line")
+        if not (self.scope.startswith("reviewed") or self.scope.startswith("skipped")):
+            self.errors.append("the Scope line must say reviewed or skipped")
+
+    @property
+    def skipped(self) -> bool:
+        return self.scope.startswith("skipped")
+
+    def blocking(self) -> list[dict]:
+        return [f for f in self.findings if f["severity"] in BLOCKING and f["status"] in ("open", "unchecked")]
+
+    def summary(self) -> str:
+        """The tracker's Security line (D66)."""
+        if self.skipped:
+            return "skipped: no risky files"
+        found = [f for f in self.findings if f["status"] != "not reproduced"]
+        if not found:
+            return "reviewed: nothing found"
+        n = {s: sum(1 for f in found if f["status"] == s) for s in ("fixed", "waived", "open", "unchecked")}
+        parts = [f"{len(found)} found"] + [f"{v} {k}" for k, v in n.items() if v]
+        return ", ".join(parts)
+
+
+def load_review(root: Path, c: Contract) -> Review | None:
+    p = review_path(root, c)
+    return Review(p.read_text(encoding="utf-8")) if p.exists() else None
+
+
+def review_problems(root: Path, cfg: dict, c: Contract, ref: str | None) -> list[str]:
+    """Why the piece may not reach dev on the review's account (D66): no review, a review of other code, a skip note
+    on a risky piece, a finding that blocks. A removal adds nothing and needs no review."""
+    if c.removing:
+        return []
+    blobs = piece_files(root, cfg, c, ref)
+    if not blobs:
+        return []
+    r = load_review(root, c)
+    rel = f"{REVIEWS}/{c.name}.md"
+    if r is None:
+        return [f"no security review for {c.name} ({rel} is missing). Run /mg-ship-kit:cto-check: it runs the review "
+                "(or writes the skip note when no risky file changed). Commit the file with the piece."]
+    if r.errors:
+        return [f"{rel} can't be read: {'; '.join(r.errors)}. Only the kit writes it: run review-write or review-skip "
+                "again."]
+    out = []
+    if r.stamp != review_stamp(blobs):
+        out.append(f"the code changed after the security review ({rel} reviewed other code). Run the review again "
+                   "(after a fix, the checker reruns the proofs and review-write stamps it).")
+    why = review_scope(root, cfg, c, blobs, ref)
+    if r.skipped and why:
+        out.append(f"{rel} is a skip note, but the piece touches risky files: {short_list(why, 5)}. Run the review.")
+    for f in r.blocking():
+        out.append(f"{f['id']} · {f['severity']} · {f['status']}: {f['what'] or '(no text)'} → fix it until its proof "
+                   "passes, or the owner waives it in one line")
+    for f in r.findings:
+        if f["status"] == "waived" and not is_approval(f["waiver"]):
+            out.append(f"{f['id']} is waived with no Waiver line (date, the owner's name and why).")
+        if f["status"] in ("open", "fixed") and not f["proof"]:
+            out.append(f"{f['id']} is {f['status']} with no Proof line: only reproduced findings count.")
+    return out
+
+
+def print_review_verdict(problems: list[str]) -> str:
+    if not problems:
+        print("SECURITY   PASS")
+        return "PASS"
+    print(f"SECURITY   FAIL  {len(problems)} to settle")
+    for p in problems:
+        print(f"  {p}")
+    return "FAIL"
+
+
+def spend_models(cfg: dict) -> tuple[str, dict]:
+    level = cfg.get("spend", DEFAULT_SPEND)
+    if level not in SPEND_LEVELS:
+        die(f"ship.json spend {level!r} must be one of {', '.join(SPEND_LEVELS)}")
+    f = kit_root() / "reference" / "spend.json"
+    models = json.loads(f.read_text())["levels"][level] if f.exists() else {}
+    return level, models
+
+
+def render_review(c: Contract, stamp: str, scope: str, spend: str, findings: list[dict]) -> str:
+    out = [f"# Security review: {c.name}",
+           "<!-- Written by the Ship kit (review-write, review-skip, review-waive). Don't edit it by hand. -->",
+           f"Contract: {c.name}", f"Stamp: {stamp}", f"Scope: {scope}", f"Spend: {spend}",
+           f"Date: {dt.date.today().isoformat()}", "", "## Findings"]
+    if not findings:
+        out.append("None." if scope.startswith("reviewed") else "Not reviewed: no risky file changed.")
+    for f in findings:
+        out += ["", f"### {f['id']} · {f['severity']} · {f['status']}", f"What: {f.get('what', '')}",
+                f"Where: {f.get('where', '')}", f"Proof: {f.get('proof', '')}"]
+        if f.get("waiver"):
+            out.append(f"Waiver: {f['waiver']}")
+    return "\n".join(out) + "\n"
+
+
+def write_review(root: Path, c: Contract, text: str) -> Path:
+    p = review_path(root, c)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def review_target(root: Path, args) -> tuple[dict, Contract]:
+    cfg = load_config(root)
+    c = active_contract(root, getattr(args, "contract", None))
+    if not c:
+        die("no contract is building, so there is nothing to review.", 3)
+    if c.is_head:
+        die(f"{c.name} is a chain head: it owns no code. Each sub-piece is reviewed on its own.")
+    return cfg, c
+
+
+def cmd_review_plan(args) -> int:
+    """What the review needs: the scope, the spend level and its models, and the diff for the reviewer."""
+    root = Path(args.root).resolve()
+    cfg, c = review_target(root, args)
+    blobs = piece_files(root, cfg, c, None)
+    why = review_scope(root, cfg, c, blobs, None)
+    level, models = spend_models(cfg)
+    diff = root / ".ship" / "review" / f"{c.name}.diff"
+    diff.parent.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for f, blob in blobs.items():
+        if git_out(root, "ls-files", "--", f):
+            parts.append(sh(["git", "diff", "--no-color", c.base, "--", f], cwd=root).stdout)
+        else:  # untracked: git diff --no-index exits 1 when the files differ, which they always do here
+            parts.append(sh(["git", "diff", "--no-color", "--no-index", "/dev/null", f], cwd=root).stdout)
+    diff.write_text("".join(parts), encoding="utf-8")
+    plan = {"contract": c.name, "contract_file": str(c.path.relative_to(root)), "removal": bool(c.removing),
+            "files": len(blobs), "risky": why, "spend": level, "models": models,
+            "diff": str(diff.relative_to(root)), "review_file": f"{REVIEWS}/{c.name}.md",
+            "stamp": review_stamp(blobs)}
+    print(json.dumps(plan, indent=2))
+    return 0
+
+
+def cmd_review_skip(args) -> int:
+    root = Path(args.root).resolve()
+    cfg, c = review_target(root, args)
+    blobs = piece_files(root, cfg, c, None)
+    why = review_scope(root, cfg, c, blobs, None)
+    if why:
+        die(f"this piece touches risky files, so it needs the review, not a skip note: {short_list(why, 5)}", 1)
+    p = write_review(root, c, render_review(c, review_stamp(blobs), "skipped: no risky files", "none", []))
+    print(f"wrote {p.relative_to(root)}: skipped, no risky file changed. Commit it with the piece.")
+    return 0
+
+
+def cmd_review_write(args) -> int:
+    """Save the review from the checker's JSON: {"findings": [{"id", "severity", "status", "what", "where",
+    "proof"}]}. A waiver already in the file stays while its finding is still open. Stamps the code as it is now."""
+    root = Path(args.root).resolve()
+    cfg, c = review_target(root, args)
+    try:
+        data = json.loads(Path(args.findings).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        die(f"can't read {args.findings}: {e}")
+    old = load_review(root, c)
+    waived = {f["id"]: f["waiver"] for f in (old.findings if old else []) if f["status"] == "waived" and f["waiver"]}
+    findings, seen = [], set()
+    for i, f in enumerate(data.get("findings", []), 1):
+        fid = str(f.get("id") or f"F{i}")
+        sev, status = str(f.get("severity", "")).lower(), str(f.get("status", "")).lower()
+        if not re.fullmatch(r"F\d+", fid) or fid in seen:
+            die(f"finding {fid!r}: ids are F1, F2 … and each is used once")
+        seen.add(fid)
+        if sev not in SEVERITIES:
+            die(f"{fid}: severity must be one of {', '.join(SEVERITIES)}")
+        if status == "waived" and fid not in waived:
+            die(f"{fid}: only the owner waives a finding (review-waive), never the checker")
+        if status not in FINDING_STATES:
+            die(f"{fid}: status must be one of {', '.join(s for s in FINDING_STATES if s != 'waived')}")
+        if status in ("open", "fixed") and not str(f.get("proof", "")).strip():
+            die(f"{fid}: an {status} finding needs a proof (a failing test or a request that shows it)")
+        row = {"id": fid, "severity": sev, "status": status, "what": " ".join(str(f.get("what", "")).split()),
+               "where": str(f.get("where", "")).strip(), "proof": str(f.get("proof", "")).strip()}
+        if fid in waived and status in ("open", "waived"):
+            row["status"], row["waiver"] = "waived", waived[fid]
+        findings.append(row)
+    level, models = spend_models(cfg)
+    spend = f"{level} (reviewer {models.get('reviewer', '?')}, checker {models.get('checker', '?')})"
+    blobs = piece_files(root, cfg, c, None)
+    p = write_review(root, c, render_review(c, review_stamp(blobs), "reviewed", spend, findings))
+    r = Review(p.read_text(encoding="utf-8"))
+    print(f"wrote {p.relative_to(root)}: {r.summary()}")
+    for f in r.blocking():
+        print(f"  blocks: {f['id']} · {f['severity']} · {f['status']}: {f['what']}")
+    return 1 if r.blocking() else 0
+
+
+def cmd_review_waive(args) -> int:
+    """The owner's one-line waiver of a finding, in their words (D66). Doesn't change the stamp."""
+    root = Path(args.root).resolve()
+    cfg, c = review_target(root, args)
+    r = load_review(root, c)
+    if r is None:
+        die(f"{c.name} has no review yet.")
+    hit = next((f for f in r.findings if f["id"] == args.finding), None)
+    if hit is None:
+        die(f"{c.name}'s review has no finding {args.finding}.")
+    if hit["status"] not in ("open", "unchecked"):
+        die(f"{args.finding} is {hit['status']}; only an open finding can be waived.")
+    if not args.by.strip() or not args.why.strip():
+        die("a waiver needs the owner's name (--by) and their reason in their words (--why)")
+    hit["status"], hit["waiver"] = "waived", f"{dt.date.today().isoformat()}, {args.by.strip()}: {' '.join(args.why.split())}"
+    write_review(root, c, render_review(c, r.stamp, r.scope, r.spend, r.findings))
+    print(f"{args.finding} waived by {args.by.strip()}. It shows on the tracker row and in the release note.")
+    return 0
+
+
+def cmd_review_status(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    c = find_contract(root, args.contract, ("building", "on-dev"), "show") if args.contract else active_contract(root, None)
+    if not c:
+        die("no contract is building.", 3)
+    r = load_review(root, c)
+    line = r.summary() if r else "not reviewed yet"
+    if args.line:
+        print(f"Security: {line}")
+        return 0
+    print(f"{c.name} · Security: {line}")
+    if c.status == "building":
+        return 0 if print_review_verdict(review_problems(root, cfg, c, None)) == "PASS" else 1
+    return 0
+
+
+def release_waivers(root: Path, last_release: str | None = None) -> list[str]:
+    """Waived findings in reviews that haven't reached main yet: the release note lists each one (D66). On GitHub's
+    run for a push to main, origin/main is already the pushed commit, so the caller passes the commit main was at
+    before the push."""
+    if last_release and last_release != ZERO_SHA and is_commit(root, last_release):
+        base = git_out(root, "merge-base", "HEAD", last_release)
+    else:
+        main = next((r for r in ("refs/remotes/origin/main", "refs/remotes/origin/master") if is_commit(root, r)), None)
+        base = git_out(root, "merge-base", "HEAD", main) if main else ""
+    if base:
+        names = [f for f in git_out(root, "diff", "--name-only", base, "HEAD", "--", REVIEWS).splitlines() if f]
+    else:
+        names = [f.relative_to(root).as_posix() for f in sorted((root / REVIEWS).glob("*.md"))] \
+            if (root / REVIEWS).exists() else []
+    out = []
+    for n in names:
+        p = root / n
+        if not p.is_file():
+            continue
+        for f in Review(p.read_text(encoding="utf-8")).findings:
+            if f["status"] == "waived":
+                out.append(f"{f['id']} {f['severity']}, {f['what']} ({Path(n).stem}; {f['waiver']})")
+    return out
+
+
+def cmd_review_waivers(args) -> int:
+    w = release_waivers(Path(args.root).resolve())
+    print(f"Waived: {len(w)}" + ("" if not w else "\n" + "\n".join(f"  {x}" for x in w)))
     return 0
 
 
@@ -1267,7 +2515,7 @@ def rules_since(root: Path, cfg: dict, since: str) -> tuple[dict, list[str]]:
     if old is None:  # ship.json is new in this push: no extra bookkeeping paths yet
         rules["bookkeeping"] = []
         return rules, notes
-    for key in ("python_dir", "node_dir", "bookkeeping"):
+    for key in ("python_dir", "node_dir", "bookkeeping", "review_all", "review_paths"):
         if key in old:
             rules[key] = old[key]
         else:
@@ -1333,16 +2581,20 @@ def dev_verdict(root: Path, cfg: dict, since: str, how: str, ci: bool = False) -
         # moving the folders changes what the check scans, so it rides with an approved piece like code does
         code.append(f"{CONFIG} (the backend or frontend folder changed)")
     if not code:
-        print("bookkeeping only (contracts, ship.json, CLAUDE.md, .claude/settings.json, CI files, readme): nothing to check.")
+        print("bookkeeping only (contracts, ship.json, CLAUDE.md, .gitleaksignore, .claude/settings.json, CI files, readme): nothing to check.")
         return 0
-    building = [c for c in list_contracts(root) if c.status == "building"]
+    all_cs = list_contracts(root)
+    building = building_pieces(all_cs)
     if len(building) > 1:
         print("more than one contract is building: " + ", ".join(c.name for c in building) +
               ". One piece at a time: drop the extra one.")
         return 1
     if not building:
+        heads = open_heads(all_cs)
         print(f"product code changed and no contract is building, so no check covers it: {short_list(code)}. "
-              "Every change belongs to a piece (D1): pick one up with /mg-ship-kit:next, or remove the change.")
+              + (f"Chain {heads[0].name} is open but none of its sub-pieces is building: a sub-piece's code is "
+                 "pushed while that sub-piece is building (/mg-ship-kit:chain)." if heads else
+                 "Every change belongs to a piece (D1): pick one up with /mg-ship-kit:next, or remove the change."))
         return 3
     c = building[0]
     c.check_ready()
@@ -1358,7 +2610,8 @@ def dev_verdict(root: Path, cfg: dict, since: str, how: str, ci: bool = False) -
             return 1
     size, stack = count_size(root, cfg, c), check_stack(root, cfg, c)
     left = check_leftovers(root, cfg, c, False)
-    return 0 if print_report(c, size, stack, left, ci=ci) == "PASS" else 1
+    sec = review_problems(root, cfg, c, "HEAD")
+    return 0 if print_report(c, size, stack, left, ci=ci, security=sec, lesson=lesson_problem(root, c)) == "PASS" else 1
 
 
 def cmd_gate_dev(args) -> int:
@@ -1445,7 +2698,7 @@ def ci_since(root: Path, cfg: dict, before: str, gh: GitHub) -> tuple[str, str]:
     return fallback_since(root, cfg)
 
 
-def ci_release(root: Path, gh: GitHub, wait_s: int) -> int:
+def ci_release(root: Path, gh: GitHub, wait_s: int, before: str = "") -> int:
     """For a push to main: no env file, every piece has a verdict, the commit came through dev, and the check
     passed there."""
     env = env_files(root, "HEAD")
@@ -1465,6 +2718,8 @@ def ci_release(root: Path, gh: GitHub, wait_s: int) -> int:
         print("release blocked — this commit never reached dev. Push it to dev first (the check runs there), then "
               "release dev: `git push origin dev:main`.")
         return 1
+    waivers = release_waivers(root, before)
+    print(f"Waived: {len(waivers)}" + "".join(f"\n  {w}" for w in waivers))
     if not gh.ready:
         if in_actions():
             print("release blocked — no GITHUB_TOKEN, so the check can't confirm the dev check passed. Use the kit's "
@@ -1508,11 +2763,19 @@ def cmd_ci(args) -> int:
             else:
                 since, how = ci_since(root, cfg, args.before or os.environ.get("SHIP_BEFORE", ""), gh)
             code = dev_verdict(root, cfg, since, how, ci=True)
+            # from the same point as the check, so commits of a red push are scanned again on the next one
+            scan = new_commits(root, rev(root, "HEAD"), [since])
         elif branch in ("main", "master"):
-            code = ci_release(root, gh, args.wait)
+            code = ci_release(root, gh, args.wait, args.before or os.environ.get("SHIP_BEFORE", ""))
+            scan = ci_scan_range(root, branch, args.before or os.environ.get("SHIP_BEFORE", ""), rev(root, "HEAD"))
         else:
             print("not dev, main or master: nothing to check.")
-            code = 0
+            code, scan = 0, None
+        if branch in ("dev", "main", "master"):
+            s_code, found, note = scan_secrets(root, scan) if scan is not None else (2, [], "git couldn't list the new commits.")
+            report_scan(s_code, found, note, "the commits since the last pass")
+            if s_code:
+                code = 1
         print("PASS: this commit may deploy." if code == 0 else "FAIL: nothing deploys from this commit. Fix the "
               "check first; nothing ships while a check fails.")
     text = buf.getvalue()
@@ -1540,7 +2803,8 @@ def kit_root() -> Path:
 
 def ci_files() -> list[tuple[Path, str]]:
     tpl = kit_root() / "templates" / "ci"
-    return [(tpl / "ship-check.yml", CI_WORKFLOW), (Path(__file__).resolve(), CI_SCRIPT), (tpl / "README.md", CI_NOTES)]
+    return [(tpl / "ship-check.yml", CI_WORKFLOW), (Path(__file__).resolve(), CI_SCRIPT), (tpl / "README.md", CI_NOTES),
+            (tpl / "ship-secrets.yml", SECRETS_WORKFLOW), (tpl / "gitleaks.toml", CI_GITLEAKS_CONFIG)]
 
 
 def install_ci(root: Path) -> list[str]:
@@ -1559,39 +2823,131 @@ def install_ci(root: Path) -> list[str]:
     return changed
 
 
-def install_cloud_settings(root: Path) -> str:
-    """Declare the kit's marketplace and plugin in the project's .claude/settings.json, so any session that opens
-    the repo, a cloud one included, loads the plugin with no install (D59). Merges: other keys stay as they are.
-    Replaces an older address under the same marketplace name. Returns one line for setup's output."""
+def drop_plugin_declaration(root: Path) -> str:
+    """Take the kit out of the project's .claude/settings.json (D65). The plugin now comes from the owner's claude.ai
+    account, which keeps it current in chat and in Claude Code. A project-declared copy would outrank the account
+    copy on every machine that trusts the repo and update on its own schedule. Removes only the kit's own entries;
+    deletes the file if nothing else is left in it. Returns one line for setup's output."""
     path = root / CLOUD_SETTINGS
-    data: dict = {}
-    if path.exists():
-        try:
-            data = json.loads(path.read_text() or "{}")
-        except json.JSONDecodeError:
-            return (f"cloud: {CLOUD_SETTINGS} isn't valid JSON, so setup left it alone. Fix it and rerun setup; "
-                    "until then cloud sessions don't load the plugin.")
-        if not isinstance(data, dict):
-            return f"cloud: {CLOUD_SETTINGS} isn't a JSON object, so setup left it alone. Fix it and rerun setup."
+    if not path.exists():
+        return "plugin: comes from your claude.ai account (Customize → Plugins); nothing declared in the repo."
+    try:
+        data = json.loads(path.read_text() or "{}")
+    except json.JSONDecodeError:
+        return (f"plugin: {CLOUD_SETTINGS} isn't valid JSON, so setup left it alone. If it names mg-ship-kit, "
+                "delete those lines by hand: the plugin comes from your claude.ai account now.")
+    if not isinstance(data, dict):
+        return f"plugin: {CLOUD_SETTINGS} isn't a JSON object, so setup left it alone."
     before = json.dumps(data, sort_keys=True)
-    want = {"source": {"source": "github", "repo": KIT_REPO}}
     markets = data.get("extraKnownMarketplaces")
-    if not isinstance(markets, dict):
-        markets = data["extraKnownMarketplaces"] = {}
-    old = markets.get(KIT_MARKETPLACE)
-    markets[KIT_MARKETPLACE] = want
+    if isinstance(markets, dict):
+        markets.pop(KIT_MARKETPLACE, None)
+        if not markets:
+            data.pop("extraKnownMarketplaces")
     plugins = data.get("enabledPlugins")
-    if not isinstance(plugins, dict):
-        plugins = data["enabledPlugins"] = {}
-    plugins.pop(KIT_PLUGIN_OLD, None)
-    plugins[KIT_PLUGIN] = True
+    if isinstance(plugins, dict):
+        for k in [k for k in plugins if k.split("@")[-1] == KIT_MARKETPLACE]:
+            plugins.pop(k)
+        if not plugins:
+            data.pop("enabledPlugins")
     if json.dumps(data, sort_keys=True) == before:
-        return f"cloud: {CLOUD_SETTINGS} already declares the plugin; cloud sessions on this repo load it."
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    moved = old is not None and old != want
-    return (f"cloud: wrote {CLOUD_SETTINGS}" + (f" (the kit's address changed to {KIT_REPO})" if moved else "")
-            + f": cloud sessions on this repo load the plugin, if Claude's GitHub app can reach {KIT_REPO}.")
+        return "plugin: comes from your claude.ai account (Customize → Plugins); nothing declared in the repo."
+    if data:
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        done = f"took the kit's lines out of {CLOUD_SETTINGS} (the rest stays)"
+    else:
+        path.unlink()
+        done = f"deleted {CLOUD_SETTINGS}, which held only the kit's lines"
+    return (f"plugin: {done}. The plugin comes from your claude.ai account now (D65); a copy declared in the repo "
+            "would outrank it and update on its own. Commit the change.")
+
+
+def local_install_note(home: Path) -> str | None:
+    """A copy installed with /plugin on this machine outranks the account copy and doesn't update with it (D65)."""
+    f = home / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        found = f.exists() and re.search(r'"mg-ship-kit@', f.read_text()) is not None
+    except OSError:
+        found = False
+    if not found:
+        return None
+    return ("WARNING: mg-ship-kit is also installed on this machine with /plugin. That copy outranks the one on your "
+            "claude.ai account and doesn't update with it. Remove it: /plugin uninstall mg-ship-kit@ship-kit, then "
+            "/plugin marketplace remove ship-kit, then /reload-plugins.")
+
+
+CLAUDE_POINTER = ("Ship's rules come from the mg-ship-kit plugin at session start, not from this file. "
+                  "This file holds only what's true of this project.")
+KIT_SECTION = "## How we build"  # the template's section that held only kit rules before D64
+
+
+def kit_lines() -> set[str]:
+    f = Path(__file__).resolve().parent.parent / "reference" / "claude-md-kit-lines.txt"
+    if not f.exists():  # the project's CI copy has no reference/ folder; cleanup only runs from the plugin
+        return set()
+    return {l.strip() for l in f.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")}
+
+
+def clean_claude_md(cm: Path) -> list[str]:
+    """Take the kit's own rules out of a project's CLAUDE.md (D64): they come from the plugin now. Deletes only exact
+    copies of lines the template once held, drops the kit's section when it ends up empty, and adds the pointer line
+    once. Lines in the kit's section that don't match (edited by hand) stay and are listed. Returns setup's lines."""
+    known = kit_lines()
+    if not known:
+        return ["CLAUDE.md: the plugin's list of kit lines is missing; left untouched."]
+    text = cm.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    removed = [l for l in lines if l.strip() in known]
+    out = [l for l in lines if l.strip() not in known]
+    edited: list[str] = []
+    i = next((n for n, l in enumerate(out) if l.strip() == KIT_SECTION), None)
+    if i is not None:
+        j = next((n for n in range(i + 1, len(out)) if out[n].startswith("## ")), len(out))
+        body = [l for l in out[i + 1:j] if l.strip()]
+        if not body:
+            del out[i:j]
+        else:
+            edited = [l.strip() for l in body]
+    if CLAUDE_POINTER not in out:
+        h = next((n for n, l in enumerate(out) if l.startswith("# ")), None)
+        if h is None:
+            out[0:0] = [CLAUDE_POINTER, ""]
+        else:  # right under the title, after the template's comment block if there is one
+            at = h + 1
+            while at < len(out):
+                s = out[at].strip()
+                if s.startswith("<!--"):
+                    while at < len(out) and "-->" not in out[at]:
+                        at += 1
+                elif s:
+                    break
+                at += 1
+            out[at:at] = ["", CLAUDE_POINTER, ""]
+    new = re.sub(r"\n{3,}", "\n\n", "\n".join(out).strip("\n")) + "\n"
+    if new == text:
+        return ["CLAUDE.md: holds project facts only; Ship's rules come from the plugin."]
+    cm.write_text(new, encoding="utf-8")
+    msg = [f"CLAUDE.md: took out {len(removed)} kit line(s), now in the plugin's rules, and added the pointer line."
+           if removed else "CLAUDE.md: added the pointer line; Ship's rules come from the plugin."]
+    if edited:
+        msg.append(f"CLAUDE.md: {len(edited)} line(s) under \"{KIT_SECTION}\" differ from any kit line, so they stay. "
+                   "Show them to the owner; delete what the plugin's rules now cover, move the rest to "
+                   "\"Rules the code can't show\":")
+        msg += [f"  {l}" for l in edited]
+    return msg
+
+
+def cmd_kit_mark(args) -> int:
+    """Record that the project page's Facts now say `Kit: mg-ship-kit <this version>` (D64)."""
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    if cfg.get("kit_line") == KIT_VERSION:
+        print(f"Kit line already marked at {KIT_VERSION}.")
+        return 0
+    cfg["kit_line"] = KIT_VERSION
+    save_config(root, cfg)
+    print(f"marked: the project page says Kit: mg-ship-kit {KIT_VERSION}. Commit ship.json with your next commit.")
+    return 0
 
 
 def cmd_ci_install(args) -> int:
@@ -1608,7 +2964,8 @@ def cmd_status(args) -> int:
         n = {k: c.size[k][0] for k in ("screens", "endpoints", "tables")}
         return " · ".join(f"{v} {k[:-1] if v == 1 else k}" for k, v in n.items())
     rows = [{"contract": c.name, "status": c.status, "removing": bool(c.removing), "tracker": c.tracker,
-             "base": c.base, "size": size_line(c), "file": str(c.path.relative_to(root))} for c in list_contracts(root)]
+             "base": c.base, "size": size_line(c), "file": str(c.path.relative_to(root)),
+             "kind": c.kind, "head": c.head} for c in list_contracts(root)]
     if args.json:
         cfg = json.loads((root / CONFIG).read_text()) if (root / CONFIG).exists() else {}
         print(json.dumps({"tracker": cfg.get("tracker"), "contracts": rows}, indent=2))
@@ -1616,7 +2973,8 @@ def cmd_status(args) -> int:
     if not rows:
         print("no contracts yet")
     for r in rows:
-        print(f"{r['contract']:40} {r['status'] + (' (removing)' if r['removing'] else ''):20} {r['tracker'] or '(no tracker row)'}")
+        tag = " (removing)" if r["removing"] else (" (head)" if r["kind"] == "head" else (f" (sub of {r['head']})" if r["head"] else ""))
+        print(f"{r['contract']:40} {r['status'] + tag:30} {r['tracker'] or '(no tracker row)'}")
     return 0
 
 
@@ -1664,6 +3022,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("setup"); s.add_argument("--python-dir"); s.add_argument("--node-dir"); s.add_argument("--force", action="store_true")
     s.add_argument("--no-default-stack", action="store_true", help="don't fall back to the kit's default stack in an empty repo")
     s.add_argument("--track", choices=TRACKS, help="the project's track, from the Track line in its Facts")
+    sub.add_parser("kit-mark", help="record that the project page's Kit line names this plugin version")
     p = sub.add_parser("link"); p.add_argument("--data-source", required=True); p.add_argument("--database"); p.add_argument("--page")
     p = sub.add_parser("gate-dev"); p.add_argument("--since", help="start from this commit (default: origin/dev)")
     p = sub.add_parser("ci"); p.add_argument("--branch"); p.add_argument("--after"); p.add_argument("--before")
@@ -1672,6 +3031,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--wait", type=int, default=600, help="seconds a release waits for a running dev check")
     sub.add_parser("ci-env"); sub.add_parser("ci-install")
     p = sub.add_parser("pickup"); p.add_argument("--file", required=True); p.add_argument("--name"); p.add_argument("--tracker")
+    p = sub.add_parser("split", help="save a head's sub-contracts as draft sub-pieces (the split stop)")
+    p.add_argument("--head", help="the head contract (default: the only open one)")
+    p.add_argument("files", nargs="+", help="the sub-contract files, in build order")
+    p = sub.add_parser("go"); p.add_argument("--head")
+    p = sub.add_parser("chain-next"); p.add_argument("--head")
+    p.add_argument("--green", action="store_true", help="the owner says GitHub's check is green on dev: don't ask GitHub")
+    p.add_argument("--timeout", type=int, default=900, help="seconds to wait for GitHub's check on dev (default 900)")
+    p.add_argument("--poll", type=int, default=20)
+    p = sub.add_parser("chain-sync"); p.add_argument("--head")
+    p = sub.add_parser("chain-status"); p.add_argument("--head"); p.add_argument("--json", action="store_true")
+    p = sub.add_parser("ci-wait"); p.add_argument("--sha", default="HEAD")
+    p.add_argument("--timeout", type=int, default=900, help="seconds to wait for the check (default 900)")
+    p.add_argument("--poll", type=int, default=20, help="seconds between asks (default 20)")
+    p = sub.add_parser("set-tracker"); p.add_argument("--contract", required=True); p.add_argument("--tracker", required=True)
     p = sub.add_parser("ondev"); p.add_argument("--branch", default="dev"); p.add_argument("--quiet", action="store_true")
     p = sub.add_parser("drop"); p.add_argument("--contract")
     p = sub.add_parser("status"); p.add_argument("--json", action="store_true")
@@ -1685,7 +3058,23 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("stack"); p.add_argument("--contract"); p.add_argument("--json", action="store_true")
     p = sub.add_parser("stack-add"); p.add_argument("side", choices=["python", "node"]); p.add_argument("name")
     p = sub.add_parser("done"); p.add_argument("--contract")
+    p = sub.add_parser("review-plan"); p.add_argument("--contract")
+    p = sub.add_parser("review-skip"); p.add_argument("--contract")
+    p = sub.add_parser("review-write"); p.add_argument("--contract"); p.add_argument("--findings", required=True)
+    p = sub.add_parser("review-waive"); p.add_argument("--contract"); p.add_argument("--finding", required=True)
+    p.add_argument("--by", required=True); p.add_argument("--why", required=True)
+    p = sub.add_parser("review-status"); p.add_argument("--contract"); p.add_argument("--line", action="store_true")
+    sub.add_parser("review-waivers")
     p = sub.add_parser("env-check"); p.add_argument("--ref", default="HEAD", help="the commit to look in (default: HEAD)")
+    p = sub.add_parser("secret-scan", help="scan new commits for secrets with gitleaks (D67)")
+    p.add_argument("--ref", default="HEAD", help="what the push sends (default: HEAD); scans its commits not on any remote")
+    p.add_argument("--history", action="store_true", help="scan the whole history and only report (setup runs it once)")
+    p.add_argument("--ci", action="store_true", help="GitHub's run: the commits this push brought")
+    p.add_argument("--branch"); p.add_argument("--before"); p.add_argument("--after")
+    p = sub.add_parser("lesson", help="record what stops a fixed bug next time (D78)")
+    p.add_argument("--contract", required=True); p.add_argument("--test"); p.add_argument("--fact"); p.add_argument("--kit")
+    p = sub.add_parser("secret-allow", help="the owner clears a false alarm in one line (D68)")
+    p.add_argument("fingerprint"); p.add_argument("--by", required=True); p.add_argument("--why", required=True)
     args = ap.parse_args(argv)
     if args.cmd == "setup":
         return cmd_setup(args)
@@ -1699,7 +3088,13 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {"done": cmd_done, "link": cmd_link, "pickup": cmd_pickup, "ondev": cmd_ondev, "drop": cmd_drop,
                 "status": cmd_status, "copy-check": cmd_copy_check, "copy-mark": cmd_copy_mark,
                 "copy-render": cmd_copy_render, "gate-dev": cmd_gate_dev, "ci": cmd_ci, "ci-env": cmd_ci_env,
-                "ci-install": cmd_ci_install, "env-check": cmd_env_check}
+                "ci-install": cmd_ci_install, "env-check": cmd_env_check, "split": cmd_split, "go": cmd_go,
+                "chain-next": cmd_chain_next, "chain-sync": cmd_chain_sync, "chain-status": cmd_chain_status,
+                "ci-wait": cmd_ci_wait, "set-tracker": cmd_set_tracker, "kit-mark": cmd_kit_mark,
+                "review-plan": cmd_review_plan, "review-skip": cmd_review_skip, "review-write": cmd_review_write,
+                "review-waive": cmd_review_waive, "review-status": cmd_review_status,
+                "review-waivers": cmd_review_waivers, "secret-scan": cmd_secret_scan,
+                "secret-allow": cmd_secret_allow, "lesson": cmd_lesson}
     if args.cmd in handlers:
         return handlers[args.cmd](args)
     return 2
