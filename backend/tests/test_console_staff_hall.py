@@ -37,7 +37,8 @@ def test_admin_guests_opens_with_the_password_on_the_same_card(client):
     assert client.post("/api/staff/login", json={"role": "admin", "secret": "admin-pass"}).status_code == 200
     assert client.post("/api/staff/login", json={"role": "admin", "secret": "1234"}).status_code == 401
     assert RU["staff"]["password"] == "Пароль"
-    assert RU["staff"]["adminTitle"] == "Список гостей"
+    assert RU["staff"]["adminTitle"] == "Администратор"
+    assert RU["staff"]["guestsTitle"] == "Список гостей"
 
 
 # Desk

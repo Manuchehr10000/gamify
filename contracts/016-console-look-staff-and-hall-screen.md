@@ -12,10 +12,13 @@ Owner's words: «Build it in the app», from chat 2026-11-02
 
 Design: Gamify Console design system · staff and hall screens
 
+Owner's words: «approved» (the admin login card is titled «Администратор» instead of «Список гостей» on every admin page), from chat 2026-11-07
+
 ## What users see
 
 - /desk, /stand/:code and /moderate use the light Label version of the look (cream plastic, the same stripe and type), built for a phone held standing up, like the staff canvas artboards.
 - The PIN and password login card is the same on every staff and admin page: the role title, «PIN-код» (or «Пароль» on /admin/guests) and «Войти», with «Неверный PIN-код или пароль» under the field after a wrong try. No line above the card (the artboard's «ФОРУМ · ПЕРСОНАЛ» is not built).
+- (added 2026-11-07) On every admin page the card's role title is «Администратор». The /admin/guests page title and its menu item stay «Список гостей».
 - At the desk: search results as tappable rows, «Никого не нашли» when nothing matches, the guest's QR on a card, and the walk-in form.
 - At the stand: the partner, the prize and «Гость: …», then a full-width «Выдано» button; after it «Приз выдан» in green, or «Уже выдано в 14:32» in red if it was given before, each with an icon and the words. An unknown code shows one message card «Код не найден».
 - In moderation: a header with my name, as today (the artboard's «МОДЕРАЦИЯ» line is not built), two screen panels «Ждут проверки» (the count) and «Самая старая ждёт» («N мин», or «меньше минуты» under a minute; left out when nothing waits), and the «Топ-20» box. Then the cards in 1, 2 or 3 columns by width; the penalty button is red and spelled out; a card someone else already checked shows «Уже проверено: …» as a strip; an empty queue shows «Очередь пуста».
@@ -42,6 +45,7 @@ Design: Gamify Console design system · staff and hall screens
 - When I open /hall on a 1920×1080 screen, then all ten names, levels and points show on one screen without scrolling, in the pixel number font, like the Hall artboard.
 - When the network drops, then /hall keeps the last top 10 and shows «Нет связи — показан последний рейтинг».
 - When I open /admin/guests, then I see the same login card with «Пароль».
+- (added 2026-11-07) When I open /admin/tasks, /admin/live, /admin/guests or /admin/settings without being logged in, then the login card is titled «Администратор»; after login the menu still shows «Список гостей».
 - When I open /desk, /stand/:code and /moderate at 320 px wide, then nothing scrolls sideways.
 
 ## Size
@@ -61,3 +65,4 @@ Tables: 0
 
 - Settled by the order decided in piece 23 (2026-11-03): piece 18 comes after this one, so it builds its «Эфир» and logo slides in the dark hall look itself.
 - New language-file keys: none.
+- (added 2026-11-07) New language-file key: staff.guestsTitle («Список гостей»), for the /admin/guests title and menu item; staff.adminTitle becomes «Администратор», the admin role title on the login card.

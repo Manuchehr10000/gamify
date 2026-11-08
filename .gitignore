@@ -8,3 +8,7 @@
 !.env.template
 # Local preview config (absolute paths on one machine)
 .claude/launch.json
+
+# Local test material and macOS files
+.DS_Store
+gamify-test-kit/
