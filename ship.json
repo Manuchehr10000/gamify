@@ -84,5 +84,6 @@
   "bookkeeping": [
     "deploy/"
   ],
-  "ci_since": "1bf5963f526f75bc4d5121ac82d06efe85758dbc"
+  "ci_since": "1bf5963f526f75bc4d5121ac82d06efe85758dbc",
+  "kit_line": "0.12.0"
 }

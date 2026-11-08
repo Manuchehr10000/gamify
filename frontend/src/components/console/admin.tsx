@@ -11,7 +11,7 @@ import { Button, Callout, ConsoleTheme, Icon, Spinner } from './ui'
 const NAV: { to: string; label: string; icon: IconName }[] = [
   { to: '/admin/live', label: 'live.title', icon: 'zap' },
   { to: '/admin/tasks', label: 'tasksAdmin.title', icon: 'upload' },
-  { to: '/admin/guests', label: 'staff.adminTitle', icon: 'users' },
+  { to: '/admin/guests', label: 'staff.guestsTitle', icon: 'users' },
   { to: '/admin/tasks/qr', label: 'qrSheet.title', icon: 'qr' },
 ]
 
