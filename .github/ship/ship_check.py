@@ -2,18 +2,27 @@
 """Ship kit — the CTO check and its helpers.
 
 Subcommands (run from the project root, or pass --root):
-  setup       detect the backend and frontend folders, write ship.json, copy templates and the CI files
+  setup       detect the backend and frontend folders, write ship.json (with the repo's name), copy templates and the CI
+              files; refuses off dev, without origin/dev, or when the code found is another repo's (D90)
   link        store the project's Notion tracker in ship.json
   gate-dev    decide whether the commits since a ref may reach dev (the push gate and CI both use it)
   ci          the check GitHub runs on every push to dev and main, before any deploy
   ci-env      print the backend and frontend folders for the CI workflow
   ci-install  copy the CI workflow, this script and the deploy notes into .github/
-  pickup      save a contract taken from the tracker as contracts/NNN-name.md, status building
+  pickup      save a contract taken from the tracker as contracts/NNN-name.md, status building; the row's Repo
+              column must name this repo (D89)
+  quick       write a quick fix's contract (D92) from the owner's own words, status building, with no tracker row first
   split       save the sub-contracts Claude wrote for a chain head as draft contracts, checked against the head
   go          the owner read the split: every draft sub-piece becomes ready, in build order
   chain-next  pick up the next ready sub-piece of a chain (status building)
   chain-sync  move a head to on-dev once every sub-piece is on dev, or to dropped once every one is dropped
   chain-status list a chain: its head and each sub-piece with its state
+  next-pick   which Ready row of this repo may build now: its Depends on rows are on dev or done (D93)
+  claim-check after pickup wrote Building: does the row, read back, hold this session's Claim? Two sessions that
+              took one row find out here, and the one that lost removes its uncommitted contract (issue #30).
+              --recheck, before the push: is the row still this session's? Removes nothing
+  sync-dev    rebase the building piece onto origin/dev and move its Base there; stops when another piece changed the
+              same files (D93)
   ci-wait     wait for GitHub's Ship check on a commit pushed to dev: 0 passed · 1 failed or timed out · 2 can't ask
   set-tracker store a tracker row's URL in a contract (Code writes the rows of a chain's sub-pieces)
   check       run size + stack + leftovers against the building contract and print one screen
@@ -28,6 +37,13 @@ Subcommands (run from the project root, or pass --root):
   copy-check  compare the tracker's copy of a contract with the repo file
   copy-mark   record that the tracker's copy now matches the repo file
   copy-render print the exact Notion text for a contract's tracker copy
+  map         rebuild the build map (contracts/map/build-map.md) from dev: tables with key columns, endpoints and
+              screens, counted by the size check's code; keeps the few lines Claude wrote on decisions and gaps (D91)
+  map-status  is the map up to date with dev (0), stale (1) or missing (3), and does its Notion copy need writing
+  map-render  print the exact Notion text for the build map's read-only copy
+  map-copy-check compare the build map's Notion copy with the repo file (exit codes as copy-check)
+  map-copy-mark record that the Notion copy now matches the map
+  link-map    store the build map's Notion sub-page in ship.json
   env-check   exit 1 when a commit carries an env file (.env, .env.*; the example files are allowed)
   secret-scan  scan new commits for secrets with gitleaks: the push gate (every branch) and GitHub run it (D67–D70)
   secret-allow the owner's one-line clearing of a false alarm, written to .gitleaksignore (D68)
@@ -42,13 +58,23 @@ Subcommands (run from the project root, or pass --root):
 The security review (D66): every piece with code needs contracts/reviews/<contract>.md, stamped with the code it
 reviewed; the gate and GitHub refuse a missing or stale one, and an open critical or major finding.
 A contract moves draft/ready → building → on-dev → done, or → dropped.
+Parallel builds (D93): one piece builds per session (a cloud session, or a desktop worktree), not per repo. A contract's
+`Depends on:` line names the pieces it needs on dev first; a piece with none builds alongside the others. Before its
+check, sync-dev brings it up to date with what other sessions pushed.
 A chain (D61): one head contract from chat (`Chain: head`), split by Claude Code into sub-contracts (`Head: <name>`)
 that build one after another. The head is picked up like a piece, the split is saved as draft sub-pieces, the owner's
 "go" makes them ready, and each sub-piece then goes building → on-dev with the usual check and push. The head owns
 no code itself: it moves to on-dev when every sub-piece is on dev, and the client's one verdict on the head closes
 them all. A head that is building or on dev blocks release like any piece.
+The quick lane (D92): a one-line fix the owner asks for in Claude Code, in their own words. `quick` writes its contract
+(`Quick: yes`, Size 0, no Fixes line); the check, the push gate and GitHub then hold it to the kit's limits: at most
+QUICK_MAX_LINES lines added and as many removed, in at most QUICK_MAX_FILES files that already existed, and no new,
+deleted or binary file, no dependency, deploy, CI workflow, env, SQL or migration file. ship.json can't raise them. It goes
+building → on-dev → done like a piece; the owner's own look on dev is its verdict.
 Exit codes: 0 pass · 1 fail · 2 usage, contract or tool error · 3 no contract building (and product code changed).
-copy-check exit codes: 0 in-sync · 10 refresh · 11 no-record · 12 hand-edited.
+pickup and claim-check exit 5 when another session took the row (issue #30): pick another one.
+copy-check and map-copy-check exit codes: 0 in-sync · 10 refresh · 11 no-record · 12 hand-edited; copy-check also
+5 taken: the row's copy holds another session's Claim, so it is never overwritten.
 Only python3 is required. vulture and knip are needed for `leftovers`; gitleaks 8 for `secret-scan` (every push).
 
 ship.json folders: python_dir / node_dir are null (none), "." (the project root) or a subfolder.
@@ -75,7 +101,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-KIT_VERSION = "0.12.0"  # keep equal to plugins/mg-ship-kit/.claude-plugin/plugin.json
+KIT_VERSION = "0.17.2"  # keep equal to plugins/mg-ship-kit/.claude-plugin/plugin.json
 CONFIG = "ship.json"
 CONTRACTS = "contracts"
 SYNC_FILE = "notion-sync.json"  # in .ship/ (git-ignored): hash of the repo text last copied to the tracker
@@ -84,8 +110,10 @@ BANNER_MARK = "Read-only copy of"  # first line of every tracker copy Claude Cod
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "dist", "build", "__pycache__", ".ship"}
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's empty tree: "since nothing"
 ZERO_SHA = "0" * 40  # GitHub's `before` when a push creates the branch
-TRACKS = ("devops", "railway", "cloudflare")  # D51: picked per project from the start questions
-READY_TRACKS = ("devops", "railway")  # cloudflare needs its own stack list, size counts and deploy first
+TRACKS = ("devops", "cloudflare")  # D51, D94: picked per project from the start questions
+DROPPED_TRACKS = ("railway",)  # D96: never run; a page that still names it sets its track again in chat
+DEPLOY_WORKFLOW = ".github/workflows/deploy.yml"  # the cloudflare track's deploy, copied once (D97)
+CF_BOOKKEEPING = ("deploy/", DEPLOY_WORKFLOW)  # the deploy files setup copies, listed in ship.json (D97)
 CI_WORKFLOW = ".github/workflows/ship-check.yml"
 CI_SCRIPT = ".github/ship/ship_check.py"
 CI_NOTES = ".github/ship/README.md"
@@ -98,6 +126,7 @@ GITLEAKS_HINT = (f"install gitleaks {GITLEAKS_VERSION} once on this machine: `br
                  f"the file for your system from https://github.com/gitleaks/gitleaks/releases/tag/v{GITLEAKS_VERSION}, "
                  "put on your PATH")
 ALLOW_MARK = "# allowed "  # the line secret-allow writes above each fingerprint
+PROJECT_CI_DIRS = (".github/workflows/", ".github/actions/")  # code GitHub runs: product code unless the kit's own
 BOOKKEEPING_FILES = ("ship.json", "CLAUDE.md", ".gitignore", CLOUD_SETTINGS, GITLEAKS_IGNORE)
 KIT_MARKETPLACE = "ship-kit"  # the name in .claude-plugin/marketplace.json
 ENV_EXAMPLES = (".env.example", ".env.sample", ".env.template")  # env files that hold no secrets: these may be committed
@@ -105,9 +134,14 @@ GITIGNORE_ENV = [".env", ".env.*"] + [f"!{n}" for n in ENV_EXAMPLES]  # the line
 # The words line that opens a contract's body; its four labels follow the Backlog's Source (ship-spec). A chain's
 # sub-piece opens with "From the head:" instead, since it traces to the head contract, not to the client (D61).
 WORDS_LABEL_RE = re.compile(r"^\**(client['’]s words|from my notes on the client|users['’] words|owner['’]s words|from the head)\b", re.I)
-HEADER_KEYS = ("Status", "Base", "Approved", "Tracker", "Removing", "Chain", "Head", "Lesson")  # the lines above a contract's body
+HEADER_KEYS = ("Status", "Base", "Approved", "Tracker", "Removing", "Chain", "Head", "Lesson", "Repo", "Quick",
+               "Depends on", "Claim")  # the lines above a contract's body
+SETUP_BRANCH = "dev"  # setup's files land on dev, where the check runs (D90)
 GO_PENDING = "pending: the owner's go on the chain"  # a sub-piece's Approved line between the split and the go
 MAX_SUBS = 6  # a chain is two to six sub-pieces; more is two chains
+QUICK_MAX_FILES = 3  # the quick lane (D92): the kit's limits, never the project's — ship.json can't raise them
+QUICK_MAX_LINES = 10  # lines added, and lines removed, across the whole quick fix
+MIGRATION_RE = re.compile(r"(^|/)[^/]*(migration|alembic)[^/]*(/|$)", re.I)
 CI_NEVER_STARTED_S = 180  # ci-wait gives up this soon when no run of the check exists at all for the commit
 SECRET_FIX = ("Take the key out of the code (read it from an environment file) and take it out of these commits "
               "before pushing: for the last commit, fix it and `git commit --amend`; for older ones, `git reset --soft "
@@ -125,7 +159,34 @@ DEFAULT_ALIASES = {
     "beautifulsoup4": "bs4", "scikit-learn": "sklearn", "opencv-python": "cv2", "pyyaml": "yaml",
     "psycopg2-binary": "psycopg2", "python-dateutil": "dateutil", "msgpack-python": "msgpack",
 }
-PY_STDLIB = set(getattr(sys, "stdlib_module_names", set())) | {"typing_extensions"}
+def python_stdlib(names: frozenset[str] | None = None) -> set[str]:
+    """The standard library's top-level module names, from the Python that runs the check.
+
+    Python 3.10+ lists them in sys.stdlib_module_names. Older Pythons (macOS ships 3.9 as /usr/bin/python3)
+    don't, and an empty list made every `import json` look like a new package: read the library folder instead.
+    """
+    if names is None:
+        names = getattr(sys, "stdlib_module_names", None)
+    if names:
+        return set(names)
+    import sysconfig
+    found = set(sys.builtin_module_names)
+    lib = Path(sysconfig.get_paths()["stdlib"])
+    for folder in (lib, lib / "lib-dynload"):
+        if not folder.is_dir():
+            continue
+        for p in folder.iterdir():
+            if p.name in ("site-packages", "dist-packages", "__pycache__") or p.name.startswith("."):
+                continue
+            if p.is_dir():
+                if (p / "__init__.py").exists():
+                    found.add(p.name)
+            elif p.suffix in (".py", ".so", ".pyd"):
+                found.add(p.name.split(".")[0])
+    return found
+
+
+PY_STDLIB = python_stdlib() | {"typing_extensions"}
 NODE_BUILTINS = {"fs", "path", "os", "url", "http", "https", "crypto", "child_process", "util", "events",
                  "stream", "buffer", "assert", "process", "module", "readline", "zlib", "net", "tls"}
 VULTURE_EXCLUDE = ["*/migrations/*", "*/alembic/*", "*/tests/*", "*/test/*", "*/models/*",
@@ -198,9 +259,9 @@ def field(text: str, key: str) -> str | None:
 
 
 class Contract:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, text: str | None = None):
         self.path = path
-        self.text = path.read_text(encoding="utf-8")
+        self.text = path.read_text(encoding="utf-8") if text is None else text  # text: the contract at a commit
         self.name = path.stem
         self.status = (self._field("Status") or "draft").lower()
         if self.status not in STATES:
@@ -213,6 +274,12 @@ class Contract:
         self.lesson = (self._field("Lesson") or "").strip()  # what stops it next time (D78)
         self.is_head = (self._field("Chain") or "").strip().lower() == "head"  # a chain's head contract (D61)
         self.head = (self._field("Head") or "").strip()  # a sub-piece: the name of its head contract
+        self.repo = (self._field("Repo") or "").strip()  # the repo the piece was picked up in (D89)
+        self.quick = bool((self._field("Quick") or "").strip())  # a quick fix, written in Claude Code (D92)
+        self.depends = parse_depends(self._field("Depends on"))  # D93: None (older than the line), [] (none), names
+        self.claim = (self._field("Claim") or "").strip()  # this session's token on the row (issue #30)
+        m = re.search(r"^#\s*Contract:\s*(.+?)\s*$", self.text, re.M)
+        self.title = m.group(1) if m else self.name  # the tracker row's Piece title
         if self.is_head and self.head:
             die(f"contract {self.name}: a contract can't be both a chain head and a sub-piece")
         self.size: dict[str, tuple[int, list[str]]] = {}
@@ -290,6 +357,72 @@ class Contract:
         return out
 
 
+LINK_RE = re.compile(r"https?://[^\s,`]+")
+
+
+def parse_depends(line: str | None, titles: list[str] | None = None) -> list[str] | None:
+    """A contract's `Depends on:` line (D93): None when it has none (a contract from before the line), [] for
+    `none`, else the entries it lists. An entry is a piece name or a row link. A piece name may hold a comma, so a
+    comma separates entries only between whole names: a name in backticks is one entry (ship-spec writes them so),
+    and with the tracker's piece titles at hand, the longest title that fits at each place is one entry. Without
+    titles, bare text splits on every comma (status only; pickup always passes the titles)."""
+    if line is None:
+        return None
+    line = re.sub(r"\*\*", "", line).strip()
+    if line.lower().strip("`. ") in ("none", "nothing", "-", "—", ""):
+        return []
+    known = sorted({t.strip() for t in titles or [] if t.strip()}, key=len, reverse=True)
+
+    def starts(at: int) -> int:
+        """The length of the whole entry that begins at `at` (a link or a known title), or 0."""
+        rest = line[at:]
+        m = LINK_RE.match(rest)
+        if m:
+            return m.end()
+        for t in known:
+            end = len(t)
+            if rest[:end].lower() == t.lower() and (end == len(rest) or re.match(r"\s*(,|$)", rest[end:])):
+                return end
+        return 0
+
+    out, i = [], 0
+    while i < len(line):
+        if line[i] in ", \t":
+            i += 1
+            continue
+        if line[i] == "`":
+            j = line.find("`", i + 1)
+            j = len(line) if j < 0 else j
+            out.append(line[i + 1:j].strip())
+            i = j + 1
+            continue
+        n = starts(i)
+        if n:
+            out.append(line[i:i + n].strip())
+            i += n
+            continue
+        # text no title fits: up to the next comma where a whole entry starts (or the end), quoted as is
+        j = i
+        while True:
+            j = line.find(",", j + 1)
+            if j < 0:
+                j = len(line)
+                break
+            k = j + 1
+            while k < len(line) and line[k] in " \t":
+                k += 1
+            if k >= len(line) or line[k] == "`" or starts(k) or not known:
+                break
+        out.append(line[i:j].strip())
+        i = j + 1
+    return [n for n in out if n]
+
+
+def depends_line(names: list[str]) -> str:
+    """The `Depends on:` value for these entries: a name with a comma goes in backticks, so it reads back whole."""
+    return ", ".join(f"`{n}`" if "," in n else n for n in names) or "none"
+
+
 def is_approval(text: str) -> bool:
     """A real `Approved:` line: not empty, not a placeholder, not the kit's own 'pending the go' marker."""
     t = (text or "").strip()
@@ -309,6 +442,9 @@ def list_contracts(root: Path) -> list[Contract]:
         if p.name.upper().startswith("TEMPLATE") or p.name.upper() == "README.MD":
             continue
         out.append(Contract(p))
+    titles = [c.title for c in out]  # read a Depends on name with a comma whole when it is a piece of this repo
+    for c in out:
+        c.depends = parse_depends(c._field("Depends on"), titles)
     return out
 
 
@@ -320,6 +456,17 @@ def building_pieces(cs: list[Contract]) -> list[Contract]:
 def open_heads(cs: list[Contract]) -> list[Contract]:
     """Chain heads whose chain is still running: picked up, not yet on dev."""
     return [c for c in cs if c.is_head and c.status == "building"]
+
+
+def here_only(root: Path, cs: list[Contract]) -> list[Contract]:
+    """The contracts not yet on origin/dev: picked up in this session and not pushed (D93). Once a chain's first
+    sub-piece lands, its head is on dev, and a session that pulled dev holds it too: that chain is another
+    session's, or one already under way, and doesn't hold this session back."""
+    dev = "refs/remotes/origin/dev"
+    if not is_commit(root, dev):
+        return cs
+    return [c for c in cs if sh(["git", "cat-file", "-e", f"{dev}:{c.path.relative_to(root).as_posix()}"],
+                                cwd=root).returncode != 0]
 
 
 def subs_of(cs: list[Contract], head: Contract) -> list[Contract]:
@@ -339,8 +486,8 @@ def active_contract(root: Path, name: str | None) -> Contract | None:
     if not building:
         return None
     if len(building) > 1:
-        die("more than one contract is building: " + ", ".join(c.name for c in building) +
-            ". One piece at a time: push the finished one to dev (it becomes on-dev) or drop it.")
+        die("more than one contract is building here: " + ", ".join(c.name for c in building) +
+            ". One piece per session (D93): push the finished one to dev (it becomes on-dev) or drop it.")
     building[0].check_ready()
     return building[0]
 
@@ -367,6 +514,20 @@ NOTION_TAG_RE = re.compile(r"</?(?:b|strong|i|em|u|s|code|span|mark)\b[^>]*>", r
 BLOCK_TAG_RE = re.compile(r"^\s*</?(?:callout|details|summary|columns?|toggle|empty-block|page|content)\b[^>]*>\s*$", re.I)
 
 
+MD_ESCAPE_RE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!<>|~:\"'$=^])")
+
+
+def unescape_md(text: str) -> str:
+    """Notion's markdown escapes undone: `sky\\_uz` → `sky_uz`. The connector returns text columns (Piece, Repo,
+    Contract file) escaped, and tracker.md tells Claude to copy them as returned."""
+    return MD_ESCAPE_RE.sub(r"\1", text or "")
+
+
+def same_repo(a: str, b: str) -> bool:
+    """Two repo names are the same repo: Notion's escapes undone, any case (D89)."""
+    return unescape_md(a).strip().lower() == unescape_md(b).strip().lower()
+
+
 def notion_to_plain(text: str) -> str:
     """Undo what Notion does to plain markdown on a round trip: inline tags, escapes, entities."""
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
@@ -376,7 +537,7 @@ def notion_to_plain(text: str) -> str:
                   lambda m: m.group(2).strip() or m.group(1), text)
     text = re.sub(r"<mention(?:-[a-z-]+)?\s[^>]*?url=\"([^\"]*)\"[^>]*/>", r"\1", text)
     text = NOTION_TAG_RE.sub("", text)
-    text = re.sub(r"\\([\\`*_{}\[\]()#+\-.!<>|~:\"'$=^])", r"\1", text)
+    text = unescape_md(text)
     text = re.sub(r"\[([^\]]*)\]\(([^)]*)\)", r"\1", text)
     text = html.unescape(text)
     out = []
@@ -415,11 +576,16 @@ def notion_escape(text: str) -> str:
 
 def render_notion_copy(c: Contract, root: Path) -> str:
     """The exact Notion text for a contract's tracker copy: a banner, then one block per line."""
-    rel = c.path.relative_to(root).as_posix()
+    return render_copy(c.path.relative_to(root).as_posix(), c.text,
+                       "Change the contract through Claude Code, not here.")
+
+
+def render_copy(rel: str, text: str, how: str) -> str:
+    """A read-only copy of a repo file for Notion (D1's pattern): a banner, then one block per line."""
     out = ['<callout icon="📄" color="gray_bg">',
-           f"\tRead-only copy of `{rel}`, written by Claude Code. Change the contract through Claude Code, not here.",
+           f"\tRead-only copy of `{rel}`, written by Claude Code. {how}",
            "</callout>"]
-    text = re.sub(r"<!--.*?-->", "", c.text, flags=re.S)
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
     prev_list = False
     for line in text.splitlines():
         s = line.strip()
@@ -572,42 +738,48 @@ def assign(kind: str, found: list[str], declared: list[str]) -> tuple[set[str], 
     return matched, [f for f in found if f not in matched]
 
 
+def scan_items(f: str, text: str, py: str | None, nd: str | None, seen: dict[str, dict[str, str]],
+               keep=lambda m: True) -> None:  # noqa: E731
+    """The size check's counting (D15): the screens, endpoints and tables one file declares, into seen[kind][name] = f.
+    keep(match) picks the lines that count: the size check keeps a piece's added lines, the build map (D91) all."""
+    if is_test_file(f):
+        return
+    if in_dir(f, py) and f.endswith(".py"):
+        prefixes = {}
+        for r in ROUTER_RE.finditer(text):
+            pm = PREFIX_RE.search(r.group(2))
+            prefixes[r.group(1)] = pm.group(1).rstrip("/") if pm else ""
+        for m in EP_RE.finditer(text):
+            if keep(m):
+                path = prefixes.get(m.group(1), "") + (m.group(3) or "/")
+                seen["endpoints"].setdefault(f"{m.group(2).upper()} {path or '/'}", f)
+        for m in TABLE_LIT_RE.finditer(text):
+            if keep(m):
+                seen["tables"].setdefault((m.group(1) or m.group(2)).lower(), f)
+        for m in TABLE_VAR_RE.finditer(text):
+            if keep(m):
+                seen["tables"].setdefault(f"(unnamed: {m.group(1)})", f)
+    elif in_dir(f, py) and f.endswith(".sql"):
+        for m in TABLE_LIT_RE.finditer(text):
+            if keep(m):
+                seen["tables"].setdefault((m.group(1) or m.group(2)).lower(), f)
+    if in_dir(f, nd) and f.endswith((".tsx", ".jsx", ".ts", ".js")):
+        for m in ROUTE_TAG_RE.finditer(text):
+            if keep(m):
+                seen["screens"].setdefault(m.group(1), f)
+        if "route" in Path(f).name.lower():
+            for m in ROUTE_KEY_RE.finditer(text):
+                if keep(m):
+                    seen["screens"].setdefault(m.group(1), f)
+
+
 def count_size(root: Path, cfg: dict, c: Contract) -> dict:
     changes = git_changes(root, c.base)
     py, nd = cfg.get("python_dir"), cfg.get("node_dir")
     seen: dict[str, dict[str, str]] = {"screens": {}, "endpoints": {}, "tables": {}}
     for f, ch in changes.items():
-        if is_test_file(f):
-            continue
         text = ch.text
-        keep = lambda m: line_of(text, m.start()) in ch.added  # noqa: E731
-        if in_dir(f, py) and f.endswith(".py"):
-            prefixes = {}
-            for r in ROUTER_RE.finditer(text):
-                pm = PREFIX_RE.search(r.group(2))
-                prefixes[r.group(1)] = pm.group(1).rstrip("/") if pm else ""
-            for m in EP_RE.finditer(text):
-                if keep(m):
-                    path = prefixes.get(m.group(1), "") + (m.group(3) or "/")
-                    seen["endpoints"].setdefault(f"{m.group(2).upper()} {path or '/'}", f)
-            for m in TABLE_LIT_RE.finditer(text):
-                if keep(m):
-                    seen["tables"].setdefault((m.group(1) or m.group(2)).lower(), f)
-            for m in TABLE_VAR_RE.finditer(text):
-                if keep(m):
-                    seen["tables"].setdefault(f"(unnamed: {m.group(1)})", f)
-        elif in_dir(f, py) and f.endswith(".sql"):
-            for m in TABLE_LIT_RE.finditer(text):
-                if keep(m):
-                    seen["tables"].setdefault((m.group(1) or m.group(2)).lower(), f)
-        if in_dir(f, nd) and f.endswith((".tsx", ".jsx", ".ts", ".js")):
-            for m in ROUTE_TAG_RE.finditer(text):
-                if keep(m):
-                    seen["screens"].setdefault(m.group(1), f)
-            if "route" in Path(f).name.lower():
-                for m in ROUTE_KEY_RE.finditer(text):
-                    if keep(m):
-                        seen["screens"].setdefault(m.group(1), f)
+        scan_items(f, text, py, nd, seen, keep=lambda m, t=text, a=ch.added: line_of(t, m.start()) in a)
     result = {"base": c.base, "changed_files": len(changes), "categories": {}, "removing": bool(c.removing)}
     ok = True
     for k in ("screens", "endpoints", "tables"):
@@ -624,6 +796,60 @@ def count_size(root: Path, cfg: dict, c: Contract) -> dict:
                                    "matched": matched, "extra": extra, "declared_items": declared_items}
     result["status"] = "PASS" if ok else "FAIL"
     return result
+
+
+def quick_fit(root: Path, cfg: dict, c: Contract, ref: str | None) -> dict:
+    """Whether a quick fix stays inside the lane (D92). ref None reads the working tree, untracked files included, as
+    /mg-ship-kit:cto-check sees it; 'HEAD' reads the commit, as the gate and GitHub see it. Bookkeeping files don't
+    count. The limits are the kit's constants: nothing in ship.json raises them."""
+    problems: list[str] = []
+    if c.fixes:
+        problems.append("it carries a Fixes line: a bug the client reported goes the normal way, with its lesson (D77)")
+    if c.is_head or c.head:
+        problems.append("a quick fix is never part of a chain")
+    if any(c.size[k][0] for k in ("screens", "endpoints", "tables")):
+        problems.append("its Size must be 0 screens · 0 endpoints · 0 tables")
+    rng = [c.base] + ([ref] if ref else [])
+    kinds: dict[str, str] = {}
+    counts: dict[str, tuple[int, int] | None] = {}
+    for opt in ("--name-status", "--numstat"):
+        r = sh(["git", "-c", "core.quotepath=off", "diff", opt, "--no-renames", *rng, "--"], cwd=root)
+        if r.returncode != 0:
+            die(f"git diff {opt} failed: {r.stderr.strip()}")
+        for line in r.stdout.splitlines():
+            parts = line.split("\t")
+            if opt == "--name-status" and len(parts) >= 2:
+                kinds[parts[-1]] = parts[0][:1]
+            elif opt == "--numstat" and len(parts) >= 3:
+                counts[parts[2]] = None if parts[0] == "-" else (int(parts[0]), int(parts[1]))
+    if ref is None:
+        for f in git_out(root, "-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard").splitlines():
+            if f and not any(part in SKIP_DIRS for part in f.split("/")[:-1]):
+                kinds[f] = "A"
+    files = sorted(f for f in kinds if not is_bookkeeping(f, cfg))
+    new = [f for f in files if kinds[f] == "A"]
+    gone = [f for f in files if kinds[f] == "D"]
+    binary = [f for f in files if kinds[f] not in ("A", "D") and f in counts and counts[f] is None]
+    special = [f for f in files if DEP_FILE_RE.search(f) or INFRA_FILE_RE.search(f) or is_env_file(f)
+               or is_project_workflow(f) or f.lower().endswith(".sql") or MIGRATION_RE.search(f)]
+    added = sum((counts.get(f) or (0, 0))[0] for f in files)
+    removed = sum((counts.get(f) or (0, 0))[1] for f in files)
+    if len(files) > QUICK_MAX_FILES:
+        problems.append(f"it changes {len(files)} files: at most {QUICK_MAX_FILES} ({short_list(files)})")
+    if added > QUICK_MAX_LINES:
+        problems.append(f"it adds {added} lines: at most {QUICK_MAX_LINES}")
+    if removed > QUICK_MAX_LINES:
+        problems.append(f"it removes {removed} lines: at most {QUICK_MAX_LINES}")
+    if new:
+        problems.append(f"new files: {short_list(new)}. A quick fix only edits files that already exist")
+    if gone:
+        problems.append(f"deleted files: {short_list(gone)}. A quick fix only edits files that already exist")
+    if binary:
+        problems.append(f"binary files, which can't be counted: {short_list(binary)}")
+    if special:
+        problems.append(f"dependency, deploy, CI workflow, env, SQL or migration files: {short_list(special)}")
+    return {"status": "FAIL" if problems else "PASS", "files": len(files), "added": added, "removed": removed,
+            "problems": problems}
 
 
 # ---------------------------------------------------------------- stack
@@ -875,42 +1101,150 @@ def check_leftovers(root: Path, cfg: dict, c: Contract, scope_all: bool) -> dict
 
 
 # ---------------------------------------------------------------- setup
-def detect_dir(root: Path, markers: tuple[str, ...], max_depth: int = 2) -> str | None:
+def outside_repo(root: Path, rel: str) -> str | None:
+    """Why a folder's code can never reach this repo's check (D90): it is its own git repo, or git ignores it.
+    None when the folder is this repo's own code."""
+    if rel in ("", "."):
+        return None
+    d = root / rel
+    if (d / ".git").exists():
+        return "its own git repo"
+    if sh(["git", "check-ignore", "-q", "--", rel], cwd=root).returncode == 0:
+        return "ignored by this repo's .gitignore"
+    return None
+
+
+def outside_reason(root: Path, rel: str) -> str | None:
+    """outside_repo for a folder or any folder above it: 'tools/core/app' is outside when 'tools/core' is."""
+    parts = Path(rel).parts
+    for i in range(len(parts)):
+        why = outside_repo(root, "/".join(parts[:i + 1]))
+        if why:
+            return why
+    return None
+
+
+def detect_dir(root: Path, markers: tuple[str, ...], max_depth: int = 2,
+               skipped: list[tuple[str, str]] | None = None) -> str | None:
+    """The shallowest folder holding one of the marker files. A folder whose code can't reach this repo's check
+    (a nested repo, an ignored folder) is never a candidate; `skipped` collects those with the reason (D90)."""
     best = None
+    reasons: dict[str, str | None] = {}
     for p in walk_files(root):
         rel = p.relative_to(root)
         if len(rel.parts) - 1 > max_depth:
             continue
-        if p.name in markers:
-            cand = str(rel.parent).replace("\\", "/")
-            if best is None or len(cand) < len(best):
-                best = cand
+        if p.name not in markers:
+            continue
+        cand = str(rel.parent).replace("\\", "/")
+        if cand not in reasons:
+            reasons[cand] = outside_reason(root, cand)
+        why = reasons[cand]
+        if why:
+            if skipped is not None and (cand, why) not in skipped:
+                skipped.append((cand, why))
+            continue
+        if best is None or len(cand) < len(best):
+            best = cand
     return best
 
 
 DEPLOY_NOTE = {
     "devops": "deploy: your devops connects the server's deploy to the Ship check, so nothing deploys unless it "
               f"passes. Give them {CI_NOTES} (section \"Your devops\").",
-    "railway": f"deploy: set Railway up as {CI_NOTES} says (section \"Railway\"): dev → a staging environment, "
-               "main → production, each with its own database, \"Wait for CI\" on.",
+    "cloudflare": f"deploy: set Cloudflare and Neon up as {CI_NOTES} says (section \"Cloudflare\"): dev and main "
+                  f"each deploy from {DEPLOY_WORKFLOW} after the Ship check passes, each with its own database.",
 }
+
+
+def install_cloudflare(root: Path, cfg: dict) -> list[str]:
+    """Copy the cloudflare track's deploy files into the project, once (D97): a Worker that serves the frontend and
+    passes /api/* to the FastAPI backend in a Cloudflare Container, and the workflow that deploys after the Ship
+    check. Unlike the CI files they are the project's own from then on, so an existing deploy/ folder or deploy
+    workflow is never touched. Returns the files written."""
+    tpl = kit_root() / "templates" / "cloudflare"
+    if (root / "deploy").exists() or (root / DEPLOY_WORKFLOW).exists():
+        return []
+    app = re.sub(r"[^a-z0-9-]+", "-", (cfg.get("repo") or root.name).lower()).strip("-") or "app"
+    names = {"__APP__": app, "__BACKEND__": (cfg.get("python_dir") or "backend").strip("/"),
+             "__FRONTEND__": (cfg.get("node_dir") or "frontend").strip("/")}
+    pairs = [(f, "deploy/" + f.relative_to(tpl / "deploy").as_posix()) for f in sorted((tpl / "deploy").rglob("*"))
+             if f.is_file()] + [(tpl / "workflows" / "deploy.yml", DEPLOY_WORKFLOW)]
+    written = []
+    for src, rel in pairs:
+        text = src.read_text(encoding="utf-8")
+        for k, v in names.items():
+            text = text.replace(k, v)
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(text, encoding="utf-8")
+        written.append(rel)
+    return written
+
+
+def current_branch(root: Path) -> str:
+    b = git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
+    return "" if b == "HEAD" else b
+
+
+def repo_name(root: Path) -> str | None:
+    """The repo's name from its origin URL: git@github.com:org/name.git and https://github.com/org/name both give
+    'name'. None without an origin."""
+    url = git_out(root, "remote", "get-url", "origin").strip()
+    if not url:
+        return None
+    tail = re.split(r"[/:]", url.rstrip("/"))[-1]
+    tail = tail[:-4] if tail.endswith(".git") else tail
+    return tail or None
+
+
+def setup_refusals(root: Path, py: str | None, nd: str | None, skipped: list[tuple[str, str]]) -> str | None:
+    """Why setup must stop before writing anything (D90). None when it may go on."""
+    if not repo_name(root):
+        return ("this repo has no `origin` remote, so the check can't tell which repo it is. Add the GitHub remote "
+                "first (`git remote add origin <url>`), then run setup again.")
+    if not is_commit(root, f"refs/remotes/origin/{SETUP_BRANCH}"):
+        return (f"origin has no `{SETUP_BRANCH}` branch (or it isn't fetched). Ship's check runs on pushes to dev and "
+                f"main: create dev from main (`git checkout -b dev main && git push -u origin dev`), check it out, "
+                "then run setup again.")
+    if current_branch(root) != SETUP_BRANCH:
+        return (f"you're on `{current_branch(root) or '(no branch)'}`; setup's files land on `{SETUP_BRANCH}`, where "
+                f"the check runs. `git checkout {SETUP_BRANCH}`, then run setup again.")
+    for d, label in ((py, "backend"), (nd, "frontend")):
+        why = outside_reason(root, d) if d not in (None, "", ".") else None
+        if why:
+            return (f"the {label} folder {d}/ is {why}: the GitHub check in this repo would never see its code. "
+                    f"Run /mg-ship-kit:setup inside {d}/'s own repo instead; this repo gets no ship.json.")
+    if py is None and nd is None and skipped:
+        found = "; ".join(f"{d}/ ({why})" for d, why in skipped)
+        return (f"the only code here is in {found}: the GitHub check in this repo would never see it. Run "
+                "/mg-ship-kit:setup inside each of those repos instead; a workspace that only holds other repos gets "
+                "no ship.json.")
+    return None
 
 
 def cmd_setup(args) -> int:
     root = Path(args.root).resolve()
     cfg_path = root / CONFIG
-    if args.track and args.track not in READY_TRACKS:
-        die(f"the {args.track} track's kit pieces (its stack list, size counts and deploy) aren't built yet, so setup "
-            "stops here; nothing was written. Keep filing requests in chat; setup works once they land.")
+    if args.track in DROPPED_TRACKS:
+        die(f"the {args.track} track was dropped (D96), so setup stops here; nothing was written. In chat, say "
+            "'set the track' so ship-spec picks devops or cloudflare, then run setup again.")
+    skipped: list[tuple[str, str]] = []
     if cfg_path.exists() and not args.force:
         cfg = json.loads(cfg_path.read_text())
+        why = setup_refusals(root, cfg.get("python_dir"), cfg.get("node_dir"), skipped)
+        if why:
+            die(f"setup stops; nothing was written. {why}")
         print(f"{CONFIG} exists; keeping it (use --force to rebuild).")
     else:
         tpl_dir = Path(__file__).resolve().parent.parent / "templates"
-        py = args.python_dir if args.python_dir is not None else detect_dir(root, ("requirements.txt", "pyproject.toml"))
-        nd = args.node_dir if args.node_dir is not None else detect_dir(root, ("package.json",))
+        py = args.python_dir if args.python_dir is not None else detect_dir(root, ("requirements.txt", "pyproject.toml"), skipped=skipped)
+        nd = args.node_dir if args.node_dir is not None else detect_dir(root, ("package.json",), skipped=skipped)
         py = None if py in ("", "none") else py
         nd = None if nd in ("", "none") else nd
+        why = setup_refusals(root, py, nd, skipped)
+        if why:
+            die(f"setup stops; nothing was written. {why}")
         default_used = False
         if py is None and nd is None and args.python_dir is None and args.node_dir is None and not args.no_default_stack:
             # A new project with no dependency files yet: start from the kit's default stack (D15).
@@ -933,6 +1267,11 @@ def cmd_setup(args) -> int:
                   "Build the backend in backend/ and the frontend in frontend/, or rerun setup with "
                   "--python-dir/--node-dir (or --no-default-stack) if this project uses something else.")
     before = dict(cfg)
+    name = repo_name(root)
+    if cfg.get("repo") != name:  # D89: the name the tracker's Repo column must match
+        if cfg.get("repo"):
+            print(f"repo renamed: {cfg['repo']} → {name}")
+        cfg["repo"] = name
     if args.track and cfg.get("track") != args.track:
         if cfg.get("track"):
             print(f"track changed: {cfg['track']} → {args.track}")
@@ -1013,7 +1352,29 @@ def cmd_setup(args) -> int:
     if cfg.get("kit_line") != KIT_VERSION:
         print(f"Kit line: the project page's Facts must say `Kit: mg-ship-kit {KIT_VERSION}` → write it, then run "
               "`kit-mark` (ship-spec compares it with its own version before each job)")
+    print(f"repo: {cfg['repo']} → the tracker's Repo column must say this for a row to be picked up here (D89); "
+          "on a project with several repos, the project page's Repos list must name it")
     track = cfg.get("track")
+    if track == "cloudflare":
+        wrote = install_cloudflare(root, cfg)
+        # The deploy files are bookkeeping on this track (D97). The deploy workflow must be listed too: a project's
+        # own workflows are product code otherwise (issue #34). An older setup listed only deploy/: add the rest.
+        missing = [p for p in CF_BOOKKEEPING if p not in cfg.get("bookkeeping", [])]
+        if missing and (wrote or "deploy/" in cfg.get("bookkeeping", [])):
+            late = cfg_at(root, "HEAD") is not None
+            cfg["bookkeeping"] = cfg.get("bookkeeping", []) + missing
+            save_config(root, cfg)
+        else:
+            late = False
+        if wrote:
+            print(f"cloudflare: wrote {', '.join(wrote)}. They are this project's own from now on (setup never "
+                  f"overwrites them), and deploy/ and {DEPLOY_WORKFLOW} count as bookkeeping.")
+        else:
+            print(f"cloudflare: deploy/ or {DEPLOY_WORKFLOW} is already here; left as it is."
+                  + (f" Added {', '.join(missing)} to {CONFIG}'s bookkeeping list." if late else ""))
+        if late:
+            print(f"cloudflare: {CONFIG} was already in git, and its bookkeeping list counts from the next push. "
+                  f"Commit and push {CONFIG} to dev first, then the deploy files in a second push.")
     print(f"track: {track}" if track else
           "track: not set → read the Track line in the project page's Facts and rerun setup with --track")
     if track in DEPLOY_NOTE:
@@ -1037,7 +1398,8 @@ def cmd_link(args) -> int:
 
 # ---------------------------------------------------------------- report
 def print_report(c: Contract, size: dict | None, stack: dict | None, left: dict | None, ci: bool = False,
-                 security: list[str] | None = None, lesson: str | None | bool = False) -> str:
+                 security: list[str] | None = None, lesson: str | None | bool = False,
+                 quick: dict | None = None, migrations: str | None = None) -> str:
     lines = [f"Ship CTO check · contract {c.name} · base {c.base[:10]} · {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}"]
     overall = "PASS"
     if size:
@@ -1078,6 +1440,17 @@ def print_report(c: Contract, size: dict | None, stack: dict | None, left: dict 
             if len(r["findings"]) > 15:
                 lines.append(f"  … {len(r['findings']) - 15} more")
         overall = "FAIL" if left["status"] == "FAIL" else overall
+    if quick is not None:  # D92: a quick fix stays inside the lane's limits, or it isn't one
+        lines.append(f"QUICK      {quick['status']:4}  {quick['files']} files · +{quick['added']} -{quick['removed']} lines"
+                     f"   (the lane: {QUICK_MAX_FILES} existing files, {QUICK_MAX_LINES} lines each way)")
+        lines += [f"  {p}" for p in quick["problems"]]
+        if quick["problems"]:
+            lines.append("  → trim it to what the owner's line asks; if the line needs more, it's too big for the quick "
+                         "lane: drop it and spec it in chat")
+        overall = "FAIL" if quick["status"] == "FAIL" else overall
+    if migrations:  # D93: two parallel pieces each added a migration on the same parent
+        lines.append(f"MIGRATIONS FAIL  {migrations}")
+        overall = "FAIL"
     if security is not None:  # the gate and GitHub only: /mg-ship-kit:cto-check runs the review after this check
         if security:
             lines.append(f"SECURITY   FAIL  {len(security)} to settle")
@@ -1119,14 +1492,21 @@ def cmd_check(args) -> int:
                   "Pick up the next Ready piece with /mg-ship-kit:next.", file=sys.stderr)
         return 3
     what = args.what
+    x = taken_on_dev(root, c) if what == "check" else None
+    if x:
+        print(taken_message(c, x))
+        return 1
     size = count_size(root, cfg, c) if what in ("check", "size") else None
     stack = check_stack(root, cfg, c) if what in ("check", "stack") else None
     left = check_leftovers(root, cfg, c, getattr(args, "all", False)) if what in ("check", "leftovers") else None
+    quick = quick_fit(root, cfg, c, None) if what == "check" and c.quick else None
+    mig = migration_problem(root, cfg, c.base, None) if what == "check" else None
     if args.json:
-        print(json.dumps({"contract": c.name, "size": size, "stack": stack, "leftovers": left}, indent=2))
-        return 1 if "FAIL" in [x["status"] for x in (size, stack, left) if x] else 0
+        print(json.dumps({"contract": c.name, "size": size, "stack": stack, "leftovers": left, "quick": quick,
+                          "migrations": mig}, indent=2))
+        return 1 if mig or "FAIL" in [x["status"] for x in (size, stack, left, quick) if x] else 0
     lesson = lesson_problem(root, c, None) if what == "check" else False
-    return 0 if print_report(c, size, stack, left, lesson=lesson) == "PASS" else 1
+    return 0 if print_report(c, size, stack, left, lesson=lesson, quick=quick, migrations=mig) == "PASS" else 1
 
 
 def cmd_stack_only(args) -> int:
@@ -1175,31 +1555,65 @@ def slugify(name: str) -> str:
 def cmd_pickup(args) -> int:
     """Save the approved contract from a tracker row as contracts/NNN-slug.md with Status: building."""
     root = Path(args.root).resolve()
-    load_config(root)
+    cfg = load_config(root)
+    mine = (cfg.get("repo") or repo_name(root) or "").strip()  # setup writes it; before kit 0.13, read from origin
+    want = unescape_md(args.repo).strip()  # the row's Repo column (D89), as the connector returned it
+    if not mine:
+        die(f"{CONFIG} has no `repo` and this repo has no `origin`, so the row can't be matched to a repo. "
+            "Add the remote, then run /mg-ship-kit:setup once, on dev.")
+    if want and not same_repo(want, mine):
+        die(f"this row belongs to the repo {want!r}; this is {mine!r}. Pick it up in {want}'s own repo "
+            "(/mg-ship-kit:next there); nothing was written here.", 1)
+    if not want and not args.single_repo:
+        die("this row names no repo in the tracker's Repo column. On a project with several repos every row must "
+            "name one: set it in chat (ship-spec, 'spec a piece' writes it) and pick the row up again. "
+            "(A project with one repo passes --single-repo.)", 1)
     cs = list_contracts(root)
     busy = building_pieces(cs)
     if busy:
-        die(f"{busy[0].name} is still building. One piece at a time: push it to dev (/mg-ship-kit:cto-check) "
-            "or drop it before picking up the next.", 2)
-    heads = open_heads(cs)
+        die(f"{busy[0].name} is still building in this session. One piece per session (D93): push it to dev "
+            "(/mg-ship-kit:cto-check) or drop it, or pick the next piece up in another session.", 2)
+    heads = here_only(root, open_heads(cs))
     if heads:
-        die(f"chain {heads[0].name} is open (split, or building its sub-pieces). Finish it with /mg-ship-kit:chain, "
-            "or drop it, before picking up another piece.", 2)
+        die(f"chain {heads[0].name} is open in this session (split, or waiting for its go). Finish it with "
+            "/mg-ship-kit:chain, or drop it, before picking up another piece here; or use another session.", 2)
     head = git_out(root, "rev-parse", "--short=10", "HEAD")
     if not head:
         die("no commit yet. Make a first commit, then pick up the piece.")
+    status = unescape_md(args.status or "").strip()
+    if args.status is not None and status.lower() != "ready":
+        die(f"the row's Status is {status or 'empty'} now, not Ready: another session picked it up after the "
+            "tracker was queried. Nothing was written. Pick another row.", TAKEN)
     raw = notion_to_plain(Path(args.file).read_text(encoding="utf-8"))
+    if field(raw, "Quick"):
+        die("this row is a quick fix's (it has a `Quick:` line). A quick fix starts in Claude Code with "
+            "/mg-ship-kit:quick, never from a tracker row (D92).", 1)
     if field(raw, "Head"):
         die("this row is a chain's sub-piece (it has a `Head:` line). Sub-pieces are picked up by their chain "
             "(/mg-ship-kit:chain), never on their own.", 1)
-    name, approved, body = contract_parts(raw, args.name)
+    name, approved, body = contract_parts(raw, unescape_md(args.name).strip() or None)
     is_head = (field(raw, "Chain") or "").strip().lower() == "head"
-    path = new_contract_path(root, name)
-    header = [f"# Contract: {name}", "Status: building", f"Base: {head}", f"Approved: {approved}"]
+    rows = ours = None
+    if args.rows:
+        _, rows, ours = mine_and_rows(root, args)
+    depends = parse_depends(field(raw, "Depends on"), [r["piece"] for r in rows or []])
+    floor = 1
+    if rows is not None:  # D93: the dependencies must be met, and the number comes from the tracker
+        row = (find_row(rows, args.tracker) if args.tracker and page_id(args.tracker) else None) or find_row(rows, name)
+        bad = depends_problems(rows, ours, row, depends, name)
+        if bad:
+            die(bad[1], bad[0])
+        floor = next_number(root, ours)
+    path = new_contract_path(root, name, floor)
+    header = [f"# Contract: {name}", "Status: building", f"Base: {head}", f"Approved: {approved}", f"Repo: {mine}"]
+    if depends is not None:
+        header.append("Depends on: " + depends_line(depends))
     if is_head:
         header.append("Chain: head")
     if args.tracker:
         header.append(f"Tracker: {args.tracker}")
+    claim = os.urandom(4).hex()  # issue #30: the copy carries it, so a read-back shows whose pickup the row holds
+    header.append(f"Claim: {claim}")
     path.write_text("\n".join(header) + "\n\n" + body, encoding="utf-8")
     try:
         c = Contract(path)
@@ -1215,13 +1629,72 @@ def cmd_pickup(args) -> int:
         path.unlink(missing_ok=True)
         raise
     added = adopt_packages(root, reuse)
-    print(f"saved {path.relative_to(root)} · Status: building · Base: {head}"
+    print(f"saved {path.relative_to(root)} · Status: building · Base: {head} · Claim: {claim}"
           + (" · a chain head: split it next (/mg-ship-kit:chain)" if is_head else ""))
     if reuse:
         print(f"reuse (D73): {sum(1 for r in reuse if r['verdict'] == 'adopt')} adopted, "
               f"{sum(1 for r in reuse if r['verdict'] == 'build')} to build"
               + (f"; added to the stack list in {CONFIG}: {', '.join(added)}. Commit {CONFIG} with the contract."
                  if added else "."))
+    return 0
+
+
+def cmd_quick(args) -> int:
+    """Write a quick fix's contract (D92) from the owner's own words, Status building. It refuses what can't start
+    (a piece building, a chain open, uncommitted product changes); the check, the gate and GitHub then hold the fix
+    to the lane's limits (quick_fit), so the limits never rest on Claude's word."""
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    what, check, by = (" ".join((a or "").split()) for a in (args.what, args.check, args.by))
+    again = f' Your line, to run again then: "{what}".' if what else ""
+    if not what:
+        die("say the change in the owner's own words: --what \"<the change>\"", 2)
+    if not by or PLACEHOLDER_RE.search(by):
+        die("--by must be the owner's name: the quick fix's approval is theirs", 2)
+    if not re.match(r"^when i\b.*\bthen i\b", check, re.I):
+        die("--check must be one line \"When I … then I see …\": what the owner looks at on dev", 2)
+    mine = (cfg.get("repo") or repo_name(root) or "").strip()
+    if not mine:
+        die(f"{CONFIG} has no `repo` and this repo has no `origin`. Add the remote, then run /mg-ship-kit:setup once, "
+            "on dev.")
+    cs = list_contracts(root)
+    busy = building_pieces(cs)
+    if busy:
+        die(f"{busy[0].name} is building in this session. Finish it (/mg-ship-kit:cto-check) or drop it first, then "
+            f"run /mg-ship-kit:quick again; or run it in another session (D93).{again}", 1)
+    heads = here_only(root, open_heads(cs))  # D93: a chain already on dev is another session's, or under way
+    if heads:
+        die(f"chain {heads[0].name} is open in this session. Finish it (/mg-ship-kit:chain) or drop it first, then run "
+            f"/mg-ship-kit:quick again; or run it in another session (D93).{again}", 1)
+    head = git_out(root, "rev-parse", "--short=10", "HEAD")
+    if not head:
+        die("no commit yet. Make a first commit, then start the quick fix.")
+    porcelain = sh(["git", "-c", "core.quotepath=off", "status", "--porcelain"], cwd=root).stdout
+    dirty = [l[3:] for l in porcelain.splitlines() if len(l) > 3 and not is_bookkeeping(l[3:].strip('"'), cfg)
+             and not any(part in SKIP_DIRS for part in l[3:].split("/")[:-1])]
+    if dirty:
+        die(f"uncommitted changes ({short_list(dirty, 5)}) would count as part of the quick fix. Commit, stash or "
+            f"remove them first.{again}", 1)
+    today = dt.date.today().isoformat()
+    floor = next_number(root, mine_and_rows(root, args)[2]) if args.rows else 1  # D93: numbers from the tracker
+    path = new_contract_path(root, f"quick {what}", floor)
+    path.write_text("\n".join([
+        f"# Contract: Quick: {what}", "Status: building", f"Base: {head}",
+        f"Approved: {today} by {by}, in Claude Code (a quick fix, D92)", f"Repo: {mine}", "Quick: yes", "",
+        f"Owner's words: \"{what}\", in Claude Code, {today}", "",
+        "## What users see", f"- {what}", "",
+        "## What's out",
+        f"- Anything else. A quick fix changes at most {QUICK_MAX_LINES} lines in at most {QUICK_MAX_FILES} existing "
+        "files, and adds no screen, endpoint, table, package or file.", "",
+        "## How to check it", f"- {check}", "",
+        "## Size", "Screens: 0", "Endpoints: 0", "Tables: 0", ""]), encoding="utf-8")
+    try:
+        Contract(path).check_ready()
+    except SystemExit:
+        path.unlink(missing_ok=True)
+        raise
+    print(f"saved {path.relative_to(root)} · Status: building · Base: {head} · a quick fix (D92). Its tracker row: "
+          f"\"Quick: {what}\". Make the change, nothing else, then run the CTO check.")
     return 0
 
 
@@ -1394,11 +1867,471 @@ def contract_parts(raw: str, name: str | None = None, need_approval: bool = True
     return name, approved, "\n".join(body_lines).strip() + "\n"
 
 
-def new_contract_path(root: Path, name: str) -> Path:
+def new_contract_path(root: Path, name: str, floor: int = 1) -> Path:
+    """contracts/NNN-slug.md, NNN one past the highest here, and at least `floor` (D93: the tracker's highest plus
+    one, so two sessions don't both save 005)."""
     nums = [int(p.name[:3]) for p in contracts_dir(root).glob("[0-9][0-9][0-9]-*.md")]
-    num = (max(nums) + 1) if nums else 1
+    num = max((max(nums) + 1) if nums else 1, floor)
     contracts_dir(root).mkdir(exist_ok=True)
     return contracts_dir(root) / f"{num:03d}-{slugify(name)}.md"
+
+
+# ---------------------------------------------------------------- the tracker's rows, for parallel builds (D93)
+# One piece builds per session, not per repo. Notion is the only view every session shares, so /mg-ship-kit:next
+# writes the tracker query's rows to a file and the script decides from it: which Ready row may build now, its
+# contract number, and whether a drop would break a piece that depends on the one dropped.
+ROWS_FILE = ".ship/tracker-rows.json"
+MET = ("on dev", "done")  # a dependency is met once its piece is on dev or done
+PAGE_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
+def page_id(ref: str) -> str:
+    """The Notion page id inside a link (dashes dropped), or '' when there is none."""
+    m = PAGE_ID_RE.search((ref or "").lower().replace("-", ""))
+    return m.group(0) if m else ""
+
+
+def link_list(v) -> list[str]:
+    """A link column as the tracker query gives it: a list, or Notion's JSON-encoded string ('["https://…"]', and
+    '[]' when empty), or links separated by commas. Tried on a real tracker (D93)."""
+    if isinstance(v, str):
+        t = v.strip()
+        if t.startswith("["):
+            try:
+                v = json.loads(t)
+            except ValueError:
+                v = re.split(r"[,\n]", t.strip("[]"))
+        else:
+            v = re.split(r"[,\n]", t)
+    if not isinstance(v, list):
+        v = [v] if v else []
+    return [str(d).strip().strip("\"'") for d in v if str(d).strip().strip("\"'")]
+
+
+def load_rows(path: str) -> list[dict]:
+    """The tracker rows /mg-ship-kit:next wrote: a JSON list, one object per row, with piece, order, status, repo,
+    head, depends (row links or piece names), contract_file and url, the values as the query returns them."""
+    p = Path(path)
+    if not p.is_file():
+        die(f"{path} not found. Query the tracker and write its rows there first (tracker.md, \"The rows file\").")
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except ValueError as e:
+        die(f"{path} isn't JSON ({e}). Write it again from the tracker query.")
+    if not isinstance(data, list):
+        die(f"{path} must hold a JSON list of rows.")
+    rows = []
+    for i, r in enumerate(data):
+        if not isinstance(r, dict) or not str(r.get("piece") or "").strip():
+            die(f"{path}: row {i + 1} has no piece name.")
+        order = r.get("order")
+        try:
+            order = float(order) if order not in (None, "") else None
+        except (TypeError, ValueError):
+            order = None
+        text = lambda k: unescape_md(str(r.get(k) or "")).strip()  # the connector escapes markdown (`sky\\_uz`)
+        rows.append({"piece": text("piece"), "order": order, "status": text("status"), "repo": text("repo"),
+                     "head": ", ".join(link_list(r.get("head"))),
+                     "depends": [unescape_md(d).strip() for d in link_list(r.get("depends"))],
+                     "contract_file": text("contract_file"), "url": str(r.get("url") or "").strip()})
+    return rows
+
+
+def row_status(r: dict) -> str:
+    return r["status"].lower()
+
+
+def find_row(rows: list[dict], ref: str) -> dict | None:
+    """The row a link or a piece name points at."""
+    pid = page_id(ref)
+    for r in rows:
+        if pid and page_id(r["url"]) == pid:
+            return r
+    for r in rows:
+        if r["piece"].lower() == unescape_md(ref).strip().lower():
+            return r
+    return None
+
+
+def rows_of_repo(rows: list[dict], mine: str, single_repo: bool) -> list[dict]:
+    """This repo's rows (D89): the Repo column names it, or, on a one-repo project, names nothing."""
+    return [r for r in rows if same_repo(r["repo"], mine) or (single_repo and not r["repo"])]
+
+
+def unmet(rows: list[dict], deps: list[str]) -> list[str]:
+    """Why these dependencies don't let a piece build yet: one line each, empty when every one is on dev or done."""
+    out = []
+    for d in deps:
+        r = find_row(rows, d)
+        if r is None:
+            out.append(f"{d} isn't a row of the tracker")
+        elif row_status(r) == "dropped":
+            out.append(f"{r['piece']} was dropped: change this piece in chat")
+        elif row_status(r) not in MET:
+            out.append(f"waits for {r['piece']} ({r['status'] or 'no status'})")
+    return out
+
+
+def next_number(root: Path, rows: list[dict]) -> int:
+    """One past the highest contract number in this repo's rows and in contracts/."""
+    # Notion links a file name ending in .md (a web domain): "contracts/[007-x.md](http://007-x.md)" (D93)
+    nums = [int(n) for r in rows for n in re.findall(r"(?:^|[/\[])(\d{3})-[\w.-]*?\.md", r["contract_file"])]
+    nums += [int(p.name[:3]) for p in contracts_dir(root).glob("[0-9][0-9][0-9]-*.md")]
+    return (max(nums) + 1) if nums else 1
+
+
+def mine_and_rows(root: Path, args) -> tuple[str, list[dict], list[dict]]:
+    """(this repo's name, every row, this repo's rows)."""
+    cfg = load_config(root)
+    mine = (cfg.get("repo") or repo_name(root) or "").strip()
+    rows = load_rows(args.rows)
+    return mine, rows, rows_of_repo(rows, mine, args.single_repo)
+
+
+def cmd_next_pick(args) -> int:
+    """Which Ready row of this repo may build now (D93): the lowest Order whose Depends on rows are all on dev or
+    done. Prints JSON: the pick (or null), its contract number, the rows that wait and why, and this repo's rows
+    building in other sessions. 0 a pick · 1 nothing may build now."""
+    root = Path(args.root).resolve()
+    mine, rows, ours = mine_and_rows(root, args)
+    skip = {unescape_md(s).strip().lower() for s in (args.skip or [])}
+    ready = [r for r in ours if row_status(r) == "ready" and not r["head"] and r["piece"].lower() not in skip]
+    if args.name:
+        ready = [r for r in ready if r["piece"].lower() == unescape_md(args.name).strip().lower()]
+        if not ready:
+            die(f"no Ready row of this repo is named {args.name!r} (a chain's sub-piece is picked up by its chain).", 1)
+    ready.sort(key=lambda r: (r["order"] is None, r["order"] or 0, r["piece"].lower()))
+    pick, waiting = None, []
+    for r in ready:
+        why = unmet(rows, r["depends"])
+        if why:
+            waiting.append({"piece": r["piece"], "why": "; ".join(why)})
+            continue
+        pick = r
+        break
+    print(json.dumps({"pick": pick, "number": next_number(root, ours), "waiting": waiting,
+                      "building": [r["piece"] for r in ours if row_status(r) == "building"]}, indent=2,
+                     ensure_ascii=False))
+    return 0 if pick else 1
+
+
+def depends_problems(rows: list[dict], ours: list[dict], row: dict | None, line: list[str] | None,
+                     piece: str) -> tuple[int, str] | None:
+    """Pickup's check of a row's Depends on (D93), as (exit code, why), or None when it may build now. The
+    contract's line is the truth and the tracker's column mirrors it: they must name the same rows. A contract
+    with no line (from before D93) builds only while nothing else of this repo is building."""
+    if row is None:
+        return 1, (f"the row {piece!r} isn't in {ROWS_FILE}. Query the tracker again and write every row, then pick "
+                   "it up.")
+    column = row["depends"]
+    if line is None:
+        if column:
+            return 1, (f"the row's Depends on column names {', '.join(column)}, but its contract has no `Depends on:` "
+                       "line, and the line is what counts. Fix the row in chat (a contract change, one line).")
+        others = [r["piece"] for r in ours if row_status(r) == "building" and r is not row]
+        if others:
+            return 4, (f"{piece} was specced before Depends on (its contract has no `Depends on:` line), so it builds "
+                       f"only while nothing else of this repo is building, and {', '.join(others)} "
+                       f"{'is' if len(others) == 1 else 'are'}. Pick another row, or add the line in chat.")
+        return None
+    named, missing = [], []
+    for n in line:
+        r = find_row(rows, n)
+        (named if r else missing).append(r if r else n)
+    if missing:
+        shown = "; ".join(f"“{m}”" for m in missing)
+        return 1, (f"the contract's Depends on line names {shown}, which the tracker has no row for. "
+                   "Fix the row in chat.")
+    if any(r is row for r in named):
+        return 1, f"{piece} depends on itself. Fix the row in chat."
+    col_rows = [find_row(rows, d) for d in column]
+    if None in col_rows or {id(r) for r in named} != {id(r) for r in col_rows}:
+        shown = ", ".join(column) or "nothing"
+        return 1, (f"the contract's Depends on line ({depends_line(line)}) and the row's Depends on column "
+                   f"({shown}) disagree. The line is what counts: fix the column, or the line, in chat.")
+    why = unmet(rows, line)
+    if why:
+        return 4, f"{piece} can't build yet: {'; '.join(why)}. Pick another row."
+    return None
+
+
+# ---------------------------------------------------------------- one row, one session (issue #30)
+# Notion has no lock. Two sessions that query the tracker before either marks a row Building both see it Ready.
+# pickup refuses a row whose Status, fetched just before, isn't Ready; then each pickup writes a random Claim into
+# its contract, so into the row's copy, and claim-check reads the row back: the last copy written wins, and the
+# session whose Claim isn't there backs off before it builds anything. A race narrower than that slips through, so
+# sync-dev and the check also refuse a piece that dev already holds from another session (taken_on_dev).
+TAKEN = 5
+
+
+def claim_in(text: str) -> str:
+    return (field(notion_to_plain(text), "Claim") or "").strip()
+
+
+def is_tracked(root: Path, path: Path) -> bool:
+    return sh(["git", "ls-files", "--error-unmatch", path.relative_to(root).as_posix()], cwd=root).returncode == 0
+
+
+def cmd_claim_check(args) -> int:
+    """After pickup set the row Building and wrote its copy: read the row back. 0 this session holds it · 1 a write
+    didn't land (write it again) · 5 another session holds it: this session's uncommitted contract is removed."""
+    root = Path(args.root).resolve()
+    c = find_contract(root, args.contract, ("building",), "claim")
+    theirs = claim_in(Path(args.notion).read_text(encoding="utf-8"))
+    if args.recheck:
+        return claim_recheck(c, theirs)
+    if not c.claim:
+        die(f"{c.name} has no `Claim:` line (picked up before kit 0.16.5), so there is nothing to compare.")
+    if args.status is None:
+        die("--status is required: the row's Status, fetched back (only --recheck goes without it).")
+    status = unescape_md(args.status).strip()
+    if theirs == c.claim and status.lower() == "building":
+        print(f"claimed: the row holds {c.name}'s Claim ({c.claim}) and says Building. This session builds it.")
+        return 0
+    if theirs == c.claim or (not theirs and status.lower() in ("ready", "building")):
+        what = "the copy" if status.lower() == "building" else "Status Building"
+        print(f"not landed: the row says {status or 'no status'} and its copy holds "
+              f"{'this Claim' if theirs else 'no Claim'}, so {what} didn't reach Notion. Write the Status and the "
+              "copy again, read the row back and run claim-check again. Build nothing until it passes.")
+        return 1
+    rel = c.path.relative_to(root).as_posix()
+    if is_tracked(root, c.path):
+        undo = (f"{rel} is already committed here, so it was left as it is: ask the owner before building on; never "
+                "/mg-ship-kit:drop it, which would mark the other session's row Dropped.")
+    else:
+        c.path.unlink()
+        data = load_sync(root)
+        if data.pop(c.name, None) is not None:
+            save_sync(root, data)
+        undo = f"{rel} was never committed, so it was removed."
+        if sh(["git", "diff", "--quiet", "--", CONFIG], cwd=root).returncode != 0:
+            undo += f" {CONFIG} changed too (pickup's reuse packages): `git checkout -- {CONFIG}`."
+    print(f"taken: another session picked up {c.title} too, and the row now holds its pickup "
+          f"({status or 'no status'}, Claim {theirs or 'none'}; this session's was {c.claim}). {undo} Leave the row "
+          "alone: it is the other session's. Pick another piece with /mg-ship-kit:next.")
+    return TAKEN
+
+
+def claim_recheck(c: Contract, theirs: str) -> int:
+    """Before the push (cto-check): is the row still this session's? The claim at pickup can pass in two sessions
+    when the second one wrote after the first had read back; by now the row holds one Claim, so exactly one goes on.
+    Removes nothing: the piece may hold hours of work."""
+    if not c.claim:
+        print(f"{c.name} has no `Claim:` line (a chain's sub-piece, a quick fix, or a pickup before kit 0.16.5): "
+              "nothing to recheck.")
+        return 0
+    if theirs == c.claim:
+        print(f"claimed: the row still holds {c.name}'s Claim ({c.claim}). Go on.")
+        return 0
+    if not theirs:
+        print(f"no Claim on the row: its copy holds none, so it can't say whose piece it is. Refresh its copy "
+              "(tracker.md), read the row back and run claim-check --recheck again. Push nothing until it passes.")
+        return 1
+    print(f"taken: the row now holds another session's Claim ({theirs}; this session's is {c.claim}). Another "
+          f"session picked up {c.title} too and builds it. Push nothing. Ask the owner which to keep; never "
+          "/mg-ship-kit:drop this one, which would mark the shared row Dropped, and never overwrite the row's copy.")
+    return TAKEN
+
+
+def taken_on_dev(root: Path, c: Contract, dev: str = "refs/remotes/origin/dev") -> Contract | None:
+    """The contract on dev for the same tracker row as c, picked up by another session: two sessions built one piece.
+    None when dev holds no such contract, or holds this session's own (pushed earlier)."""
+    if not is_commit(root, dev):
+        return None
+    pid = page_id(c.tracker)
+    for x in contracts_at(root, dev):
+        same = (pid and page_id(x.tracker) == pid) or (not pid and not page_id(x.tracker) and not c.quick
+                                                       and x.title.strip().lower() == c.title.strip().lower())
+        if not same or x.status == "dropped":
+            continue
+        if c.claim and x.claim:
+            if x.claim != c.claim:
+                return x
+            continue
+        # No Claim on one side (picked up before kit 0.16.5): dev's file is this session's own when the commit that
+        # added it there is already under HEAD (pushed from here, or pulled before this piece started)
+        rel = f"{CONTRACTS}/{x.path.name}"
+        added = git_out(root, "log", "-1", "--diff-filter=A", "--format=%H", dev, "--", rel)
+        if not (added and is_ancestor(root, added, "HEAD")):
+            return x
+    return None
+
+
+def taken_message(c: Contract, x: Contract) -> str:
+    return (f"STOP: dev already holds {x.path.name} ({x.status}) for {c.title}'s tracker row: another session picked "
+            f"up the same row and pushed it. Two sessions built one piece. Nothing was changed. Ask the owner which "
+            "to keep. Usually dev's stays: then this session's work goes (reset this branch to origin/dev); never "
+            "/mg-ship-kit:drop it, which would mark the shared row Dropped.")
+
+
+# ---------------------------------------------------------------- catching up with dev (D93)
+def contracts_at(root: Path, ref: str) -> list[Contract]:
+    """The contracts as they are at a commit (another session's states, after it pushed to dev)."""
+    res = sh(["git", "ls-tree", "--name-only", f"{ref}:{CONTRACTS}"], cwd=root)
+    out = []
+    for n in res.stdout.split() if res.returncode == 0 else []:
+        if not n.endswith(".md") or n.upper().startswith("TEMPLATE") or n.upper() == "README.MD":
+            continue
+        t = sh(["git", "show", f"{ref}:{CONTRACTS}/{n}"], cwd=root)
+        if t.returncode == 0:
+            out.append(Contract(contracts_dir(root) / n, t.stdout))
+    return out
+
+
+def alembic_heads(root: Path, cfg: dict, ref: str | None) -> list[str]:
+    """Alembic revisions no other revision builds on, at a commit or (ref None) in the working tree. With more than
+    one, `alembic upgrade head` refuses to run: two pieces each added a migration on the same parent."""
+    py = cfg.get("python_dir")
+    if py is None:
+        return []
+    if ref is None:
+        base = dir_path(root, py)
+        files = {f.relative_to(root).as_posix(): f.read_text(encoding="utf-8", errors="ignore")
+                 for f in walk_files(base) if f.suffix == ".py"} if base.is_dir() else {}
+    else:
+        files = {f: t for f, t in ref_files(root, ref).items() if in_dir(f, py) and f.endswith(".py")}
+    revs, downs = {}, set()
+    for f, text in files.items():
+        r = ALEMBIC_REV_RE.search(text)
+        if not r or is_test_file(f):
+            continue
+        revs[r.group(1)] = f
+        d = ALEMBIC_DOWN_RE.search(text)
+        if d:
+            downs |= set(re.findall(r"[\"']([^\"']+)[\"']", d.group(1)))
+    return sorted(f"{r} ({f})" for r, f in revs.items() if r not in downs)
+
+
+def migration_problem(root: Path, cfg: dict, before: str, ref: str | None) -> str | None:
+    """D93: a piece may not leave more Alembic heads than there were before it (two parallel pieces that each
+    added a migration on the same parent). None when fine."""
+    now = alembic_heads(root, cfg, ref)
+    if len(now) < 2:
+        return None
+    was = alembic_heads(root, cfg, before) if before and before != EMPTY_TREE and is_commit(root, before) else []
+    if len(now) <= max(len(was), 1):
+        return None
+    return (f"{len(now)} Alembic heads: {', '.join(now)}. `alembic upgrade head` refuses to run with more than one: "
+            "another piece added a migration on the same parent. Point this piece's migration's down_revision at the "
+            "other head, so they run in order, then run the check again.")
+
+
+SYNC_STATE = ".ship/sync.json"  # a rebase the owner let run into its conflicts: the dev commit it goes onto
+
+
+def rebase_open(root: Path) -> bool:
+    return any((root / git_out(root, "rev-parse", "--git-path", d)).exists() for d in ("rebase-merge", "rebase-apply"))
+
+
+def move_base(root: Path, c: Contract, tip: str) -> None:
+    old = c.base
+    c.set_status(c.status, {"Base": tip[:10]})
+    print(f"{c.name}: rebased onto dev at {tip[:10]}; Base: {old[:10]} → {tip[:10]} (only commits already on dev are "
+          f"between them). Commit {c.path.relative_to(root)} with the piece, and refresh its tracker copy.")
+
+
+def sync_continue(root: Path, cfg: dict, args) -> int:
+    """After the owner let a conflicted rebase run and Claude resolved it: move the Base to the dev commit the rebase
+    went onto, the one sync-dev recorded (never a commit Claude names)."""
+    p = root / SYNC_STATE
+    if not p.is_file():
+        die("no sync is waiting to be finished (sync-dev --owner-ok records one when its rebase stops on conflicts).")
+    st = json.loads(p.read_text(encoding="utf-8"))
+    if rebase_open(root):
+        die("the rebase is still open: resolve the conflicts, `git add` them, `git rebase --continue`, then run "
+            "sync-dev --continue again.", 1)
+    c = active_contract(root, args.contract or st.get("contract"))
+    if not c or c.name != st.get("contract"):
+        die(f"the sync was for {st.get('contract')}, which isn't the piece building here.")
+    if not is_ancestor(root, st["onto"], "HEAD"):
+        die(f"dev's commit {st['onto'][:10]} isn't under HEAD: the rebase was abandoned. Run sync-dev again.", 1)
+    move_base(root, c, st["onto"])
+    p.unlink()
+    print("The review covers the code as it was: run it again (/mg-ship-kit:cto-check step 5) if a reviewed file "
+          "changed.")
+    return 0
+
+
+def cmd_sync_dev(args) -> int:
+    """Bring the building piece up to date with dev before its check and push (D93). Another session may have pushed
+    a piece since this one started: rebase onto origin/dev and move the contract's Base to it, so the other piece's
+    code doesn't count against this one. The Base moves only past commits already on dev. Stops, changing nothing,
+    when both changed the same product file or the rebase conflicts: the pieces weren't independent. On the owner's
+    word (--owner-ok) it goes on, and leaves a conflicted rebase open for Claude to resolve; --continue then moves
+    the Base."""
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    if args.cont:
+        return sync_continue(root, cfg, args)
+    c = active_contract(root, args.contract)
+    if not c:
+        print("ship: no piece is building here, so there is nothing to bring up to date.", file=sys.stderr)
+        return 3
+    if c.is_head:
+        die(f"{c.name} is a chain head: it owns no code. Sync its building sub-piece.", 2)
+    if not args.no_fetch:
+        f = sh(["git", "fetch", "-q", "origin", "dev"], cwd=root)
+        if f.returncode != 0:
+            die(f"`git fetch origin dev` failed: {f.stderr.strip() or 'no answer'}. The sync needs dev as GitHub has it.")
+    dev = "refs/remotes/origin/dev"
+    if not is_commit(root, dev):
+        die("origin/dev not found. Everything reaches dev first: fetch it, then sync again.")
+    tip = rev(root, dev)
+    x = taken_on_dev(root, c, dev)
+    if x:
+        print(taken_message(c, x))
+        return 1
+    if is_ancestor(root, dev, "HEAD"):
+        print(f"{c.name}: up to date with dev ({tip[:10]}); nothing to sync.")
+        return 0
+    if not is_commit(root, c.base):
+        die(f"{c.name}: its Base {c.base} isn't a commit here. Fetch more history.")
+    dirty = [l[3:] for l in sh(["git", "status", "--porcelain"], cwd=root).stdout.splitlines() if len(l) > 3]
+    if dirty:
+        print(f"dev moved since {c.name} started (another session pushed). Commit the piece's work, its contract file "
+              f"with it ({short_list(dirty, 5)} aren't committed), then sync again.")
+        return 1
+    others = [x for x in contracts_at(root, dev) if x.status == "building" and not x.is_head and x.name != c.name]
+    if others:
+        print(f"{others[0].name} is building on dev: its session pushed it and hasn't pushed its on-dev mark yet. "
+              "It does that right after the push: wait for it, then sync again.")
+        return 1
+    start = git_out(root, "merge-base", c.base, dev)
+    early = product_files(root, cfg, start, c.base) if start else []
+    if not start or early:
+        print(f"{c.name} was picked up on top of code that isn't on dev ({short_list(early) or 'no shared history'}), "
+              "so that code belongs to no piece. Ask the owner what it is.")
+        return 1
+    fork = git_out(root, "merge-base", "HEAD", dev)
+    mine = set(product_files(root, cfg, fork, "HEAD"))
+    theirs = set(product_files(root, cfg, fork, dev))
+    both = sorted(mine & theirs)
+    if both and not args.owner_ok:
+        print(f"STOP: {c.name} and dev both changed {short_list(both)}. The pieces weren't independent after all, and "
+              "taking dev's version in means changing another piece's code, which the client may be testing. Nothing "
+              "was changed. Ask the owner how to go on; on their word, sync-dev --owner-ok goes ahead (the review "
+              "runs again, since a reviewed file changes).")
+        return 1
+    r = sh(["git", "-c", "core.editor=true", "rebase", "--quiet", dev], cwd=root)
+    if r.returncode != 0:
+        clash = git_out(root, "diff", "--name-only", "--diff-filter=U").split()
+        if args.owner_ok and rebase_open(root):
+            (root / ".ship").mkdir(exist_ok=True)
+            (root / SYNC_STATE).write_text(json.dumps({"contract": c.name, "onto": tip}) + "\n", encoding="utf-8")
+            print(f"the rebase onto dev stopped on conflicts in {short_list(clash) or 'files git named'}, and is left "
+                  "open on the owner's word. Resolve each: keep the other piece's code as dev has it, change only this "
+                  f"piece's side. Then `git add` them, `git rebase --continue`, and sync-dev --continue.")
+            return 1
+        sh(["git", "rebase", "--abort"], cwd=root)
+        print(f"STOP: the rebase onto dev conflicts in {short_list(clash) or 'files git named'}. The pieces weren't "
+              "independent after all. Nothing was changed (the rebase was undone). Ask the owner how to go on; on "
+              "their word, sync-dev --owner-ok leaves the rebase open for you to resolve.")
+        return 1
+    move_base(root, Contract(c.path), tip)
+    m = migration_problem(root, cfg, tip, None)
+    if m:
+        print(f"note: {m}")
+    return 0
 
 
 # ---------------------------------------------------------------- chains (D61)
@@ -1466,6 +2399,7 @@ def cmd_split(args) -> int:
     written: list[Path] = []
     parsed: list[tuple[str, Contract]] = []
     names: set[str] = set()
+    floor = next_number(root, mine_and_rows(root, args)[2]) if args.rows else 1  # D93: numbers from the tracker
     try:
         for f in args.files:
             p = Path(f)
@@ -1479,8 +2413,10 @@ def cmd_split(args) -> int:
             if not m or PLACEHOLDER_RE.fullmatch(m.group(1).strip()):
                 die(f"{name}: no `## How to check it` line. Each sub-piece needs at least one check the chain can "
                     "halt on.", 1)
-            path = new_contract_path(root, name)
+            path = new_contract_path(root, name, floor)
             header = [f"# Contract: {name}", "Status: draft", f"Head: {head.name}", f"Approved: {GO_PENDING}"]
+            if head.repo:  # a sub-piece builds in its head's repo (D88); a cross-repo chain is a later door
+                header.append(f"Repo: {head.repo}")
             path.write_text("\n".join(header) + "\n\n" + body, encoding="utf-8")
             written.append(path)
             parsed.append((name, Contract(path)))
@@ -1529,8 +2465,8 @@ def cmd_chain_next(args) -> int:
     cs = list_contracts(root)
     busy = building_pieces(cs)
     if busy:
-        die(f"{busy[0].name} is still building. One piece at a time: push it to dev (/mg-ship-kit:cto-check) "
-            "or drop it, then continue the chain.", 2)
+        die(f"{busy[0].name} is still building in this session. One piece per session (D93): push it to dev "
+            "(/mg-ship-kit:cto-check) or drop it, then continue the chain.", 2)
     if not subs:
         die(f"{head.name} isn't split yet. Split it first.", 1)
     if any(c.status == "draft" for c in subs):
@@ -1700,12 +2636,19 @@ def cmd_ci_wait(args) -> int:
     return wait_for_ci(root, sha, args.timeout, args.poll)
 
 
+def is_project_workflow(f: str) -> bool:
+    """A GitHub workflow or action the project owns: code that runs on the runner with the repo's secrets, so it
+    counts as product code like any other (issue #34). The kit's own two workflows stay bookkeeping."""
+    return f.startswith(PROJECT_CI_DIRS) and f not in (CI_WORKFLOW, SECRETS_WORKFLOW)
+
+
 def is_bookkeeping(f: str, cfg: dict | None = None) -> bool:
-    """Files that carry no product code: contract states, kit setup, rules, CI files, the readme, plus any
-    paths the owner listed under `bookkeeping` in ship.json (a folder ends with '/'; globs allowed).
+    """Files that carry no product code: contract states, kit setup, rules, the kit's CI files and the rest of
+    .github/ (templates, settings) except the project's own workflows and actions, the readme, plus any paths
+    the owner listed under `bookkeeping` in ship.json (a folder ends with '/'; globs allowed).
     The push gate and the GitHub check use this one list."""
     name = f.rsplit("/", 1)[-1].lower()
-    if (f.startswith(CONTRACTS + "/") or f in BOOKKEEPING_FILES or f.startswith(".github/")
+    if (f.startswith(CONTRACTS + "/") or f in BOOKKEEPING_FILES or (f.startswith(".github/") and not is_project_workflow(f))
             or ("/" not in f and (name.startswith("readme") or name.startswith("license")))):
         return True
     for pat in (cfg or {}).get("bookkeeping", []):
@@ -1927,6 +2870,10 @@ def cmd_ondev(args) -> int:
     failed = [n for n, r in (("size", size), ("stack", stack), ("leftovers", left)) if r["status"] == "FAIL"]
     if review_problems(root, cfg, c, "HEAD"):
         failed.append("security review")
+    if c.quick and quick_fit(root, cfg, c, "HEAD")["problems"]:
+        failed.append("the quick lane's limits")
+    if migration_problem(root, cfg, c.base, "HEAD"):
+        failed.append("migrations")
     if failed:
         die(f"{c.name}: the check fails now ({', '.join(failed)}), so it stays building. Run /mg-ship-kit:cto-check.", 1)
     if c.removing:
@@ -1935,6 +2882,10 @@ def cmd_ondev(args) -> int:
     elif c.head:
         c.set_status("on-dev")
         print(f"{c.name}: Status: on-dev (a sub-piece of {c.head}; the chain goes on with its next sub-piece)")
+    elif c.quick:
+        c.set_status("on-dev")
+        print(f"{c.name}: Status: on-dev (a quick fix: the owner checks it on {args.branch} and closes it with "
+              "/mg-ship-kit:done; the next piece may start)")
     else:
         c.set_status("on-dev")
         print(f"{c.name}: Status: on-dev (the client tests it on {args.branch}; the next piece may start)")
@@ -1983,9 +2934,39 @@ def cmd_done(args) -> int:
     return 0
 
 
+def dependents(root: Path, args, c: Contract) -> list[dict]:
+    """Open rows that depend on this piece, or on the chain it belongs to (D93)."""
+    if not args.rows:
+        return []
+    rows = load_rows(args.rows)
+    targets = [c]
+    if c.head:
+        targets += [h for h in list_contracts(root) if h.is_head and h.name == c.head]
+    hit, seen = [], set()
+    for t in targets:
+        tid = page_id(t.tracker)
+        for i, r in enumerate(rows):
+            if row_status(r) in ("done", "dropped") or i in seen or r["head"]:
+                continue
+            for d in r["depends"]:
+                if (tid and page_id(d) == tid) or d.lower() == t.title.lower():
+                    hit.append({**r, "on": t.title})
+                    seen.add(i)
+                    break
+    return hit
+
+
 def cmd_drop(args) -> int:
     root = Path(args.root).resolve()
     c = find_contract(root, args.contract, ("building", "on-dev"), "drop")
+    deps = dependents(root, args, c)
+    if deps:
+        ways = []
+        for r in deps:
+            how = ("drop it first" if row_status(r) in ("building", "on dev")
+                   else "change or cancel it in chat first")
+            ways.append(f"{r['piece']} ({r['status']}) depends on {r['on']}: {how}")
+        die(f"dropping {c.title} would break what depends on it. " + "; ".join(ways) + ". Nothing was changed.", 1)
     if c.is_head:
         return drop_head(root, c)
     if c.status in ("done", "dropped", "draft", "ready"):
@@ -2005,7 +2986,8 @@ def cmd_drop(args) -> int:
         return 0
     others = building_pieces(list_contracts(root))
     if others:
-        die(f"{others[0].name} is building. Push it to dev or drop it first; one piece at a time.", 1)
+        die(f"{others[0].name} is building in this session. Push it to dev or drop it first, or drop {c.name} from "
+            "another session: one piece per session (D93).", 1)
     head = git_out(root, "rev-parse", "--short=10", "HEAD")
     c.set_status("building", {"Base": head,
                               "Removing": f"{dt.date.today().isoformat()}, the client rejected it; built from {c.base}"})
@@ -2150,6 +3132,8 @@ def review_scope(root: Path, cfg: dict, c: Contract, blobs: dict[str, str], ref:
             reasons.append("dependencies")
         if INFRA_FILE_RE.search(f):
             reasons.append("deploy or env config")
+        if is_project_workflow(f):
+            reasons.append("CI workflow: runs on the runner with the repo's secrets")
         if f.lower().endswith(".sql"):
             reasons.append("SQL")
         if not is_test_file(f) and RISKY_NAME_RE.search(f):
@@ -2513,7 +3497,8 @@ def rules_since(root: Path, cfg: dict, since: str) -> tuple[dict, list[str]]:
     old = cfg_at(root, since)
     rules, notes = dict(cfg), []
     if old is None:  # ship.json is new in this push: no extra bookkeeping paths yet
-        rules["bookkeeping"] = []
+        # ...but the cloudflare track's deploy files, which setup itself copies, come with that first push (D97)
+        rules["bookkeeping"] = list(CF_BOOKKEEPING) if cfg.get("track") == "cloudflare" else []
         return rules, notes
     for key in ("python_dir", "node_dir", "bookkeeping", "review_all", "review_paths"):
         if key in old:
@@ -2581,13 +3566,15 @@ def dev_verdict(root: Path, cfg: dict, since: str, how: str, ci: bool = False) -
         # moving the folders changes what the check scans, so it rides with an approved piece like code does
         code.append(f"{CONFIG} (the backend or frontend folder changed)")
     if not code:
-        print("bookkeeping only (contracts, ship.json, CLAUDE.md, .gitleaksignore, .claude/settings.json, CI files, readme): nothing to check.")
+        print("bookkeeping only (contracts, ship.json, CLAUDE.md, .gitleaksignore, .claude/settings.json, the kit's CI files, "
+              "readme): nothing to check.")
         return 0
     all_cs = list_contracts(root)
     building = building_pieces(all_cs)
     if len(building) > 1:
         print("more than one contract is building: " + ", ".join(c.name for c in building) +
-              ". One piece at a time: drop the extra one.")
+              ". One piece per push: each session builds one piece (D93). If one came from dev, its session hasn't "
+              "pushed its on-dev mark yet: wait for it, then sync again (sync-dev).")
         return 1
     if not building:
         heads = open_heads(all_cs)
@@ -2611,7 +3598,9 @@ def dev_verdict(root: Path, cfg: dict, since: str, how: str, ci: bool = False) -
     size, stack = count_size(root, cfg, c), check_stack(root, cfg, c)
     left = check_leftovers(root, cfg, c, False)
     sec = review_problems(root, cfg, c, "HEAD")
-    return 0 if print_report(c, size, stack, left, ci=ci, security=sec, lesson=lesson_problem(root, c)) == "PASS" else 1
+    quick = quick_fit(root, cfg, c, "HEAD") if c.quick else None
+    return 0 if print_report(c, size, stack, left, ci=ci, security=sec, lesson=lesson_problem(root, c),
+                             quick=quick, migrations=migration_problem(root, cfg, since, "HEAD")) == "PASS" else 1
 
 
 def cmd_gate_dev(args) -> int:
@@ -2965,15 +3954,18 @@ def cmd_status(args) -> int:
         return " · ".join(f"{v} {k[:-1] if v == 1 else k}" for k, v in n.items())
     rows = [{"contract": c.name, "status": c.status, "removing": bool(c.removing), "tracker": c.tracker,
              "base": c.base, "size": size_line(c), "file": str(c.path.relative_to(root)),
-             "kind": c.kind, "head": c.head} for c in list_contracts(root)]
+             "kind": c.kind, "head": c.head, "repo": c.repo, "quick": c.quick, "depends": c.depends}
+            for c in list_contracts(root)]
     if args.json:
         cfg = json.loads((root / CONFIG).read_text()) if (root / CONFIG).exists() else {}
-        print(json.dumps({"tracker": cfg.get("tracker"), "contracts": rows}, indent=2))
+        print(json.dumps({"repo": cfg.get("repo") or repo_name(root), "tracker": cfg.get("tracker"),
+                          "contracts": rows}, indent=2))
         return 0
     if not rows:
         print("no contracts yet")
     for r in rows:
         tag = " (removing)" if r["removing"] else (" (head)" if r["kind"] == "head" else (f" (sub of {r['head']})" if r["head"] else ""))
+        tag = (" (quick)" + tag) if r["quick"] else tag
         print(f"{r['contract']:40} {r['status'] + tag:30} {r['tracker'] or '(no tracker row)'}")
     return 0
 
@@ -2981,19 +3973,29 @@ def cmd_status(args) -> int:
 def cmd_copy_check(args) -> int:
     root = Path(args.root).resolve()
     c = find_contract(root, args.contract, ("building", "on-dev"), "compare")  # any state when named
-    notion_h = copy_hash(Path(args.notion).read_text(encoding="utf-8"))
-    repo_h = copy_hash(c.text)
-    stored = load_sync(root).get(c.name)
+    notion = Path(args.notion).read_text(encoding="utf-8")
+    theirs = claim_in(notion)
+    if c.claim and theirs and theirs != c.claim:  # issue #30: never write over another session's pickup
+        print(f"taken: the row's copy holds another session's Claim ({theirs}; this session's is {c.claim}). "
+              "Write nothing to the row. At pickup, go on to the claim check; later, stop and ask the owner.")
+        return TAKEN
+    notion_h = copy_hash(notion)
+    return copy_verdict(notion_h, copy_hash(c.text), load_sync(root).get(c.name))
+
+
+def copy_verdict(notion_h: str, repo_h: str, stored: str | None) -> int:
+    """Compare a Notion copy with the repo file and the last copy Claude Code wrote: 0 in step, 10 the repo moved,
+    11 never written, 12 edited by hand."""
     if notion_h == repo_h:
         print("in-sync")
         return 0
     if stored is None:
-        print("no-record: the tracker row doesn't hold a copy Claude Code wrote yet (first pickup).")
+        print("no-record: the Notion page doesn't hold a copy Claude Code wrote yet (first pickup, or a new page).")
         return 11
     if notion_h == stored:
         print("refresh: the repo file changed since the last copy; write the new copy.")
         return 10
-    print("hand-edited: the tracker's copy differs from the last copy Claude Code wrote. "
+    print("hand-edited: the Notion copy differs from the last copy Claude Code wrote. "
           "Stop and ask the owner before overwriting it.")
     return 12
 
@@ -3014,6 +4016,510 @@ def cmd_copy_mark(args) -> int:
     print(f"{c.name}: tracker copy recorded")
     return 0
 
+# ---------------------------------------------------------------- build map (D91)
+MAP_FILE = CONTRACTS + "/map/build-map.md"  # a subfolder, so list_contracts never reads it as a contract
+MAP_WRITTEN = "## Decisions and gaps"  # the one part Claude writes; everything above it is counted
+MAP_WRITTEN_NOTE = "Written by Claude, not counted: the only part of this map that can be wrong."
+MAP_MAX_WRITTEN = 10  # "a few lines": a long write-up goes unread and is where a confident wrong map comes from
+MAP_REF = "origin/dev"  # the map describes what is on dev, never a half-built piece in the working tree
+MAP_SYNC_KEY = "build-map"  # in .ship/notion-sync.json, next to the contracts' copies
+FRESH_KEY = "Freshness:"
+MAP_SIZE_LIMIT = 2_000_000
+MAP_KEY_COLS = 8  # columns shown per table: keys and links first, then the rest up to this many
+ALEMBIC_REV_RE = re.compile(r"^revision\s*(?::[^=\n]+)?=\s*[\"']([^\"']+)[\"']", re.M)
+ALEMBIC_DOWN_RE = re.compile(r"^down_revision\s*(?::[^=\n]+)?=\s*(.+)$", re.M)
+OP_CALL_RE = re.compile(r"\bop\.(create_table|drop_table|add_column|drop_column|rename_table)\(")
+SQL_CREATE_RE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"'`]?([\w.]+)[\"'`]?\s*\(", re.I)
+SQL_DROP_RE = re.compile(r"DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\"'`]?([\w.]+)", re.I)
+SQL_ALTER_RE = re.compile(r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?[\"'`]?([\w.]+)[\"'`]?\s+"
+                          r"(ADD|DROP)\s+(?:COLUMN\s+)?(?:IF\s+(?:NOT\s+)?EXISTS\s+)?[\"'`]?(\w+)", re.I)
+SQL_RENAME_RE = re.compile(r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\"'`]?([\w.]+)[\"'`]?\s+RENAME\s+TO\s+[\"'`]?([\w.]+)", re.I)
+SQL_NOT_COLUMN = ("CONSTRAINT", "PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "INDEX", "KEY", "EXCLUDE", "LIKE")
+STR_ARG_RE = re.compile(r"^[rbuRBU]?[\"']([^\"']+)[\"']")
+
+
+def call_args(text: str, start: int) -> list[str]:
+    """The top-level arguments of a call whose '(' ends just before start."""
+    depth, i, quote, args, cur = 1, start, None, [], start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                args.append(text[cur:i])
+                break
+        elif ch == "," and depth == 1:
+            args.append(text[cur:i])
+            cur = i + 1
+        i += 1
+    return [a.strip() for a in args if a.strip()]
+
+
+def str_arg(a: str) -> str | None:
+    m = STR_ARG_RE.match(a.strip())
+    return m.group(1) if m else None
+
+
+def fk_table(target: str) -> str:
+    """'orgs.id' → 'orgs'; 'public.orgs.id' → 'public.orgs'."""
+    return target.rsplit(".", 1)[0].lower() if "." in target else target.lower()
+
+
+class Schema:
+    """Tables and their columns, replayed from the migrations in order: creates, adds, drops and renames."""
+
+    def __init__(self):
+        self.tables: dict[str, dict] = {}
+
+    def create(self, name: str, f: str) -> dict:
+        t = self.tables.setdefault(name.lower(), {"cols": [], "keys": set(), "links": {}, "file": f})
+        return t
+
+    def column(self, table: str, col: str, key: bool = False, link: str | None = None, f: str = "") -> None:
+        t = self.create(table, f)
+        if col not in t["cols"]:
+            t["cols"].append(col)
+        if key:
+            t["keys"].add(col)
+        if link:
+            t["links"][col] = link
+
+    def drop_column(self, table: str, col: str) -> None:
+        t = self.tables.get(table.lower())
+        if t and col in t["cols"]:
+            t["cols"].remove(col)
+            t["keys"].discard(col)
+            t["links"].pop(col, None)
+
+    def drop(self, table: str) -> None:
+        self.tables.pop(table.lower(), None)
+
+    def rename(self, old: str, new: str) -> None:
+        if old.lower() in self.tables:
+            self.tables[new.lower()] = self.tables.pop(old.lower())
+
+
+def sa_column(schema: Schema, table: str, a: str, f: str) -> None:
+    """One `sa.Column('name', …)` argument of an Alembic call."""
+    m = re.match(r"(?:\w+\.)*Column\(", a)
+    if not m:
+        return
+    inner = call_args(a, m.end())
+    name = str_arg(inner[0]) if inner else None
+    if not name:
+        return
+    fk = re.search(r"ForeignKey\(\s*[\"']([\w.]+)[\"']", a)
+    schema.column(table, name, key=bool(re.search(r"primary_key\s*=\s*True", a)),
+                  link=fk_table(fk.group(1)) if fk else None, f=f)
+
+
+def replay_alembic(schema: Schema, text: str, f: str) -> None:
+    for m in OP_CALL_RE.finditer(text):
+        kind, args = m.group(1), call_args(text, m.end())
+        first = str_arg(args[0]) if args else None
+        if not first:
+            continue
+        if kind == "create_table":
+            schema.create(first, f)
+            for a in args[1:]:
+                if re.match(r"(?:\w+\.)*PrimaryKeyConstraint\(", a):
+                    for col in re.findall(r"[\"'](\w+)[\"']", a.split("name=")[0]):
+                        schema.column(first, col, key=True, f=f)
+                elif re.match(r"(?:\w+\.)*ForeignKeyConstraint\(", a):
+                    lists = re.findall(r"\[([^\]]*)\]", a)
+                    if len(lists) >= 2:
+                        cols = re.findall(r"[\"'](\w+)[\"']", lists[0])
+                        refs = re.findall(r"[\"']([\w.]+)[\"']", lists[1])
+                        for col, ref in zip(cols, refs):
+                            schema.column(first, col, link=fk_table(ref), f=f)
+                else:
+                    sa_column(schema, first, a, f)
+        elif kind == "add_column" and len(args) > 1:
+            sa_column(schema, first, args[1], f)
+        elif kind == "drop_column" and len(args) > 1 and str_arg(args[1]):
+            schema.drop_column(first, str_arg(args[1]))
+        elif kind == "drop_table":
+            schema.drop(first)
+        elif kind == "rename_table" and len(args) > 1 and str_arg(args[1]):
+            schema.rename(first, str_arg(args[1]))
+
+
+def replay_sql(schema: Schema, text: str, f: str) -> None:
+    events = []
+    for m in SQL_CREATE_RE.finditer(text):
+        events.append((m.start(), "create", m))
+    for m in SQL_DROP_RE.finditer(text):
+        events.append((m.start(), "drop", m))
+    for m in SQL_RENAME_RE.finditer(text):
+        events.append((m.start(), "rename", m))
+    for m in SQL_ALTER_RE.finditer(text):
+        events.append((m.start(), "alter", m))
+    for _, kind, m in sorted(events, key=lambda e: e[0]):
+        if kind == "create":
+            table = m.group(1)
+            schema.create(table, f)
+            for item in call_args(text, m.end()):
+                words = item.split()
+                head = words[0].upper() if words else ""
+                up = item.upper()
+                if head in SQL_NOT_COLUMN:
+                    cols = re.findall(r"\(([^)]*)\)", item)
+                    names = [c.strip(" \"'`") for c in cols[0].split(",")] if cols else []
+                    if "PRIMARY KEY" in up:
+                        for c in names:
+                            schema.column(table, c, key=True, f=f)
+                    ref = re.search(r"REFERENCES\s+[\"'`]?([\w.]+)", item, re.I)
+                    if "FOREIGN KEY" in up and ref:
+                        for c in names:
+                            schema.column(table, c, link=ref.group(1).lower(), f=f)
+                    continue
+                if not words:
+                    continue
+                ref = re.search(r"REFERENCES\s+[\"'`]?([\w.]+)", item, re.I)
+                schema.column(table, words[0].strip("\"'`"), key="PRIMARY KEY" in up,
+                              link=ref.group(1).lower() if ref else None, f=f)
+        elif kind == "drop":
+            schema.drop(m.group(1))
+        elif kind == "rename":
+            schema.rename(m.group(1), m.group(2))
+        elif m.group(2).upper() == "ADD":
+            rest = text[m.end():text.find(";", m.end()) if ";" in text[m.end():] else len(text)]
+            ref = re.search(r"REFERENCES\s+[\"'`]?([\w.]+)", rest, re.I)
+            schema.column(m.group(1), m.group(3), key="PRIMARY KEY" in rest.upper(),
+                          link=ref.group(1).lower() if ref else None, f=f)
+        else:
+            schema.drop_column(m.group(1), m.group(3))
+
+
+def upgrade_part(text: str) -> str:
+    """An Alembic file's upgrade() only: its downgrade() undoes it and would erase the tables."""
+    m = re.search(r"^def\s+upgrade\s*\(", text, re.M)
+    if not m:
+        return text
+    d = re.search(r"^def\s+downgrade\s*\(", text[m.end():], re.M)
+    return text[m.start(): m.end() + d.start()] if d else text[m.start():]
+
+
+def migration_order(files: dict[str, str]) -> list[str]:
+    """SQL and other files by path, then Alembic revisions along their chain (a merge counts after its parents)."""
+    revs: dict[str, tuple[str, list[str]]] = {}
+    plain = []
+    for f, text in files.items():
+        r = ALEMBIC_REV_RE.search(text)
+        if f.endswith(".py") and r:
+            d = ALEMBIC_DOWN_RE.search(text)
+            downs = re.findall(r"[\"']([^\"']+)[\"']", d.group(1)) if d else []
+            revs[r.group(1)] = (f, downs)
+        else:
+            plain.append(f)
+    depth: dict[str, int] = {}
+
+    def depth_of(rev: str, seen: frozenset = frozenset()) -> int:
+        if rev in depth:
+            return depth[rev]
+        if rev not in revs or rev in seen:
+            return 0
+        d = 1 + max([depth_of(p, seen | {rev}) for p in revs[rev][1]] or [0])
+        depth[rev] = d
+        return d
+
+    ordered = sorted(revs, key=lambda r: (depth_of(r), revs[r][0]))
+    return sorted(plain) + [revs[r][0] for r in ordered]
+
+
+def ref_files(root: Path, ref: str) -> dict[str, str]:
+    """Every file at a commit that the size check reads: its text, by repo path."""
+    res = sh(["git", "ls-tree", "-r", "-l", "-z", ref], cwd=root)
+    if res.returncode != 0:
+        die(f"can't list the files at {ref}: {res.stderr.strip()}")
+    out = {}
+    for entry in res.stdout.split("\0"):
+        if not entry or "\t" not in entry:
+            continue
+        meta, f = entry.split("\t", 1)
+        parts = meta.split()
+        if len(parts) < 4 or parts[1] != "blob" or not parts[3].isdigit() or int(parts[3]) > MAP_SIZE_LIMIT:
+            continue
+        if not f.endswith((".py", ".sql", ".tsx", ".jsx", ".ts", ".js")) or \
+                any(p in SKIP_DIRS for p in f.split("/")[:-1]):
+            continue
+        out[f] = ""
+    if not out:
+        return out
+    names = sorted(out)
+    res = subprocess.run(["git", "cat-file", "--batch"], cwd=str(root), capture_output=True,
+                         input="".join(f"{ref}:{f}\n" for f in names).encode("utf-8"))
+    data, pos = res.stdout, 0
+    for f in names:  # each answer: "<sha> blob <size>\n<bytes>\n", or "<name> missing\n"
+        nl = data.find(b"\n", pos)
+        head = data[pos:nl].split()
+        pos = nl + 1
+        if len(head) == 3 and head[1] == b"blob":
+            size = int(head[2])
+            out[f] = data[pos:pos + size].decode("utf-8", errors="ignore")
+            pos += size + 1
+    return out
+
+
+def map_contents(root: Path, cfg: dict, ref: str) -> dict:
+    """What the build map holds, counted by the size check's code (D15) over every file on dev."""
+    py, nd = cfg.get("python_dir"), cfg.get("node_dir")
+    files = {f: t for f, t in ref_files(root, ref).items() if in_dir(f, py) or in_dir(f, nd)}
+    seen: dict[str, dict[str, str]] = {"screens": {}, "endpoints": {}, "tables": {}}
+    for f in sorted(files):
+        scan_items(f, files[f], py, nd, seen)
+    schema = Schema()
+    migrations = {f: t for f, t in files.items() if in_dir(f, py) and not is_test_file(f) and
+                  ((f.endswith(".sql") and "down" not in Path(f).name.lower()) or
+                   (f.endswith(".py") and (OP_CALL_RE.search(t) or SQL_CREATE_RE.search(t))))}
+    for f in migration_order(migrations):
+        text = upgrade_part(migrations[f]) if f.endswith(".py") else migrations[f]
+        if f.endswith(".py"):
+            replay_alembic(schema, text, f)
+        replay_sql(schema, text, f)
+    tables = {}
+    counted = {n for n in seen["tables"]}
+    for name, t in schema.tables.items():
+        tables[name] = t
+    for name in counted:  # a table the count found and the replay couldn't name (create_table(var, …))
+        if name.startswith("(unnamed") and name not in tables:
+            tables[name] = {"cols": [], "keys": set(), "links": {}, "file": seen["tables"][name]}
+    return {"tables": tables, "endpoints": seen["endpoints"], "screens": seen["screens"], "py": py, "nd": nd}
+
+
+def table_line(name: str, t: dict) -> str:
+    cols = t["cols"]
+    first = [c for c in cols if c in t["keys"] or c in t["links"]]
+    rest = [c for c in cols if c not in first]
+    shown = (first + rest)[:max(MAP_KEY_COLS, len(first))]
+
+    def label(c: str) -> str:
+        bits = [c]
+        if c in t["keys"]:
+            bits.append("(key)")
+        if c in t["links"]:
+            bits.append(f"→ {t['links'][c]}")
+        return " ".join(bits)
+
+    more = len(cols) - len(shown)
+    body = ", ".join(label(c) for c in shown) or "columns not read"
+    return f"- {name}: {body}" + (f", +{more} more" if more > 0 else "")
+
+
+def by_file(items: dict[str, str]) -> list[str]:
+    groups: dict[str, list[str]] = {}
+    for name, f in items.items():
+        groups.setdefault(f, []).append(name)
+    return [f"- {f}: {', '.join(sorted(names))}" for f, names in sorted(groups.items())]
+
+
+def written_part(root: Path) -> list[str]:
+    """The lines Claude wrote under 'Decisions and gaps' in the current map, kept across rebuilds."""
+    p = root / MAP_FILE
+    if not p.exists():
+        return []
+    text = p.read_text(encoding="utf-8")
+    i = text.find(MAP_WRITTEN)
+    if i < 0:
+        return []
+    lines = []
+    for line in text[i + len(MAP_WRITTEN):].splitlines():
+        s = line.strip()
+        if not s or s == MAP_WRITTEN_NOTE or s.lower() in ("- none yet", "- none written yet"):
+            continue
+        if s.startswith("#"):
+            break
+        lines.append(s)
+    return lines
+
+
+def written_problems(lines: list[str]) -> list[str]:
+    out = []
+    bad = [l for l in lines if not re.match(r"^[-*]\s+\S", l)]
+    if bad:
+        out.append(f"{len(bad)} line(s) under '{MAP_WRITTEN}' aren't list items: {bad[0][:60]}")
+    if len(lines) > MAP_MAX_WRITTEN:
+        out.append(f"'{MAP_WRITTEN}' holds {len(lines)} lines; keep it to {MAP_MAX_WRITTEN} at most "
+                   "(merge or cut the least useful)")
+    if any(PLACEHOLDER_RE.search(l) for l in lines):
+        out.append(f"a line under '{MAP_WRITTEN}' still holds a <placeholder>")
+    return out
+
+
+def render_map(root: Path, cfg: dict, ref: str, sha: str) -> str:
+    m = map_contents(root, cfg, ref)
+    date = git_out(root, "log", "-1", "--format=%cs", sha) or dt.date.today().isoformat()
+    show = lambda d: "none" if d is None else ("the project root" if d == "." else f"{d}/")  # noqa: E731
+    written = written_part(root)
+    out = [f"# Build map: {cfg.get('repo') or repo_name(root) or root.name}", "",
+           f"Map of: dev at {sha[:12]}, {date}",
+           f"Counts: {len(m['tables'])} tables · {len(m['endpoints'])} endpoints · {len(m['screens'])} screens",
+           f"Counted from: FastAPI routes and Alembic or SQL migrations in {show(m['py'])}, React Router routes "
+           f"in {show(m['nd'])}, by the size check's own code (D15). Code it can't read isn't on this map.",
+           "Claude Code rebuilds this file at every /mg-ship-kit:done. Never edit it by hand, here or in Notion.", "",
+           "## Tables", ""]
+    out += [table_line(n, m["tables"][n]) for n in sorted(m["tables"])] or ["- none"]
+    out += ["", "## Endpoints", ""] + (by_file(m["endpoints"]) or ["- none"])
+    out += ["", "## Screens", ""] + (by_file(m["screens"]) or ["- none"])
+    out += ["", MAP_WRITTEN, "", MAP_WRITTEN_NOTE, ""] + (written or ["- none yet"])
+    return "\n".join(out) + "\n"
+
+
+def map_ref(root: Path, ref: str | None) -> tuple[str, str]:
+    ref = ref or MAP_REF
+    sha = git_out(root, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    if not sha:
+        die(f"{ref} isn't here: run `git fetch origin dev` first. The map describes dev, not the working tree.")
+    return ref, sha
+
+
+def map_stamp(text: str) -> str | None:
+    m = re.search(r"^Map of: dev at ([0-9a-f]{7,40})\b", text, re.M)
+    return m.group(1) if m else None
+
+
+def cmd_map(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    problems = written_problems(written_part(root))
+    if problems:
+        die("the map's written lines need fixing first: " + "; ".join(problems), 1)
+    ref, sha = map_ref(root, args.ref)
+    text = render_map(root, cfg, ref, sha)
+    p = root / MAP_FILE
+    old = p.read_text(encoding="utf-8") if p.exists() else None
+    if old == text:
+        print(f"{MAP_FILE}: unchanged (dev at {sha[:12]})")
+        return 0
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+    counts = re.search(r"^Counts: (.*)$", text, re.M).group(1)
+    print(f"wrote {MAP_FILE}: dev at {sha[:12]} · {counts} · {len(written_part(root))} written line(s)")
+    return 0
+
+
+def freshness(root: Path, cfg: dict, ref: str | None) -> tuple[int, str]:
+    """(0 up to date | 1 stale | 3 no map, the line the Notion copy shows). Only product files count: the map's
+    own commit, contract states and other bookkeeping don't make it stale."""
+    p = root / MAP_FILE
+    if not p.exists():
+        return 3, f"{FRESH_KEY} no map yet: Claude Code writes it at setup or the next /mg-ship-kit:done."
+    stamp = map_stamp(p.read_text(encoding="utf-8"))
+    ref, sha = map_ref(root, ref)
+    if not stamp or not is_commit(root, stamp):
+        return 1, (f"{FRESH_KEY} unknown: the commit this map describes ({stamp or 'none'}) isn't here. "
+                   "Treat it as stale.")
+    changed = product_files(root, cfg, stamp, sha)
+    if not changed:
+        return 0, f"{FRESH_KEY} up to date with dev ({sha[:12]})."
+    return 1, (f"{FRESH_KEY} stale. Dev has changed {len(changed)} product file(s) since this map "
+               f"(dev at {sha[:12]}). It's rebuilt at the next /mg-ship-kit:done.")
+
+
+def map_copy_text(root: Path, cfg: dict, ref: str | None) -> str:
+    """The build map with its freshness line: what the Notion copy shows."""
+    _, line = freshness(root, cfg, ref)
+    text = (root / MAP_FILE).read_text(encoding="utf-8")
+    return re.sub(r"^(Map of: .*)$", lambda m: f"{m.group(1)}\n{line}", text, count=1, flags=re.M)
+
+
+def map_hash(text: str) -> str:
+    """The copy's hash without its freshness line, which changes with every push to dev."""
+    kept = [l for l in normalize_copy(text).splitlines() if not l.startswith(FRESH_KEY)]
+    return hashlib.sha256("\n".join(kept).encode("utf-8")).hexdigest()[:16]
+
+
+def fresh_line_of(text: str) -> str:
+    for l in normalize_copy(text).splitlines():
+        if l.startswith(FRESH_KEY):
+            return l
+    return ""
+
+
+def need_map(root: Path) -> None:
+    if not (root / MAP_FILE).exists():
+        die(f"no build map yet: run `map` first ({MAP_FILE}).")
+
+
+def cmd_map_status(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    code, line = freshness(root, cfg, args.ref)
+    print(line)
+    if code == 3:
+        return 3
+    page = cfg.get("map_page")
+    sync = load_sync(root)
+    copy = map_copy_text(root, cfg, args.ref)
+    if not page:
+        print("copy: no Notion page linked yet → create the 'Build map' sub-page and run `link-map`")
+    elif sync.get(MAP_SYNC_KEY) != map_hash(copy) or sync.get(MAP_SYNC_KEY + "-fresh") != fresh_line_of(copy):
+        print("copy: refresh → write the Notion copy (map-copy-check, map-render, map-copy-mark)")
+    else:
+        print("copy: in step")
+    return code
+
+
+def cmd_map_render(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    need_map(root)
+    sys.stdout.write(render_copy(MAP_FILE, map_copy_text(root, cfg, args.ref),
+                                 "Chat reads it before a spec; nobody edits it here."))
+    return 0
+
+
+def cmd_map_copy_check(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    need_map(root)
+    notion = Path(args.notion).read_text(encoding="utf-8")
+    copy = map_copy_text(root, cfg, args.ref)
+    sync = load_sync(root)
+    code = copy_verdict(map_hash(notion), map_hash(copy), sync.get(MAP_SYNC_KEY))
+    if code == 0 and fresh_line_of(notion) != fresh_line_of(copy):
+        print("refresh: only the freshness line changed; write the new copy.")
+        return 10
+    return code
+
+
+def cmd_map_copy_mark(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    need_map(root)
+    copy = map_copy_text(root, cfg, args.ref)
+    data = load_sync(root)
+    data[MAP_SYNC_KEY] = map_hash(copy)
+    data[MAP_SYNC_KEY + "-fresh"] = fresh_line_of(copy)
+    save_sync(root, data)
+    print("build map: Notion copy recorded")
+    return 0
+
+
+def cmd_link_map(args) -> int:
+    root = Path(args.root).resolve()
+    cfg = load_config(root)
+    if not re.match(r"^https://(www\.|app\.)?notion\.(so|com)/", args.page):
+        die("--page must be the Build map sub-page's Notion link")
+    if cfg.get("map_page") == args.page:
+        print(f"build map page already linked: {args.page}")
+        return 0
+    cfg["map_page"] = args.page
+    save_config(root, cfg)
+    print(f"linked the build map page in {CONFIG}: {args.page}")
+    return 0
+
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ship_check.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -3021,7 +4527,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("setup"); s.add_argument("--python-dir"); s.add_argument("--node-dir"); s.add_argument("--force", action="store_true")
     s.add_argument("--no-default-stack", action="store_true", help="don't fall back to the kit's default stack in an empty repo")
-    s.add_argument("--track", choices=TRACKS, help="the project's track, from the Track line in its Facts")
+    s.add_argument("--track", choices=TRACKS + DROPPED_TRACKS, help="the project's track, from the Track line in its Facts")
     sub.add_parser("kit-mark", help="record that the project page's Kit line names this plugin version")
     p = sub.add_parser("link"); p.add_argument("--data-source", required=True); p.add_argument("--database"); p.add_argument("--page")
     p = sub.add_parser("gate-dev"); p.add_argument("--since", help="start from this commit (default: origin/dev)")
@@ -3031,8 +4537,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--wait", type=int, default=600, help="seconds a release waits for a running dev check")
     sub.add_parser("ci-env"); sub.add_parser("ci-install")
     p = sub.add_parser("pickup"); p.add_argument("--file", required=True); p.add_argument("--name"); p.add_argument("--tracker")
+    p.add_argument("--repo", default="", help="the row's Repo column (D89): must name this repo")
+    p.add_argument("--single-repo", action="store_true", help="the project page lists one repo: an empty Repo column passes")
+    p.add_argument("--rows", help=f"the tracker's rows ({ROWS_FILE}): checks Depends on and numbers the contract (D93)")
+    p.add_argument("--status", help="the row's Status, fetched just now: anything but Ready is refused (issue #30)")
+    p = sub.add_parser("claim-check", help="read-back after pickup: does the row hold this session's Claim (issue #30)")
+    p.add_argument("--contract"); p.add_argument("--notion", required=True, help="the row's page content, fetched back")
+    p.add_argument("--status", help="the row's Status, fetched back (required unless --recheck)")
+    p.add_argument("--recheck", action="store_true", help="before the push: is the row still this session's? removes nothing")
+    p = sub.add_parser("next-pick", help="which Ready row of this repo may build now, from the tracker's rows (D93)")
+    p.add_argument("--rows", default=ROWS_FILE); p.add_argument("--name", help="the row the owner named")
+    p.add_argument("--skip", action="append", help="a row to pass over (pickup said it waits); repeatable")
+    p.add_argument("--single-repo", action="store_true", help="the project page lists one repo: an empty Repo column passes")
+    p = sub.add_parser("quick", help="write a quick fix's contract from the owner's own words (D92)")
+    p.add_argument("--what", required=True, help="the change, in the owner's own words, one line")
+    p.add_argument("--by", required=True, help="the owner's name")
+    p.add_argument("--check", required=True, help="one line: When I … then I see …")
+    p.add_argument("--rows", help=f"the tracker's rows ({ROWS_FILE}): numbers the contract after the tracker's (D93)")
+    p.add_argument("--single-repo", action="store_true")
     p = sub.add_parser("split", help="save a head's sub-contracts as draft sub-pieces (the split stop)")
     p.add_argument("--head", help="the head contract (default: the only open one)")
+    p.add_argument("--rows", help=f"the tracker's rows ({ROWS_FILE}): numbers the sub-contracts after the tracker's (D93)")
+    p.add_argument("--single-repo", action="store_true")
     p.add_argument("files", nargs="+", help="the sub-contract files, in build order")
     p = sub.add_parser("go"); p.add_argument("--head")
     p = sub.add_parser("chain-next"); p.add_argument("--head")
@@ -3046,11 +4572,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--poll", type=int, default=20, help="seconds between asks (default 20)")
     p = sub.add_parser("set-tracker"); p.add_argument("--contract", required=True); p.add_argument("--tracker", required=True)
     p = sub.add_parser("ondev"); p.add_argument("--branch", default="dev"); p.add_argument("--quiet", action="store_true")
+    p = sub.add_parser("sync-dev", help="rebase the building piece onto origin/dev and move its Base there (D93)")
+    p.add_argument("--contract"); p.add_argument("--no-fetch", action="store_true", help="use origin/dev as fetched")
+    p.add_argument("--owner-ok", action="store_true", help="the owner's word: go on past shared files, leave conflicts open")
+    p.add_argument("--continue", dest="cont", action="store_true", help="after resolving: move the Base (owner-ok only)")
     p = sub.add_parser("drop"); p.add_argument("--contract")
+    p.add_argument("--rows", help=f"the tracker's rows ({ROWS_FILE}): refuses while an open row depends on the piece (D93)")
     p = sub.add_parser("status"); p.add_argument("--json", action="store_true")
     p = sub.add_parser("copy-check"); p.add_argument("--contract"); p.add_argument("--notion", required=True)
     p = sub.add_parser("copy-mark"); p.add_argument("--contract")
     p = sub.add_parser("copy-render"); p.add_argument("--contract")
+    for name in ("map", "map-status", "map-render", "map-copy-check", "map-copy-mark"):  # the build map (D91)
+        p = sub.add_parser(name); p.add_argument("--ref", help=f"the commit the map describes (default: {MAP_REF})")
+        if name == "map-copy-check":
+            p.add_argument("--notion", required=True)
+    p = sub.add_parser("link-map"); p.add_argument("--page", required=True)
     for name in ("check", "size", "leftovers"):
         p = sub.add_parser(name); p.add_argument("--contract"); p.add_argument("--json", action="store_true")
         if name == "leftovers":
@@ -3085,7 +4621,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_stack_only(args)
     if args.cmd == "stack-add":
         return cmd_stack_add(args)
-    handlers = {"done": cmd_done, "link": cmd_link, "pickup": cmd_pickup, "ondev": cmd_ondev, "drop": cmd_drop,
+    handlers = {"done": cmd_done, "link": cmd_link, "pickup": cmd_pickup, "quick": cmd_quick, "ondev": cmd_ondev, "drop": cmd_drop,
                 "status": cmd_status, "copy-check": cmd_copy_check, "copy-mark": cmd_copy_mark,
                 "copy-render": cmd_copy_render, "gate-dev": cmd_gate_dev, "ci": cmd_ci, "ci-env": cmd_ci_env,
                 "ci-install": cmd_ci_install, "env-check": cmd_env_check, "split": cmd_split, "go": cmd_go,
@@ -3094,7 +4630,10 @@ def main(argv: list[str] | None = None) -> int:
                 "review-plan": cmd_review_plan, "review-skip": cmd_review_skip, "review-write": cmd_review_write,
                 "review-waive": cmd_review_waive, "review-status": cmd_review_status,
                 "review-waivers": cmd_review_waivers, "secret-scan": cmd_secret_scan,
-                "secret-allow": cmd_secret_allow, "lesson": cmd_lesson}
+                "secret-allow": cmd_secret_allow, "lesson": cmd_lesson, "map": cmd_map,
+                "map-status": cmd_map_status, "map-render": cmd_map_render, "map-copy-check": cmd_map_copy_check,
+                "map-copy-mark": cmd_map_copy_mark, "link-map": cmd_link_map, "next-pick": cmd_next_pick,
+                "sync-dev": cmd_sync_dev, "claim-check": cmd_claim_check}
     if args.cmd in handlers:
         return handlers[args.cmd](args)
     return 2
