@@ -6,7 +6,7 @@ Written by `/mg-ship-kit:setup` from the Ship kit. Don't edit the files in this 
 
 GitHub runs the **Ship check** (`.github/workflows/ship-check.yml`, using the copy of the kit's script in this folder) on every push to `dev`, `main` and `master`. Nothing may deploy unless it passes.
 
-- **Push to `dev`:** a push that changes only bookkeeping (contracts, `ship.json`, `CLAUDE.md`, `.gitignore`, `.gitleaksignore`, `.claude/settings.json`, `.github/`, the readme) passes. Any product code needs the piece that is building to pass the CTO check (size, stack, leftovers), and it must come after that piece was picked up. The check starts from the newest commit it passed on, so a failed push can't hide under a later one.
+- **Push to `dev`:** a push that changes only bookkeeping (contracts, `ship.json`, `CLAUDE.md`, `.gitignore`, `.gitleaksignore`, `.claude/settings.json`, the kit's files in `.github/` and its templates, the readme) passes. The project's own workflows and actions (`.github/workflows/`, `.github/actions/`) are product code, unless `ship.json` lists them under `bookkeeping` (the cloudflare track's `deploy.yml`). Any product code needs the piece that is building to pass the CTO check (size, stack, leftovers), and it must come after that piece was picked up. The check starts from the newest commit it passed on, so a failed push can't hide under a later one.
 - **Secrets (every branch):** gitleaks scans each commit the push brought, not only the final files, so a key added and later deleted is still found. On `dev`, `main` and `master` the Ship check does it; on every other branch the small **Ship secret scan** (`.github/workflows/ship-secrets.yml`) does. A finding fails the run. A key that reached GitHub is exposed even on a branch nobody merges: replace it at its source. A false alarm is cleared only by the owner's one-line yes, written to `.gitleaksignore` by `ship_check.py secret-allow`; a `gitleaks:allow` comment in the code clears nothing, and a `.gitleaks.toml` in the repo is never read. History from before setup was scanned once at setup and is never blocked.
 - **Env files:** a push to `dev` or `main` fails while the commit carries an env file (`.env`, `.env.*`; the example files are allowed), even when it changes nothing else. Take it out with `git rm --cached <file>`, and change any password it held: git history keeps it.
 - **`ship.json` can't loosen its own check:** moving the backend or frontend folder counts as code; the `bookkeeping` list may never cover the code folders, and a change to it counts only from the next push.
@@ -60,23 +60,31 @@ What every deploy must end with, whoever builds it:
 
 These are the guide's release floor (step 8), plus the two links and the check.
 
-## Railway
-
-Railway's names for the two branches: `dev` deploys to an environment called **staging**, whose link is the project page's Dev URL; `main` deploys to **production**, whose link is the Live URL.
-
-1. In Railway, create a project from this GitHub repo. Make one service per folder (the backend and the frontend), each with its folder as the root directory.
-2. The production environment deploys from `main`: set each service's trigger branch to `main`.
-3. Add an environment named `staging` that deploys from `dev`: set each service's trigger branch there to `dev`.
-4. In every service, in both environments, turn on **Wait for CI**. Railway then waits for the Ship check and skips the deploy when it fails. Railway waits for whatever workflows the commit has, so it can't tell if the check's files were removed; that's the limit above.
-5. Add a Postgres database in each environment. Never point staging at production's database.
-6. Daily copies off the project. Railway's own backups and point-in-time restore live inside the project, so a deleted project or a wiped volume takes them along. Add Railway's "Postgres S3 backups" template as a service in production, pointed at production's database and at a storage bucket in a separate Railway project; it dumps once a day by default. Turn Railway's daily backups on as well: they're the quick restore. Once, restore the newest dump into a scratch database to prove it works.
-7. Before every migration, take a manual backup in the database's Backups tab, or run the dump service once by hand.
-8. Rollback: on the service's Deployments tab, the three dots on an earlier deploy → Rollback. It restores that deploy's image and variables in seconds, not the database; a migration needs step 7's backup. Rehearse it once on staging. The Hobby plan keeps old images for 72 hours.
-9. Alerts: in the project's Settings → Webhooks, paste a Slack or Discord webhook; Railway then reports a failed or crashed deploy. It doesn't watch whether the live link answers, so add an outside uptime check on the Live URL (ask Claude for a free one).
-10. Put secrets in Railway's variables, never in the repo. Write the staging link as the Dev URL and the production link as the Live URL in the project page's Facts.
-
-Railway bills by use and needs a card: the Hobby plan is $5 a month and includes $5 of use. Check that your card pays it before you rely on it.
-
 ## Cloudflare
 
-Not ready yet: the kit still needs its TypeScript stack list, size counts and deploy step. Setup stops on this track until they land.
+The app runs on Cloudflare and its Postgres on Neon. One Worker per environment serves the built frontend and passes `/api/*` to the FastAPI backend, which runs in a Cloudflare Container built from the backend folder. App and API share one address. `dev` deploys to the Worker `<app>-dev`, whose link is the project page's Dev URL; `main` deploys to `<app>`, whose link is the Live URL.
+
+Setup copied the deploy files once: `deploy/` (the Worker, the Container's Dockerfile, the Cloudflare config) and `.github/workflows/deploy.yml`. Unlike the files in `.github/ship/`, they are this project's own: change them through a piece, and setup never overwrites them. The workflow deploys a branch only after the Ship check passed on that commit. Never deploy by hand.
+
+One-time setup (owner):
+
+1. **Cloudflare:** the Workers Paid plan ($5 a month, by card; Containers need it). Note the account ID and your `workers.dev` subdomain (Workers & Pages → your subdomain).
+2. **Cloudflare API token:** My Profile → API Tokens → Create Token → the "Edit Cloudflare Workers" template, scoped to this account. If the first deploy says the token can't push the container image, add the Containers permission the error names.
+3. **Neon:** create one project with two databases or branches, one for dev and one for production, and copy each connection string. Never point dev at production's database.
+4. **GitHub:** repo → Settings → Environments. Make two environments, `dev` and `production`. In each:
+   - secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `DATABASE_URL` (that environment's Neon string), and any other secret the backend reads;
+   - variable: `APP_URL`, the environment's link (`https://<app>-dev.<your-subdomain>.workers.dev` for dev).
+   Every secret of the environment reaches the backend as an environment variable of the same name, so a new secret needs no change to the deploy files.
+5. Push to `dev`. When the Ship check is green, the Deploy job runs; open the app only when Deploy is green too, because the secrets go in after the Worker is up. Write the two links as the Dev URL and the Live URL in the project page's Facts.
+
+The floor on this track:
+
+- **Backups.** Neon's restore history lives inside Neon and is short on the free plan, so it is not the floor's "daily backups kept off the server". Until the kit ships a daily dump, take one yourself (ask Claude for a scheduled `pg_dump` to a bucket outside Neon) and restore it once into a scratch database to prove it works.
+- **Before every migration:** make a Neon branch of the production database, or run the dump once by hand. Migrations run when the backend container starts.
+- **Rollback:** in `deploy/`, `npx wrangler rollback --env production` returns the Worker and its container to the previous version in one command; it doesn't touch the database. Rehearse it once on dev.
+- **Alerts:** Cloudflare doesn't watch whether the Live URL answers. Add an outside uptime check on it (ask Claude for a free one).
+- **Secrets** live in the GitHub environments, never in the repo. For local runs put test values in `deploy/.dev.vars`, which git ignores.
+
+Proven so far on one project, and on `dev` only: the `main` → production half of the workflow has not run yet. Treat the first release as a test and watch it.
+
+To run it locally (needs Docker): in `deploy/`, `npm install`, build the frontend, then `npx wrangler dev --env dev`.
