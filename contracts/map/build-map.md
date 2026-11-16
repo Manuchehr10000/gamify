@@ -1,6 +1,6 @@
 # Build map: gamify
 
-Map of: dev at 16d0e9f23080, 2026-11-08
+Map of: dev at 816a4eca9fa9, 2026-11-17
 Counts: 24 tables · 61 endpoints · 18 screens
 Counted from: FastAPI routes and Alembic or SQL migrations in backend/, React Router routes in frontend/, by the size check's own code (D15). Code it can't read isn't on this map.
 Claude Code rebuilds this file at every /mg-ship-kit:done. Never edit it by hand, here or in Notion.
@@ -67,6 +67,7 @@ Written by Claude, not counted: the only part of this map that can be wrong.
 - Staff accounts live hashed in the staff table, seeded once from DESK_PIN, ADMIN_PASSWORD, STAND_PIN and MODERATORS when the table is empty; after that those env values are ignored, and a PIN or password alone identifies the account.
 - Background work runs from a Cloudflare cron every minute calling POST /api/jobs/run with JOBS_SECRET; `app/jobs.py` runs each job in turn under a Postgres advisory lock and logs it in job_runs. The cron also keeps the container awake all day.
 - Each environment runs one basic container instance (max_instances 1 in deploy/wrangler.jsonc), so the backend assumes a single instance.
+- When the container drops a request, the Worker resends it once only for GET/HEAD and the sends in SAFE_SENDS (deploy/src/index.ts); every other send shows the error, so it can never run twice.
 - Event times use a fixed UTC+5 zone (`stages.EVENT_TZ`), not a setting.
 - Gap: the frontend has no tests; only the backend has a pytest suite.
 - Gap: backend/.env.example holds a real-looking VAPID_PRIVATE_KEY value instead of a placeholder (flagged by the setup history scan).

@@ -1,5 +1,5 @@
 # Contract: Retry dropped requests where it's safe
-Status: on-dev
+Status: done
 Lesson: fact The Worker (deploy/src/index.ts) resends a request the container dropped only for GET/HEAD and the sends in SAFE_SENDS. A new POST goes on that list when repeating it after a success answers with the first result or an "already" answer that reads as done.
 Base: 16d0e9f230
 Approved: 2026-11-08 by Manu
