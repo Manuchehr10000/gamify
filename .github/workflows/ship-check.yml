@@ -3,7 +3,7 @@
 # every push: no secret in the commits since the last pass (gitleaks, D67); other branches: ship-secrets.yml.
 # dev:  the building piece passes the CTO check (size, stack, leftovers) and its security review, and no code arrives outside a piece.
 # main: every piece has the client's verdict, the commit came through dev, and the check passed there.
-# Deploys wait for it: Railway's "Wait for CI", or your devops' deploy (see .github/ship/README.md).
+# Deploys wait for it: the cloudflare track's deploy workflow, or your devops' deploy (see .github/ship/README.md).
 name: Ship check
 
 on:
