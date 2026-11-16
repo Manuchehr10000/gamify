@@ -21,4 +21,5 @@ Ship's rules come from the mg-ship-kit plugin at session start, not from this fi
 - Tests: `cd backend && .venv/bin/pytest` (needs a local Postgres database `gamify_test`). Run them before calling a piece done.
 
 ## Rules the code can't show
+- The Worker (deploy/src/index.ts) resends a request the container dropped only for GET/HEAD and the sends in SAFE_SENDS. A new POST goes on that list when repeating it after a success answers with the first result or an "already" answer that reads as done.
 - <Add a rule here only when Claude has broken it twice, or a new teammate would need it on day one.>

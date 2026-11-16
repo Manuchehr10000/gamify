@@ -44,10 +44,31 @@ export class Backend extends Container<Env> {
   }
 }
 
-// What @cloudflare/containers answers when the runtime drops its connection to the container
-// before the request reaches the app (the runtime marks this retryable). Seen in wrangler dev
-// on the request after each badge redirect.
-const DROPPED = 'Error proxying request to container'
+// What @cloudflare/containers answers (HTTP 500) when the runtime drops its connection to the container.
+// Seen on dev a few times an hour, and in wrangler dev on the request after each badge redirect.
+const DROPPED = ['Container suddenly disconnected', 'Error proxying request to container']
+
+// The sends that answer with the first result, or an "already" answer that reads as done, when repeated
+// after a success. Every other send still shows the error on a drop: a repeat could do it twice.
+const SAFE_SENDS = [
+  /^\/api\/tasks\/[^/]+\/claim$/, // photo and text claims
+  /^\/api\/claims\/[^/]+\/files$/, // and their files
+  /^\/api\/quiz\/[^/]+\/(start|answer|finish)$/,
+  /^\/api\/scan$/, // QR scan
+  /^\/api\/tasks\/[^/]+\/complete$/, // link tasks
+  /^\/api\/consent$/,
+  /^\/api\/submissions\/[^/]+\/decision$/, // the moderator's decision
+  /^\/api\/push\/subscribe$/,
+  /^\/api\/push\/[^/]+\/received$/,
+  /^\/api\/hall\/logo-shows$/,
+  /^\/api\/admin\/rating\/freeze$/,
+  /^\/api\/admin\/(tasks|guests)\/import\/preview$/, // the two upload previews
+]
+
+function retryable(method: string, path: string): boolean {
+  if (method === 'GET' || method === 'HEAD') return true
+  return method === 'POST' && SAFE_SENDS.some((pattern) => pattern.test(path))
+}
 
 export default {
   async fetch(request: Request, env: Env) {
@@ -62,10 +83,14 @@ export default {
     if (path.startsWith('/api/jobs/')) return new Response('Not Found', { status: 404 })
     // One named container for everyone: it runs migrations on start
     const container = getContainer(env.BACKEND)
+    if (!retryable(request.method, path)) return container.fetch(request)
     const res = await container.fetch(request.clone())
     if (res.status !== 500) return res
     const body = await res.text()
-    if (!body.startsWith(DROPPED)) return new Response(body, res)
+    const dropped = DROPPED.find((error) => body.startsWith(error))
+    if (!dropped) return new Response(body, res)
+    // Sent once more, only for reads and the sends above
+    console.log(`retry: ${request.method} ${path} after «${dropped}»`)
     return container.fetch(request)
   },
 
